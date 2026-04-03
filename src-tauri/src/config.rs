@@ -15,7 +15,6 @@ impl Default for AppConfig {
         Self {
             telegram: TelegramConfig {
                 bot_token: String::new(),
-                admin_chat_id: String::new(),
                 auto_start: false,
                 registered_users: Vec::new(),
                 notify_all_users: true,
@@ -47,7 +46,6 @@ impl Default for AppConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelegramConfig {
     pub bot_token: String,
-    pub admin_chat_id: String,
     pub auto_start: bool,
     pub registered_users: Vec<RegisteredUser>,
     pub notify_all_users: bool,
@@ -112,6 +110,13 @@ impl Pattern {
 }
 
 fn get_config_path() -> PathBuf {
+    // Try to get the executable's directory first
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            return exe_dir.join("config.json");
+        }
+    }
+    // Fallback to user's config directory
     let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
     path.push("ew_notify");
     fs::create_dir_all(&path).ok();

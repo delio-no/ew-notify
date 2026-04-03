@@ -9,11 +9,19 @@
     description: string;
   }
 
+  interface RegisteredUser {
+    chat_id: string;
+    username: string | null;
+    first_name: string | null;
+    enabled: boolean;
+  }
+
   interface Config {
     telegram: {
       bot_token: string;
-      chat_id: string;
       auto_start: boolean;
+      registered_users: RegisteredUser[];
+      notify_all_users: boolean;
     };
     target: {
       process_name: string;
@@ -28,7 +36,7 @@
 
   let currentPage = 'dashboard';
   let config: Config = {
-    telegram: { bot_token: '', chat_id: '', auto_start: false },
+    telegram: { bot_token: '', auto_start: false, registered_users: [], notify_all_users: true },
     target: { process_name: 'EndlessWar.exe', patterns: [] },
     notifications: {
       telegram_enabled: true,
@@ -36,8 +44,10 @@
       cooldown_seconds: 60,
     },
   };
+  let configLoaded = false;
 
   let isMonitoring = false;
+  let isBotRunning = false;
   let newPatternName = '';
   let newPatternBytes = '';
   let newPatternDesc = '';
@@ -113,12 +123,44 @@
     try {
       await invoke<string>('test_telegram', {
         token: config.telegram.bot_token,
-        chatId: config.telegram.chat_id,
       });
+      showStatus('Telegram подключён!');
+    } catch (e) {
+      showStatus(`Ошибка: ${e}`);
+    }
+  }
+
+  async function startBot() {
+    if (!config.telegram.bot_token) {
+      showStatus('Введите токен бота');
+      return;
+    }
+    try {
       await invoke<string>('start_telegram_bot', {
         token: config.telegram.bot_token,
       });
-      showStatus('Telegram бот запущен! Команда /myid теперь доступна');
+      isBotRunning = true;
+      showStatus('Бот запущен! Команда /start теперь доступна');
+    } catch (e) {
+      showStatus(`Ошибка: ${e}`);
+    }
+  }
+
+  async function toggleUser(chatId: string, enabled: boolean) {
+    try {
+      await invoke<string>('set_user_enabled', { chatId, enabled });
+      config = await invoke<Config>('get_config');
+      showStatus(`Пользователь ${enabled ? 'включён' : 'отключён'}`);
+    } catch (e) {
+      showStatus(`Ошибка: ${e}`);
+    }
+  }
+
+  async function toggleNotifyAll() {
+    try {
+      await invoke<string>('set_notify_all_users', { enabled: !config.telegram.notify_all_users });
+      config = await invoke<Config>('get_config');
+      showStatus(config.telegram.notify_all_users ? 'Рассылка включена' : 'Рассылка отключена');
     } catch (e) {
       showStatus(`Ошибка: ${e}`);
     }
@@ -127,8 +169,14 @@
   onMount(async () => {
     try {
       config = await invoke<Config>('get_config');
+      configLoaded = true;
+      // Check if bot should be running (auto_start with token)
+      if (config.telegram.bot_token && config.telegram.auto_start) {
+        isBotRunning = true;
+      }
     } catch (e) {
       console.error('Failed to load config:', e);
+      configLoaded = true;
     }
 
     await listen('notification', (event: any) => {
@@ -157,6 +205,15 @@
         showStatus(`Ошибка: ${e}`);
       }
     });
+
+    // Refresh config periodically for user list updates
+    setInterval(async () => {
+      try {
+        config = await invoke<Config>('get_config');
+      } catch (e) {
+        // Ignore errors
+      }
+    }, 5000);
   });
 
   let notifications: Array<{ title: string; body: string; time: string }> = [];
@@ -189,6 +246,10 @@
         <span class="nav-icon">🔔</span>
         <span>Уведомления</span>
       </button>
+      <button class="nav-item" class:active={currentPage === 'users'} onclick={() => showPage('users')}>
+        <span class="nav-icon">👥</span>
+        <span>Пользователи</span>
+      </button>
     </nav>
     <div class="sidebar-footer">
       <div class="version">v0.1.0</div>
@@ -196,7 +257,9 @@
   </aside>
 
   <main class="content">
-    {#if currentPage === 'dashboard'}
+    {#if !configLoaded}
+      <div class="loading">Загрузка...</div>
+    {:else if currentPage === 'dashboard'}
       <div class="page-header">
         <h1>Дашборд</h1>
       </div>
@@ -227,21 +290,27 @@
           <div class="card-body">
             <div class="info-row">
               <span class="info-label">Процесс:</span>
-              <span class="info-value">{config.target.process_name}</span>
+              <span class="info-value">{config.target?.process_name || 'EndlessWar.exe'}</span>
             </div>
             <div class="info-row">
               <span class="info-label">Паттернов:</span>
-              <span class="info-value">{config.target.patterns.length}</span>
+              <span class="info-value">{config.target?.patterns?.length || 0}</span>
             </div>
             <div class="info-row">
-              <span class="info-label">Telegram:</span>
-              <span class="info-value" class:enabled={config.notifications.telegram_enabled}>
-                {config.notifications.telegram_enabled ? 'Включен' : 'Выключен'}
+              <span class="info-label">Telegram-уведомления:</span>
+              <span class="info-value" class:enabled={config.notifications?.telegram_enabled}>
+                {config.notifications?.telegram_enabled ? 'Включены' : 'Выключены'}
+              </span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Telegram-бот:</span>
+              <span class="info-value" class:enabled={isBotRunning}>
+                {isBotRunning ? 'Запущен' : 'Остановлен'}
               </span>
             </div>
             <div class="info-row">
               <span class="info-label">Кулдаун:</span>
-              <span class="info-value">{config.notifications.cooldown_seconds} сек</span>
+              <span class="info-value">{config.notifications?.cooldown_seconds || 60} сек</span>
             </div>
           </div>
         </div>
@@ -283,10 +352,6 @@
               <input type="text" bind:value={config.telegram.bot_token} placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz" />
             </div>
             <div class="form-group">
-              <label>Chat ID</label>
-              <input type="text" bind:value={config.telegram.chat_id} placeholder="123456789" />
-            </div>
-            <div class="form-group">
               <label class="checkbox-label">
                 <input type="checkbox" bind:checked={config.notifications.telegram_enabled} />
                 <span>Включить Telegram уведомления</span>
@@ -298,7 +363,12 @@
                 <span>Автозапуск бота при старте приложения</span>
               </label>
             </div>
-            <button class="btn btn-secondary" onclick={testTelegram}>🔗 Проверить Telegram</button>
+            <div class="button-row">
+              <button class="btn btn-secondary" onclick={testTelegram}>🔗 Проверить</button>
+              <button class="btn btn-success" onclick={startBot} disabled={isBotRunning}>
+                {isBotRunning ? '✅ Бот запущен' : '▶ Запустить бота'}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -370,10 +440,10 @@
 
         <div class="card">
           <div class="card-header">
-            <h2>Список паттернов ({config.target.patterns.length})</h2>
+            <h2>Список паттернов ({(config.target?.patterns || []).length})</h2>
           </div>
           <div class="card-body">
-            {#if config.target.patterns.length === 0}
+            {#if (config.target?.patterns || []).length === 0}
               <p class="empty-text">Нет паттернов</p>
             {:else}
               <ul class="pattern-list">
@@ -414,6 +484,57 @@
                       <span class="notif-time">{notif.time}</span>
                       <span class="notif-title">{notif.title}</span>
                       <span class="notif-body">{notif.body}</span>
+                    </div>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    {#if currentPage === 'users'}
+      <div class="page-header">
+        <h1>Управление пользователями</h1>
+      </div>
+      <div class="users-page">
+        <div class="card">
+          <div class="card-header">
+            <h2>Зарегистрированные пользователи ({(config.telegram?.registered_users || []).length})</h2>
+          </div>
+          <div class="card-body">
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input 
+                  type="checkbox" 
+                  checked={config.telegram?.notify_all_users ?? true} 
+                  onchange={() => toggleNotifyAll()} 
+                />
+                <span>Отправлять уведомления всем зарегистрированным пользователям</span>
+              </label>
+            </div>
+            {#if (config.telegram?.registered_users || []).length === 0}
+              <p class="empty-text">Нет зарегистрированных пользователей</p>
+              <p class="hint-text">Пользователи автоматически добавляются при отправке команды /start боту</p>
+            {:else}
+              <ul class="user-list">
+                {#each config.telegram.registered_users as user}
+                  <li class="user-item">
+                    <div class="user-info">
+                      <span class="user-name">{user.first_name || 'Unknown'}</span>
+                      <span class="user-username">@{user.username || '-'}</span>
+                      <span class="user-id">ID: {user.chat_id}</span>
+                    </div>
+                    <div class="user-actions">
+                      <button 
+                        class="btn btn-sm" 
+                        class:btn-success={user.enabled} 
+                        class:btn-danger={!user.enabled}
+                        onclick={() => toggleUser(user.chat_id, !user.enabled)}
+                      >
+                        {user.enabled ? '✅ Включён' : '❌ Отключён'}
+                      </button>
                     </div>
                   </li>
                 {/each}
@@ -875,5 +996,77 @@
       transform: translateY(0);
       opacity: 1;
     }
+  }
+
+  .button-row {
+    display: flex;
+    gap: 12px;
+    margin-top: 16px;
+  }
+
+  .users-page .card-body {
+    max-height: 600px;
+    overflow-y: auto;
+  }
+
+  .user-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .user-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px;
+    background: #16162a;
+    border-radius: 10px;
+    border: 1px solid #2a2a4a;
+  }
+
+  .user-info {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex: 1;
+  }
+
+  .user-name {
+    font-weight: 600;
+    color: #ffffff;
+    min-width: 100px;
+  }
+
+  .user-username {
+    color: #6366f1;
+    min-width: 100px;
+  }
+
+  .user-id {
+    color: #555577;
+    font-size: 13px;
+  }
+
+  .user-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .hint-text {
+    color: #555577;
+    font-size: 13px;
+    text-align: center;
+    padding: 20px;
+  }
+
+  .loading {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 200px;
+    color: #8888aa;
+    font-size: 18px;
   }
 </style>

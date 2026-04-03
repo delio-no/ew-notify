@@ -24,6 +24,7 @@ tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
+dirs = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windivert = "0.2"

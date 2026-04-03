@@ -130,8 +130,19 @@ async fn remove_pattern(state: State<'_, AppState>, name: String) -> Result<Stri
 
 #[tauri::command]
 async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, String> {
-    let config = state.config.lock().await;
-    Ok(config.clone())
+    // Reload from disk to get latest changes (e.g., new users from bot)
+    match config::load_config() {
+        Ok(new_config) => {
+            let mut config = state.config.lock().await;
+            *config = new_config.clone();
+            Ok(new_config)
+        }
+        Err(_) => {
+            // Fallback to in-memory config
+            let config = state.config.lock().await;
+            Ok(config.clone())
+        }
+    }
 }
 
 #[tauri::command]
@@ -150,26 +161,50 @@ async fn get_patterns(state: State<'_, AppState>) -> Result<Vec<Pattern>, String
 }
 
 #[tauri::command]
-async fn test_telegram(token: String, chat_id: String) -> Result<String, String> {
-    telegram::test_connection(&token, &chat_id)
+async fn test_telegram(token: String) -> Result<String, String> {
+    telegram::test_connection(&token)
         .await
         .map_err(|e| e.to_string())?;
     Ok("Telegram connected successfully!".to_string())
 }
 
 #[tauri::command]
-async fn start_telegram_bot(token: String) -> Result<String, String> {
+async fn start_telegram_bot(state: State<'_, AppState>, token: String) -> Result<String, String> {
     if token.is_empty() {
         return Err("Token is empty".to_string());
     }
     
+    let config = state.config.clone();
+    
     tokio::spawn(async move {
-        if let Err(e) = telegram::start_bot(&token).await {
+        if let Err(e) = telegram::start_bot(&token, config).await {
             tracing::error!("Failed to start telegram bot: {}", e);
         }
     });
     
     Ok("Telegram bot started!".to_string())
+}
+
+#[tauri::command]
+async fn get_registered_users(state: State<'_, AppState>) -> Result<Vec<config::RegisteredUser>, String> {
+    let config = state.config.lock().await;
+    Ok(config.telegram.registered_users.clone())
+}
+
+#[tauri::command]
+async fn set_user_enabled(state: State<'_, AppState>, chat_id: String, enabled: bool) -> Result<String, String> {
+    let mut config = state.config.lock().await;
+    config::set_user_enabled(&mut config, &chat_id, enabled);
+    config::save_config(&config).map_err(|e| e.to_string())?;
+    Ok(format!("User {} {}", chat_id, if enabled { "enabled" } else { "disabled" }))
+}
+
+#[tauri::command]
+async fn set_notify_all_users(state: State<'_, AppState>, enabled: bool) -> Result<String, String> {
+    let mut config = state.config.lock().await;
+    config.telegram.notify_all_users = enabled;
+    config::save_config(&config).map_err(|e| e.to_string())?;
+    Ok(format!("Notify all users: {}", enabled))
 }
 
 pub fn run() {
@@ -253,11 +288,11 @@ pub fn run() {
 
             if let Some(token) = auto_start_token.clone() {
                 info!("Auto-starting Telegram bot...");
-                let app_handle = app.handle().clone();
+                let config = Arc::new(Mutex::new(config.clone()));
                 std::thread::spawn(move || {
                     let rt = tokio::runtime::Runtime::new().unwrap();
                     rt.block_on(async move {
-                        if let Err(e) = telegram::start_bot(&token).await {
+                        if let Err(e) = telegram::start_bot(&token, config).await {
                             tracing::error!("Failed to start telegram bot: {}", e);
                         }
                     });
@@ -276,6 +311,9 @@ pub fn run() {
             get_patterns,
             test_telegram,
             start_telegram_bot,
+            get_registered_users,
+            set_user_enabled,
+            set_notify_all_users,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
