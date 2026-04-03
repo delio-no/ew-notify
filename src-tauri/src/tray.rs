@@ -1,18 +1,11 @@
-use tauri::{AppHandle, Manager};
+use crate::config::AppConfig;
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::Mutex;
 use tracing::info;
 
-pub fn show_notification(app: &AppHandle, title: &str, body: &str) {
+pub fn show_notification(config: &Arc<Mutex<AppConfig>>, title: &str, body: &str) {
     info!("Showing tray notification: {} - {}", title, body);
-
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.emit(
-            "notification",
-            serde_json::json!({
-                "title": title,
-                "body": body
-            }),
-        );
-    }
 
     #[cfg(windows)]
     {

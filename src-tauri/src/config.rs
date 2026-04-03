@@ -15,7 +15,10 @@ impl Default for AppConfig {
         Self {
             telegram: TelegramConfig {
                 bot_token: String::new(),
-                chat_id: String::new(),
+                admin_chat_id: String::new(),
+                auto_start: false,
+                registered_users: Vec::new(),
+                notify_all_users: true,
             },
             target: TargetConfig {
                 process_name: "EndlessWar.exe".to_string(),
@@ -44,7 +47,18 @@ impl Default for AppConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelegramConfig {
     pub bot_token: String,
+    pub admin_chat_id: String,
+    pub auto_start: bool,
+    pub registered_users: Vec<RegisteredUser>,
+    pub notify_all_users: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisteredUser {
     pub chat_id: String,
+    pub username: Option<String>,
+    pub first_name: Option<String>,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,7 +89,6 @@ impl Pattern {
         if bytes.is_empty() {
             return Err(anyhow!("Pattern bytes cannot be empty"));
         }
-        Self::parse_hex(&bytes)?;
         Ok(Self {
             name,
             bytes,
@@ -83,37 +96,34 @@ impl Pattern {
         })
     }
 
-    pub fn parse_hex(hex: &str) -> Result<Vec<u8>> {
-        let hex_clean = hex.replace(' ', "");
-        if hex_clean.len() % 2 != 0 {
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let bytes_str = self.bytes.replace(" ", "");
+        if bytes_str.len() % 2 != 0 {
             return Err(anyhow!("Invalid hex string: odd length"));
         }
         let mut bytes = Vec::new();
-        for i in (0..hex_clean.len()).step_by(2) {
-            let byte_str = &hex_clean[i..i + 2];
-            let byte = u8::from_str_radix(byte_str, 16)
-                .map_err(|_| anyhow!("Invalid hex byte: {}", byte_str))?;
+        for i in (0..bytes_str.len()).step_by(2) {
+            let byte = u8::from_str_radix(&bytes_str[i..i + 2], 16)
+                .map_err(|_| anyhow!("Invalid hex byte"))?;
             bytes.push(byte);
         }
         Ok(bytes)
     }
-
-    pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        Self::parse_hex(&self.bytes)
-    }
 }
 
 fn get_config_path() -> PathBuf {
-    let mut path = std::env::current_exe().unwrap_or_default();
-    path.set_file_name("config.json");
-    if !path.exists() {
-        path = PathBuf::from("config.json");
-    }
+    let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+    path.push("ew_notify");
+    fs::create_dir_all(&path).ok();
+    path.push("config.json");
     path
 }
 
 pub fn load_config() -> Result<AppConfig> {
     let path = get_config_path();
+    if !path.exists() {
+        return Err(anyhow!("Config file not found"));
+    }
     let content = fs::read_to_string(&path)?;
     let config: AppConfig = serde_json::from_str(&content)?;
     Ok(config)
@@ -122,6 +132,28 @@ pub fn load_config() -> Result<AppConfig> {
 pub fn save_config(config: &AppConfig) -> Result<()> {
     let path = get_config_path();
     let content = serde_json::to_string_pretty(config)?;
-    fs::write(path, content)?;
+    fs::write(&path, content)?;
     Ok(())
+}
+
+pub fn add_registered_user(config: &mut AppConfig, user: RegisteredUser) {
+    if !config
+        .telegram
+        .registered_users
+        .iter()
+        .any(|u| u.chat_id == user.chat_id)
+    {
+        config.telegram.registered_users.push(user);
+    }
+}
+
+pub fn set_user_enabled(config: &mut AppConfig, chat_id: &str, enabled: bool) {
+    if let Some(user) = config
+        .telegram
+        .registered_users
+        .iter_mut()
+        .find(|u| u.chat_id == chat_id)
+    {
+        user.enabled = enabled;
+    }
 }
