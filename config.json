@@ -1,0 +1,26 @@
+{
+  "telegram": {
+    "bot_token": "",
+    "chat_id": ""
+  },
+  "target": {
+    "process_name": "EndlessWar.exe",
+    "patterns": [
+      {
+        "name": "event_started",
+        "bytes": "A1B2C3D4",
+        "description": "Событие началось"
+      },
+      {
+        "name": "tournament",
+        "bytes": "FF000100",
+        "description": "Турнир"
+      }
+    ]
+  },
+  "notifications": {
+    "telegram_enabled": true,
+    "tray_enabled": true,
+    "cooldown_seconds": 60
+  }
+}
