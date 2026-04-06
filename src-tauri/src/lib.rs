@@ -46,10 +46,11 @@ async fn start_monitoring(
         let analyzer = state.analyzer.lock().await;
         let _patterns = analyzer.get_patterns().clone();
         let config = state.config.clone();
+        let capture = state.capture.clone();
         let analyzer = state.analyzer.clone();
 
         tokio::spawn(async move {
-            let mut capture_guard = config.lock().await;
+            let mut capture_guard = capture.lock().await;
             if let Some(ref mut capture) = *capture_guard {
                 while let Ok(packet) = capture.read_packet() {
                     let pattern = analyzer.lock().await.analyze(&packet);

@@ -10,7 +10,7 @@ pub fn show_notification(config: &Arc<Mutex<AppConfig>>, title: &str, body: &str
     #[cfg(windows)]
     {
         if let Err(e) = notify_rust::Notification::new()
-            .title(title)
+            .summary(title)
             .body(body)
             .show()
         {

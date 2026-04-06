@@ -57,36 +57,32 @@ impl PacketAnalyzer {
 #[cfg(windows)]
 pub mod win {
     use anyhow::Result;
-    use windivert::{WinDivert, WinDivertAddress, WinDivertDirection, WinDivertPacket};
+    use windivert::prelude::*;
 
     pub struct PacketCapture {
-        handle: WinDivert,
+        handle: WinDivert<NetworkLayer>,
     }
 
     impl PacketCapture {
         pub fn new(_process_name: &str) -> Result<Self> {
             let filter = "tcp.SrcPort == 0".to_string();
-            let handle = WinDivert::new(&filter, WinDivertDirection::Outbound, 0, true)?;
+            let handle = WinDivert::network(&filter, 0, WinDivertFlags::default())?;
             Ok(Self { handle })
         }
 
         pub fn read_packet(&mut self) -> Result<Vec<u8>> {
-            let mut packet_buf = [0u8; 65535];
-            let mut addr = WinDivertAddress::default();
-            let len = self.handle.recv(&mut packet_buf, &mut addr)?;
-            Ok(packet_buf[..len].to_vec())
+            let packet = self.handle.recv(None)?;
+            Ok(packet.data.to_vec())
         }
     }
 
     pub fn get_process_packets(process_name: &str) -> Result<Vec<Vec<u8>>> {
         let filter = format!("process.name == \"{}\"", process_name);
-        let handle = WinDivert::new(&filter, WinDivertDirection::Outbound, 0, true)?;
+        let handle = WinDivert::network(&filter, 0, WinDivertFlags::default())?;
         let mut packets = Vec::new();
-        let mut packet_buf = [0u8; 65535];
-        let mut addr = WinDivertAddress::default();
         loop {
-            match handle.recv(&mut packet_buf, &mut addr) {
-                Ok(len) => packets.push(packet_buf[..len].to_vec()),
+            match handle.recv(None) {
+                Ok(packet) => packets.push(packet.data.to_vec()),
                 Err(_) => break,
             }
         }
