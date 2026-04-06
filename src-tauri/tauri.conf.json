@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "identifier": "com.ewnotify.app",
   "build": {
-    "devtools": true,
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
     "devUrl": "http://localhost:1420",
@@ -26,7 +25,11 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
-    "identifier": "com.ewnotify.app"
+    "targets": ["msi", "nsis"],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    }
   }
 }

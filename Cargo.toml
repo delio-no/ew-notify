@@ -15,10 +15,10 @@ tokio = { version = "1", features = ["full"] }
 teloxide = "0.13"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-windivert = "0.2"
 thiserror = "1"
 anyhow = "1"
 chrono = "0.4"
+dirs = "5"
 
 [profile.release]
 strip = true
