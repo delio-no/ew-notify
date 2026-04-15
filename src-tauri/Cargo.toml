@@ -30,5 +30,9 @@ dirs = { workspace = true }
 windivert = { version = "0.6", features = ["vendored"] }
 notify-rust = "4"
 
+[target.'cfg(not(windows))'.dependencies]
+pcap = { version = "2", features = ["capture-stream"] }
+nix = "0.28"
+
 [features]
 custom-protocol = ["tauri/custom-protocol"]
