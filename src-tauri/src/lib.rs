@@ -1053,6 +1053,43 @@ async fn test_pattern_hex(
     }
 }
 
+#[tauri::command]
+async fn open_url(url: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::Shell::ShellExecuteW;
+
+        let wide_url: Vec<u16> =
+            OsStr::new(&url).encode_wide().chain(std::iter::once(0)).collect();
+        let wide_op: Vec<u16> =
+            OsStr::new("open").encode_wide().chain(std::iter::once(0)).collect();
+
+        unsafe {
+            let res = ShellExecuteW(
+                HWND(0),
+                PCWSTR(wide_op.as_ptr()),
+                PCWSTR(wide_url.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                windows::Win32::UI::WindowsAndMessaging::SHOW_WINDOW_CMD(1),
+            );
+            if res.0 <= 32 {
+                return Err(format!("Failed to open URL: code {}", res.0));
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = url;
+        Ok(())
+    }
+}
+
 pub fn run() {
     if let Err(e) = platform::ensure_single_instance() {
         eprintln!("{e}");
@@ -1263,6 +1300,7 @@ pub fn run() {
             get_registered_users,
             set_user_enabled,
             set_notify_all_users,
+            open_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

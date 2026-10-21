@@ -50,4 +50,5 @@ export const api = {
   startTelegramBot: (token: string) =>
     invoke<string>('start_telegram_bot', { token }),
   stopTelegramBot: () => invoke('stop_telegram_bot'),
+  openUrl: (url: string) => invoke('open_url', { url }),
 };
