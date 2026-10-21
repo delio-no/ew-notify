@@ -271,32 +271,66 @@ pub fn ensure_default_patterns(config: &mut AppConfig) -> bool {
     }
 }
 
-pub fn load_config() -> Result<AppConfig> {
-    let path = get_config_path();
-    maybe_migrate_from_cwd(&path);
+pub fn load_config_from_path(path: &std::path::Path) -> Result<AppConfig> {
     if !path.exists() {
         return Err(anyhow!("Config file not found at {}", path.display()));
     }
-    let content = fs::read_to_string(&path)?;
+    let content = fs::read_to_string(path)?;
     let mut config: AppConfig = serde_json::from_str(&content)?;
-    if ensure_default_patterns(&mut config) {
+
+    let raw_token = config.telegram.bot_token.clone();
+    let was_encrypted = raw_token.starts_with("enc:dpapi:");
+
+    match crate::crypto::decrypt_string(&raw_token) {
+        Ok(decrypted) => config.telegram.bot_token = decrypted,
+        Err(e) => {
+            tracing::error!("Failed to decrypt telegram.bot_token: {e}");
+        }
+    }
+
+    let patterns_restored = ensure_default_patterns(&mut config);
+    if patterns_restored {
         tracing::warn!(
             "config at {} had empty patterns — restored DEATH/STOP_FARM",
             path.display()
         );
-        let _ = save_config(&config);
     }
+
+    // Auto-migrate plaintext token on disk to encrypted
+    if (!was_encrypted && !config.telegram.bot_token.is_empty()) || patterns_restored {
+        let _ = save_config_to_path(&config, path);
+    }
+
     Ok(config)
+}
+
+pub fn save_config_to_path(config: &AppConfig, path: &std::path::Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let mut disk_config = config.clone();
+    if !disk_config.telegram.bot_token.is_empty() {
+        match crate::crypto::encrypt_string(&disk_config.telegram.bot_token) {
+            Ok(enc) => disk_config.telegram.bot_token = enc,
+            Err(e) => {
+                tracing::error!("Could not encrypt bot_token for disk save: {e}");
+            }
+        }
+    }
+    let content = serde_json::to_string_pretty(&disk_config)?;
+    fs::write(path, content)?;
+    Ok(())
+}
+
+pub fn load_config() -> Result<AppConfig> {
+    let path = get_config_path();
+    maybe_migrate_from_cwd(&path);
+    load_config_from_path(&path)
 }
 
 pub fn save_config(config: &AppConfig) -> Result<()> {
     let path = get_config_path();
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let content = serde_json::to_string_pretty(config)?;
-    fs::write(&path, content)?;
-    Ok(())
+    save_config_to_path(config, &path)
 }
 
 pub fn add_registered_user(config: &mut AppConfig, user: RegisteredUser) {
@@ -468,5 +502,74 @@ mod tests {
         add_registered_user(&mut cfg, u.clone());
         add_registered_user(&mut cfg, u);
         assert_eq!(cfg.telegram.registered_users.len(), 1);
+    }
+
+    #[test]
+    fn test_config_token_encrypted_on_disk() {
+        let temp_dir = std::env::temp_dir().join(format!("ew_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let config_path = temp_dir.join("config.json");
+
+        let mut cfg = AppConfig::default();
+        cfg.telegram.bot_token = "123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_123456".into();
+
+        // 1. Save to disk -> must be encrypted on disk
+        save_config_to_path(&cfg, &config_path).expect("save failed");
+        let disk_content = fs::read_to_string(&config_path).expect("read failed");
+        assert!(disk_content.contains("enc:dpapi:"), "Token on disk must be encrypted with enc:dpapi:");
+        assert!(!disk_content.contains("123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_123456"), "Plaintext token must not be written to disk");
+
+        // 2. Load from disk -> in memory must be plaintext
+        let loaded = load_config_from_path(&config_path).expect("load failed");
+        assert_eq!(loaded.telegram.bot_token, "123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_123456");
+
+        // Cleanup
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_config_plaintext_token_auto_migration() {
+        let temp_dir = std::env::temp_dir().join(format!("ew_test_mig_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let config_path = temp_dir.join("config.json");
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let raw_json = r#"{
+            "telegram": {
+                "bot_token": "plain_token_12345",
+                "admin_chat_id": "",
+                "auto_start": false,
+                "registered_users": [],
+                "notify_all_users": true
+            },
+            "target": {
+                "process_name": "EndlessWar.exe",
+                "capture_mode": "auto",
+                "tcp_port": 7777,
+                "udp_port": null,
+                "remote_ip": null,
+                "patterns": [
+                    { "name": "DEATH", "bytes": "00FE", "description": "d" }
+                ]
+            },
+            "notifications": {
+                "telegram_enabled": true,
+                "tray_enabled": true,
+                "cooldown_seconds": 60,
+                "burst_dedup_ms": 2000
+            },
+            "startup": {
+                "auto_start_monitoring": false,
+                "start_minimized_to_tray": false,
+                "close_to_tray": true
+            }
+        }"#;
+        fs::write(&config_path, raw_json).unwrap();
+
+        let loaded = load_config_from_path(&config_path).expect("load failed");
+        assert_eq!(loaded.telegram.bot_token, "plain_token_12345");
+
+        let disk_content_after = fs::read_to_string(&config_path).unwrap();
+        assert!(disk_content_after.contains("enc:dpapi:"), "Plaintext token must be automatically migrated to encrypted on disk");
+
+        let _ = fs::remove_dir_all(temp_dir);
     }
 }

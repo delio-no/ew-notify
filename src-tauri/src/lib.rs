@@ -1,4 +1,5 @@
 pub mod config;
+pub mod crypto;
 pub mod logging;
 pub mod packet;
 pub mod packet_log;
