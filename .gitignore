@@ -7,17 +7,26 @@ src-tauri/target/
 .vscode/
 *.swp
 *.swo
+.kilo/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Env files
+# Env / secrets
 .env
 .env.local
+*.pem
+*.key
+
+# Local runtime config may contain Telegram bot tokens — do not commit filled copies
+# (tracked empty template config.json in repo root is OK; ignore debug copies)
+target/**/config.json
+src-tauri/**/config.local.json
 
 # Logs
 *.log
+**/app.log
 
 # Dist (frontend build)
 dist/
@@ -25,5 +34,7 @@ dist/
 # Node modules
 node_modules/
 
-# Optional Cargo.lock (use if needed)
-# Cargo.lock
+# WinDivert binaries are large / redistributable — keep local, don't force-commit if unwanted
+# Uncomment if you prefer not to track driver files:
+# src-tauri/windivert/*.dll
+# src-tauri/windivert/*.sys

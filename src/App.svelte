@@ -1,58 +1,115 @@
 <script lang="ts">
-  import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { onMount } from 'svelte';
+  import { api } from './lib/api';
+  import {
+    defaultConfig,
+    type Config,
+    type MonitoringStatus,
+    type PageId,
+    type PacketLogEntry,
+    type Pattern,
+    type StoredNotification,
+  } from './lib/types';
+  import Sidebar from './components/Sidebar.svelte';
+  import Toast from './components/Toast.svelte';
+  import DashboardPage from './components/pages/DashboardPage.svelte';
+  import SettingsPage from './components/pages/SettingsPage.svelte';
+  import PatternsPage from './components/pages/PatternsPage.svelte';
+  import NotificationsPage from './components/pages/NotificationsPage.svelte';
+  import UsersPage from './components/pages/UsersPage.svelte';
+  import ConsolePage from './components/pages/ConsolePage.svelte';
 
-  interface Pattern {
-    name: string;
-    bytes: string;
-    description: string;
-  }
-
-  interface RegisteredUser {
-    chat_id: string;
-    username: string | null;
-    first_name: string | null;
-    enabled: boolean;
-  }
-
-  interface Config {
-    telegram: {
-      bot_token: string;
-      auto_start: boolean;
-      registered_users: RegisteredUser[];
-      notify_all_users: boolean;
-    };
-    target: {
-      process_name: string;
-      patterns: Pattern[];
-    };
-    notifications: {
-      telegram_enabled: boolean;
-      tray_enabled: boolean;
-      cooldown_seconds: number;
-    };
-  }
-
-  let currentPage = 'dashboard';
-  let config: Config = {
-    telegram: { bot_token: '', auto_start: false, registered_users: [], notify_all_users: true },
-    target: { process_name: 'EndlessWar.exe', patterns: [] },
-    notifications: {
-      telegram_enabled: true,
-      tray_enabled: true,
-      cooldown_seconds: 60,
-    },
-  };
-  let configLoaded = false;
-
-  let isMonitoring = false;
-  let isBotRunning = false;
-  let newPatternName = '';
-  let newPatternBytes = '';
-  let newPatternDesc = '';
-  let statusMessage = '';
+  let currentPage = $state<PageId>('dashboard');
+  let config = $state<Config>(defaultConfig());
+  let configLoaded = $state(false);
+  let isMonitoring = $state(false);
+  let isBotRunning = $state(false);
+  let monitorStatus = $state<MonitoringStatus>({
+    active: false,
+    process_name: '',
+    tcp_port: null,
+    filter: '',
+    packets_seen: 0,
+    matches_seen: 0,
+    dedup_suppressed: 0,
+    process_filter_active: false,
+    bot_running: false,
+    last_error: '',
+    is_admin: false,
+    config_path: '',
+    log_path: '',
+    capture_mode: 'auto',
+    discovered_endpoints: [],
+    packet_log_enabled: false,
+    packet_log_skipped: 0,
+  });
+  let packetsSeen = $state(0);
+  let matchesSeen = $state(0);
+  let dedupSuppressed = $state(0);
+  let isAdmin = $state(false);
+  let configPath = $state('');
+  let logPath = $state('');
+  let captureMode = $state('auto');
+  let discoveredEndpoints = $state<string[]>([]);
+  let activeFilter = $state('');
+  let activePort = $state<number | null>(null);
+  let packetLogEnabled = $state(false);
+  let packetLines = $state<PacketLogEntry[]>([]);
+  let showBotToken = $state(false);
+  let lastError = $state('');
+  let lastPollAt = $state('—');
+  let pollErrors = $state(0);
+  let logLines = $state<Array<{ time: string; message: string }>>([]);
+  let consoleAutoScroll = $state(true);
+  let consoleEl = $state<HTMLPreElement | undefined>(undefined);
+  let newPatternName = $state('');
+  let newPatternBytes = $state('');
+  let newPatternDesc = $state('');
+  let patternTouched = $state({ name: false, bytes: false, desc: false });
+  let patternSubmitAttempted = $state(false);
+  let testHexInput = $state('');
+  let testHexResult = $state('');
+  let statusMessage = $state('');
   let statusTimeout: ReturnType<typeof setTimeout>;
+  let notifications = $state<StoredNotification[]>([]);
+
+  function patternNameError(value: string): string | null {
+    const name = value.trim();
+    if (!name) return 'Укажи название паттерна';
+    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) {
+      return 'Латиница, цифры и _ без пробелов (например STOP_FARM)';
+    }
+    return null;
+  }
+
+  function patternBytesError(value: string): string | null {
+    const raw = value.trim();
+    if (!raw) return 'Укажи hex-байты';
+    const cleaned = raw.replace(/\s+/g, '');
+    if (!/^[0-9A-Fa-f]+$/.test(cleaned)) {
+      return 'Только шестнадцатеричные символы 0-9 A-F (пробелы можно)';
+    }
+    if (cleaned.length % 2 !== 0) return 'Нечётная длина — байты идут парами';
+    if (cleaned.length < 2) return 'Минимум 1 байт';
+    return null;
+  }
+
+  function patternDescError(value: string): string | null {
+    if (!value.trim()) return 'Описание события обязательно';
+    return null;
+  }
+
+  let nameFieldError = $derived(
+    patternTouched.name || patternSubmitAttempted ? patternNameError(newPatternName) : null,
+  );
+  let bytesFieldError = $derived(
+    patternTouched.bytes || patternSubmitAttempted ? patternBytesError(newPatternBytes) : null,
+  );
+  let descFieldError = $derived(
+    patternTouched.desc || patternSubmitAttempted ? patternDescError(newPatternDesc) : null,
+  );
+  let isCaptureAuto = $derived((config.target.capture_mode || 'auto') === 'auto');
 
   function showStatus(message: string) {
     statusMessage = message;
@@ -62,38 +119,184 @@
     }, 10000);
   }
 
-  async function startMonitoring() {
+  function applyMonitorStatus(status: MonitoringStatus) {
+    monitorStatus = { ...status };
+    isMonitoring = !!status.active;
+    isBotRunning = !!status.bot_running;
+    packetsSeen = Number(status.packets_seen) || 0;
+    matchesSeen = Number(status.matches_seen) || 0;
+    dedupSuppressed = Number(status.dedup_suppressed) || 0;
+    isAdmin = !!status.is_admin;
+    configPath = status.config_path || '';
+    logPath = status.log_path || '';
+    captureMode = status.capture_mode || config.target.capture_mode || 'auto';
+    discoveredEndpoints = status.discovered_endpoints || [];
+    activeFilter = status.filter || '';
+    activePort = status.tcp_port;
+    packetLogEnabled = !!status.packet_log_enabled;
+    lastError = status.last_error || '';
+    lastPollAt = new Date().toLocaleTimeString();
+  }
+
+  async function refreshUsers() {
     try {
-      await invoke('start_monitoring');
-      isMonitoring = true;
-      showStatus('Мониторинг запущен');
+      const users = await api.getRegisteredUsers();
+      const cfg = await api.getConfig();
+      config = {
+        ...config,
+        telegram: {
+          ...config.telegram,
+          registered_users: [...users],
+          notify_all_users: cfg.telegram.notify_all_users,
+          bot_token: cfg.telegram.bot_token || config.telegram.bot_token,
+          admin_chat_id: cfg.telegram.admin_chat_id ?? config.telegram.admin_chat_id ?? '',
+          auto_start: cfg.telegram.auto_start,
+        },
+      };
+    } catch (e) {
+      console.error('refreshUsers failed', e);
+    }
+  }
+
+  async function refreshMonitorStatus() {
+    try {
+      const status = await api.getMonitoringStatus();
+      applyMonitorStatus(status);
+      const notes = await api.getRecentNotifications();
+      notifications = notes.map((n) => ({ title: n.title, body: n.body, time: n.time }));
+    } catch (e) {
+      pollErrors += 1;
+      console.error('refreshMonitorStatus failed', e);
+      lastError = String(e);
+    }
+  }
+
+  async function refreshLogs() {
+    try {
+      logLines = await api.getRecentLogs();
+      if (consoleAutoScroll && consoleEl) {
+        requestAnimationFrame(() => {
+          if (consoleEl) consoleEl.scrollTop = consoleEl.scrollHeight;
+        });
+      }
+    } catch (e) {
+      console.error('refreshLogs failed', e);
+    }
+  }
+
+  async function refreshPackets() {
+    try {
+      packetLines = await api.getRecentPackets();
+    } catch (e) {
+      console.error('refreshPackets failed', e);
+    }
+  }
+
+  async function clearLogs() {
+    try {
+      await api.clearLogs();
+      logLines = [];
+      showStatus('Консоль очищена');
     } catch (e) {
       showStatus(`Ошибка: ${e}`);
     }
   }
 
+  async function clearPacketLog() {
+    try {
+      await api.clearPacketLog();
+      packetLines = [];
+      showStatus('Лог пакетов очищен');
+    } catch (e) {
+      showStatus(`Ошибка: ${e}`);
+    }
+  }
+
+  async function togglePacketLog() {
+    try {
+      const next = !packetLogEnabled;
+      await api.setPacketLogEnabled(next);
+      packetLogEnabled = next;
+      if (!next) packetLines = [];
+      showStatus(next ? 'Лог пакетов включён' : 'Лог пакетов выключен');
+    } catch (e) {
+      showStatus(`Ошибка: ${e}`);
+    }
+  }
+
+  async function createPatternFromHex(hex: string) {
+    const cleaned = hex.replace(/\s+/g, '');
+    if (!cleaned) {
+      showStatus('Пустой hex');
+      return;
+    }
+    const name = prompt('ID паттерна (латиница), например CUSTOM_EVENT:');
+    if (name == null) return;
+    const description = prompt('Описание события:');
+    if (description == null) return;
+    try {
+      await api.addPattern(name.trim(), cleaned, description.trim());
+      config = await api.getConfig();
+      showStatus(`Паттерн ${name.trim()} добавлен`);
+      currentPage = 'patterns';
+    } catch (e) {
+      showStatus(`Ошибка: ${e}`);
+    }
+  }
+
+  async function startMonitoring() {
+    try {
+      const result = await api.startMonitoring();
+      isMonitoring = true;
+      await refreshMonitorStatus();
+      showStatus(result || 'Мониторинг запущен');
+    } catch (e) {
+      showStatus(`Ошибка: ${e}`);
+      lastError = String(e);
+    }
+  }
+
   async function stopMonitoring() {
     try {
-      await invoke('stop_monitoring');
+      await api.stopMonitoring();
       isMonitoring = false;
+      await refreshMonitorStatus();
       showStatus('Мониторинг остановлен');
     } catch (e) {
       showStatus(`Ошибка: ${e}`);
     }
   }
 
-  async function addPattern() {
-    if (!newPatternName || !newPatternBytes) return;
+  async function hideToTray() {
     try {
-      await invoke('add_pattern', {
-        name: newPatternName,
-        bytes: newPatternBytes,
-        description: newPatternDesc,
-      });
-      config = await invoke<Config>('get_config');
+      await api.hideToTray();
+    } catch (e) {
+      showStatus(`Ошибка: ${e}`);
+    }
+  }
+
+  async function addPattern() {
+    patternSubmitAttempted = true;
+    patternTouched = { name: true, bytes: true, desc: true };
+    if (
+      patternNameError(newPatternName) ||
+      patternBytesError(newPatternBytes) ||
+      patternDescError(newPatternDesc)
+    ) {
+      return;
+    }
+    try {
+      await api.addPattern(
+        newPatternName.trim(),
+        newPatternBytes.trim().replace(/\s+/g, ''),
+        newPatternDesc.trim(),
+      );
+      config = await api.getConfig();
       newPatternName = '';
       newPatternBytes = '';
       newPatternDesc = '';
+      patternTouched = { name: false, bytes: false, desc: false };
+      patternSubmitAttempted = false;
       showStatus('Паттерн добавлен');
     } catch (e) {
       showStatus(`Ошибка: ${e}`);
@@ -102,9 +305,92 @@
 
   async function removePattern(name: string) {
     try {
-      await invoke('remove_pattern', { name });
-      config = await invoke<Config>('get_config');
+      await api.removePattern(name);
+      config = await api.getConfig();
       showStatus('Паттерн удалён');
+    } catch (e) {
+      showStatus(`Ошибка: ${e}`);
+    }
+  }
+
+  async function resetPatterns() {
+    if (!confirm('Сбросить паттерны к DEATH / STOP_FARM?')) return;
+    try {
+      const patterns = await api.resetPatterns();
+      config = { ...config, target: { ...config.target, patterns } };
+      showStatus('Паттерны сброшены');
+    } catch (e) {
+      showStatus(`Ошибка: ${e}`);
+    }
+  }
+
+  async function exportPatterns() {
+    try {
+      await navigator.clipboard.writeText(await api.exportPatterns());
+      showStatus('Паттерны скопированы в буфер');
+    } catch (e) {
+      showStatus(`Ошибка экспорта: ${e}`);
+    }
+  }
+
+  async function importPatterns(replace: boolean) {
+    const raw = prompt(
+      replace ? 'JSON паттернов (замена):' : 'JSON паттернов (merge):',
+    );
+    if (raw == null || !raw.trim()) return;
+    try {
+      const patterns = await api.importPatterns(raw.trim(), replace);
+      config = { ...config, target: { ...config.target, patterns } };
+      showStatus(`Импорт: паттернов ${patterns.length}`);
+    } catch (e) {
+      showStatus(`Ошибка импорта: ${e}`);
+    }
+  }
+
+  async function runHexTest() {
+    const hex = testHexInput.trim();
+    if (!hex) {
+      testHexResult = 'Вставь hex payload';
+      return;
+    }
+    try {
+      const r = await api.testPatternHex(hex);
+      testHexResult = r.matched ? `MATCH: ${r.name} — ${r.description}` : 'NO MATCH';
+    } catch (e) {
+      testHexResult = `Ошибка: ${e}`;
+    }
+  }
+
+  async function resetConfig() {
+    if (
+      !confirm(
+        'Сбросить все настройки?\nПаттерны DEATH/STOP_FARM, порт 7777. Токен и пользователи очистятся.',
+      )
+    ) {
+      return;
+    }
+    try {
+      const wasMonitoring = isMonitoring;
+      const defaults = await api.resetConfig();
+      config = {
+        ...defaults,
+        telegram: {
+          ...defaults.telegram,
+          admin_chat_id: defaults.telegram.admin_chat_id ?? '',
+        },
+        startup: {
+          auto_start_monitoring: !!defaults.startup?.auto_start_monitoring,
+          start_minimized_to_tray: !!defaults.startup?.start_minimized_to_tray,
+          close_to_tray: defaults.startup?.close_to_tray !== false,
+        },
+      };
+      if (wasMonitoring) {
+        await startMonitoring();
+        showStatus('Настройки сброшены, мониторинг перезапущен');
+      } else {
+        await refreshMonitorStatus();
+        showStatus('Настройки сброшены');
+      }
     } catch (e) {
       showStatus(`Ошибка: ${e}`);
     }
@@ -112,8 +398,62 @@
 
   async function saveConfig() {
     try {
-      await invoke('update_config', { newConfig: config });
-      showStatus('Конфигурация сохранена');
+      const wasMonitoring = isMonitoring;
+      const prevPort = monitorStatus.tcp_port;
+      const tcpPort = config.target.tcp_port;
+      const latest = await api.getConfig();
+      const patterns =
+        (config.target.patterns?.length ? config.target.patterns : null) ||
+        latest.target?.patterns ||
+        [];
+      const remoteRaw = (config.target.remote_ip ?? '').toString().trim();
+      const payload: Config = {
+        ...config,
+        telegram: {
+          ...config.telegram,
+          admin_chat_id: config.telegram.admin_chat_id ?? '',
+          registered_users: config.telegram.registered_users?.length
+            ? config.telegram.registered_users
+            : latest.telegram?.registered_users || [],
+        },
+        target: {
+          ...config.target,
+          capture_mode: config.target.capture_mode === 'manual' ? 'manual' : 'auto',
+          tcp_port:
+            tcpPort === null || tcpPort === undefined || (tcpPort as unknown) === ''
+              ? 7777
+              : Number(tcpPort),
+          udp_port: config.target.udp_port ?? null,
+          remote_ip: remoteRaw || null,
+          patterns,
+        },
+        notifications: {
+          ...config.notifications,
+          cooldown_seconds: Number(config.notifications.cooldown_seconds) || 0,
+          burst_dedup_ms:
+            config.notifications.burst_dedup_ms === undefined ||
+            config.notifications.burst_dedup_ms === null ||
+            (config.notifications.burst_dedup_ms as unknown) === ''
+              ? 2000
+              : Number(config.notifications.burst_dedup_ms),
+        },
+        startup: {
+          auto_start_monitoring: !!config.startup?.auto_start_monitoring,
+          start_minimized_to_tray: !!config.startup?.start_minimized_to_tray,
+          close_to_tray: config.startup?.close_to_tray !== false,
+        },
+      };
+      const result = await api.updateConfig(payload);
+      config = payload;
+      await refreshMonitorStatus();
+      if (result.includes('monitoring restarted') || result.includes('restart failed')) {
+        showStatus(result);
+      } else if (wasMonitoring && prevPort !== payload.target.tcp_port) {
+        await startMonitoring();
+        showStatus('Конфиг сохранён, мониторинг перезапущен');
+      } else {
+        showStatus(result.includes('Config updated') ? 'Конфигурация сохранена' : result);
+      }
     } catch (e) {
       showStatus(`Ошибка: ${e}`);
     }
@@ -121,9 +461,7 @@
 
   async function testTelegram() {
     try {
-      await invoke<string>('test_telegram', {
-        token: config.telegram.bot_token,
-      });
+      await api.testTelegram(config.telegram.bot_token);
       showStatus('Telegram подключён!');
     } catch (e) {
       showStatus(`Ошибка: ${e}`);
@@ -136,11 +474,38 @@
       return;
     }
     try {
-      await invoke<string>('start_telegram_bot', {
-        token: config.telegram.bot_token,
-      });
+      await api.startTelegramBot(config.telegram.bot_token);
       isBotRunning = true;
-      showStatus('Бот запущен! Команда /start теперь доступна');
+      await refreshMonitorStatus();
+      showStatus('Бот запущен');
+    } catch (e) {
+      showStatus(`Ошибка: ${e}`);
+    }
+  }
+
+  async function restartBot() {
+    if (!config.telegram.bot_token) {
+      showStatus('Введите токен бота');
+      return;
+    }
+    try {
+      await api.stopTelegramBot();
+      await new Promise((r) => setTimeout(r, 700));
+      await api.startTelegramBot(config.telegram.bot_token);
+      isBotRunning = true;
+      await refreshMonitorStatus();
+      showStatus('Бот перезапущен');
+    } catch (e) {
+      showStatus(`Ошибка: ${e}`);
+    }
+  }
+
+  async function stopBot() {
+    try {
+      await api.stopTelegramBot();
+      isBotRunning = false;
+      await refreshMonitorStatus();
+      showStatus('Бот остановлен');
     } catch (e) {
       showStatus(`Ошибка: ${e}`);
     }
@@ -148,8 +513,8 @@
 
   async function toggleUser(chatId: string, enabled: boolean) {
     try {
-      await invoke<string>('set_user_enabled', { chatId, enabled });
-      config = await invoke<Config>('get_config');
+      await api.setUserEnabled(chatId, enabled);
+      await refreshUsers();
       showStatus(`Пользователь ${enabled ? 'включён' : 'отключён'}`);
     } catch (e) {
       showStatus(`Ошибка: ${e}`);
@@ -158,915 +523,197 @@
 
   async function toggleNotifyAll() {
     try {
-      await invoke<string>('set_notify_all_users', { enabled: !config.telegram.notify_all_users });
-      config = await invoke<Config>('get_config');
+      await api.setNotifyAllUsers(!config.telegram.notify_all_users);
+      await refreshUsers();
       showStatus(config.telegram.notify_all_users ? 'Рассылка включена' : 'Рассылка отключена');
     } catch (e) {
       showStatus(`Ошибка: ${e}`);
     }
   }
 
-  onMount(async () => {
-    try {
-      config = await invoke<Config>('get_config');
-      configLoaded = true;
-      // Check if bot should be running (auto_start with token)
-      if (config.telegram.bot_token && config.telegram.auto_start) {
-        isBotRunning = true;
-      }
-    } catch (e) {
-      console.error('Failed to load config:', e);
-      configLoaded = true;
-    }
-
-    await listen('notification', (event: any) => {
-      notifications = [
-        { title: event.payload.title, body: event.payload.body, time: new Date().toLocaleTimeString() },
-        ...notifications.slice(0, 49),
-      ];
-    });
-
-    await listen('tray-start', async () => {
-      try {
-        await invoke('start_monitoring');
-        isMonitoring = true;
-        showStatus('Мониторинг запущен (из трея)');
-      } catch (e) {
-        showStatus(`Ошибка: ${e}`);
-      }
-    });
-
-    await listen('tray-stop', async () => {
-      try {
-        await invoke('stop_monitoring');
-        isMonitoring = false;
-        showStatus('Мониторинг остановлен (из трея)');
-      } catch (e) {
-        showStatus(`Ошибка: ${e}`);
-      }
-    });
-
-    // Refresh config periodically for user list updates
-    setInterval(async () => {
-      try {
-        config = await invoke<Config>('get_config');
-      } catch (e) {
-        // Ignore errors
-      }
-    }, 5000);
-  });
-
-  let notifications: Array<{ title: string; body: string; time: string }> = [];
-
-  function showPage(page: string) {
+  function showPage(page: PageId) {
     currentPage = page;
+    if (page === 'users') void refreshUsers();
+    if (page === 'dashboard') void refreshMonitorStatus();
+    if (page === 'console') void refreshLogs();
   }
+
+  onMount(() => {
+    const statusTimer = setInterval(() => {
+      void refreshMonitorStatus();
+      if (currentPage === 'console') {
+        void refreshLogs();
+        if (packetLogEnabled) void refreshPackets();
+      }
+    }, 500);
+    const usersTimer = setInterval(() => {
+      void refreshUsers();
+    }, 2000);
+
+    const unlisteners: Array<() => void> = [];
+
+    void (async () => {
+      try {
+        const loaded = await api.getConfig();
+        config = {
+          ...loaded,
+          telegram: {
+            ...loaded.telegram,
+            admin_chat_id: loaded.telegram.admin_chat_id ?? '',
+          },
+          target: {
+            ...loaded.target,
+            capture_mode: loaded.target?.capture_mode === 'manual' ? 'manual' : 'auto',
+            remote_ip: loaded.target?.remote_ip ?? null,
+            patterns: loaded.target?.patterns || [],
+          },
+          notifications: {
+            ...loaded.notifications,
+            burst_dedup_ms: loaded.notifications?.burst_dedup_ms ?? 2000,
+          },
+          startup: {
+            auto_start_monitoring: !!loaded.startup?.auto_start_monitoring,
+            start_minimized_to_tray: !!loaded.startup?.start_minimized_to_tray,
+            close_to_tray: loaded.startup?.close_to_tray !== false,
+          },
+        };
+        await refreshMonitorStatus();
+      } catch (e) {
+        console.error('Failed to load config:', e);
+        lastError = String(e);
+      } finally {
+        configLoaded = true;
+      }
+
+      try {
+        unlisteners.push(
+          await listen<{ title: string; body: string }>('notification', (event) => {
+            showStatus(`${event.payload.title}: ${event.payload.body}`);
+            void refreshMonitorStatus();
+          }),
+        );
+        unlisteners.push(await listen('users-updated', () => void refreshUsers()));
+        unlisteners.push(
+          await listen<string>('bot-error', (event) => {
+            lastError = event.payload || 'Telegram error';
+            showStatus(lastError);
+          }),
+        );
+        unlisteners.push(
+          await listen('tray-start', async () => {
+            await refreshMonitorStatus();
+            showStatus('Мониторинг запущен (из трея)');
+          }),
+        );
+        unlisteners.push(
+          await listen('tray-stop', async () => {
+            await refreshMonitorStatus();
+            showStatus('Мониторинг остановлен (из трея)');
+          }),
+        );
+      } catch (e) {
+        console.error('listen setup failed', e);
+      }
+    })();
+
+    return () => {
+      clearInterval(statusTimer);
+      clearInterval(usersTimer);
+      for (const off of unlisteners) off();
+    };
+  });
 </script>
 
 <div class="app-container">
-  <aside class="sidebar">
-    <div class="logo">
-      <span class="logo-icon">⚔️</span>
-      <span class="logo-text">EW Notify</span>
-    </div>
-    <nav class="nav">
-      <button class="nav-item" class:active={currentPage === 'dashboard'} onclick={() => showPage('dashboard')}>
-        <span class="nav-icon">📊</span>
-        <span>Дашборд</span>
-      </button>
-      <button class="nav-item" class:active={currentPage === 'settings'} onclick={() => showPage('settings')}>
-        <span class="nav-icon">⚙️</span>
-        <span>Настройки</span>
-      </button>
-      <button class="nav-item" class:active={currentPage === 'patterns'} onclick={() => showPage('patterns')}>
-        <span class="nav-icon">🔍</span>
-        <span>Паттерны</span>
-      </button>
-      <button class="nav-item" class:active={currentPage === 'notifications'} onclick={() => showPage('notifications')}>
-        <span class="nav-icon">🔔</span>
-        <span>Уведомления</span>
-      </button>
-      <button class="nav-item" class:active={currentPage === 'users'} onclick={() => showPage('users')}>
-        <span class="nav-icon">👥</span>
-        <span>Пользователи</span>
-      </button>
-    </nav>
-    <div class="sidebar-footer">
-      <div class="version">v0.1.0</div>
-    </div>
-  </aside>
+  <Sidebar {currentPage} {isAdmin} onNavigate={showPage} />
 
   <main class="content">
     {#if !configLoaded}
       <div class="loading">Загрузка...</div>
     {:else if currentPage === 'dashboard'}
-      <div class="page-header">
-        <h1>Дашборд</h1>
-      </div>
-      <div class="dashboard-grid">
-        <div class="card status-card">
-          <div class="card-header">
-            <h2>Статус мониторинга</h2>
-          </div>
-          <div class="card-body">
-            <div class="status-display">
-              <div class="status-indicator" class:active={isMonitoring}></div>
-              <span class="status-text">{isMonitoring ? 'Мониторинг активен' : 'Мониторинг остановлен'}</span>
-            </div>
-            <div class="status-controls">
-              {#if isMonitoring}
-                <button class="btn btn-danger" onclick={stopMonitoring}>⏹ Остановить</button>
-              {:else}
-                <button class="btn btn-success" onclick={startMonitoring}>▶ Начать мониторинг</button>
-              {/if}
-            </div>
-          </div>
-        </div>
-
-        <div class="card info-card">
-          <div class="card-header">
-            <h2>Информация</h2>
-          </div>
-          <div class="card-body">
-            <div class="info-row">
-              <span class="info-label">Процесс:</span>
-              <span class="info-value">{config.target?.process_name || 'EndlessWar.exe'}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Паттернов:</span>
-              <span class="info-value">{config.target?.patterns?.length || 0}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Telegram-уведомления:</span>
-              <span class="info-value" class:enabled={config.notifications?.telegram_enabled}>
-                {config.notifications?.telegram_enabled ? 'Включены' : 'Выключены'}
-              </span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Telegram-бот:</span>
-              <span class="info-value" class:enabled={isBotRunning}>
-                {isBotRunning ? 'Запущен' : 'Остановлен'}
-              </span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Кулдаун:</span>
-              <span class="info-value">{config.notifications?.cooldown_seconds || 60} сек</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="card recent-card">
-          <div class="card-header">
-            <h2>Последние уведомления</h2>
-          </div>
-          <div class="card-body">
-            {#if notifications.length === 0}
-              <p class="empty-text">Нет уведомлений</p>
-            {:else}
-              <ul class="notification-list">
-                {#each notifications.slice(0, 5) as notif}
-                  <li>
-                    <span class="notif-time">{notif.time}</span>
-                    <span class="notif-title">{notif.title}</span>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-          </div>
-        </div>
-      </div>
+      <DashboardPage
+        {config}
+        {isMonitoring}
+        {isBotRunning}
+        {isAdmin}
+        {captureMode}
+        {discoveredEndpoints}
+        {activePort}
+        {isCaptureAuto}
+        {packetsSeen}
+        {matchesSeen}
+        {dedupSuppressed}
+        {lastError}
+        {activeFilter}
+        {configPath}
+        {logPath}
+        {lastPollAt}
+        {pollErrors}
+        monitorProcessName={monitorStatus.process_name}
+        {notifications}
+        onStart={startMonitoring}
+        onStop={stopMonitoring}
+        onHideTray={hideToTray}
+      />
+    {:else if currentPage === 'settings'}
+      <SettingsPage
+        bind:config
+        {isBotRunning}
+        {isCaptureAuto}
+        bind:showBotToken
+        onSave={saveConfig}
+        onReset={resetConfig}
+        onTestTelegram={testTelegram}
+        onStartBot={startBot}
+        onStopBot={stopBot}
+        onRestartBot={restartBot}
+      />
+    {:else if currentPage === 'patterns'}
+      <PatternsPage
+        {config}
+        bind:newPatternName
+        bind:newPatternBytes
+        bind:newPatternDesc
+        bind:testHexInput
+        {testHexResult}
+        {nameFieldError}
+        {bytesFieldError}
+        {descFieldError}
+        onTouchName={() => (patternTouched.name = true)}
+        onTouchBytes={() => (patternTouched.bytes = true)}
+        onTouchDesc={() => (patternTouched.desc = true)}
+        onAdd={addPattern}
+        onRemove={removePattern}
+        onReset={resetPatterns}
+        onExport={exportPatterns}
+        onImport={importPatterns}
+        onTestHex={runHexTest}
+      />
+    {:else if currentPage === 'notifications'}
+      <NotificationsPage {notifications} />
+    {:else if currentPage === 'users'}
+      <UsersPage
+        {config}
+        onRefresh={refreshUsers}
+        onToggleUser={toggleUser}
+        onToggleNotifyAll={toggleNotifyAll}
+      />
+    {:else if currentPage === 'console'}
+      <ConsolePage
+        {logLines}
+        {packetLines}
+        {packetLogEnabled}
+        bind:consoleAutoScroll
+        bind:consoleEl
+        onRefreshLogs={refreshLogs}
+        onClearLogs={clearLogs}
+        onTogglePacketLog={togglePacketLog}
+        onRefreshPackets={refreshPackets}
+        onClearPackets={clearPacketLog}
+        onCreatePattern={createPatternFromHex}
+      />
     {/if}
 
-    {#if currentPage === 'settings'}
-      <div class="page-header">
-        <h1>Настройки</h1>
-      </div>
-      <div class="settings-grid">
-        <div class="card">
-          <div class="card-header">
-            <h2>Telegram</h2>
-          </div>
-          <div class="card-body">
-            <div class="form-group">
-              <label>Bot Token</label>
-              <input type="text" bind:value={config.telegram.bot_token} placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz" />
-            </div>
-            <div class="form-group">
-              <label class="checkbox-label">
-                <input type="checkbox" bind:checked={config.notifications.telegram_enabled} />
-                <span>Включить Telegram уведомления</span>
-              </label>
-            </div>
-            <div class="form-group">
-              <label class="checkbox-label">
-                <input type="checkbox" bind:checked={config.telegram.auto_start} />
-                <span>Автозапуск бота при старте приложения</span>
-              </label>
-            </div>
-            <div class="button-row">
-              <button class="btn btn-secondary" onclick={testTelegram}>🔗 Проверить</button>
-              <button class="btn btn-success" onclick={startBot} disabled={isBotRunning}>
-                {isBotRunning ? '✅ Бот запущен' : '▶ Запустить бота'}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <h2>Мониторинг</h2>
-          </div>
-          <div class="card-body">
-            <div class="form-group">
-              <label>Имя процесса</label>
-              <input type="text" bind:value={config.target.process_name} placeholder="EndlessWar.exe" />
-            </div>
-            <div class="form-group">
-              <label>Кулдаун (секунды)</label>
-              <input type="number" bind:value={config.notifications.cooldown_seconds} min="0" />
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <h2>Уведомления</h2>
-          </div>
-          <div class="card-body">
-            <div class="form-group">
-              <label class="checkbox-label">
-                <input type="checkbox" bind:checked={config.notifications.tray_enabled} />
-                <span>Системные уведомления</span>
-              </label>
-            </div>
-          </div>
-        </div>
-
-        <div class="card-actions">
-          <button class="btn btn-primary" onclick={saveConfig}>💾 Сохранить настройки</button>
-        </div>
-      </div>
-    {/if}
-
-    {#if currentPage === 'patterns'}
-      <div class="page-header">
-        <h1>Паттерны</h1>
-      </div>
-      <div class="patterns-page">
-        <div class="card">
-          <div class="card-header">
-            <h2>Добавить паттерн</h2>
-          </div>
-          <div class="card-body">
-            <div class="add-pattern-form">
-              <div class="form-row">
-                <div class="form-group">
-                  <label>Название</label>
-                  <input type="text" bind:value={newPatternName} placeholder="event_started" />
-                </div>
-                <div class="form-group">
-                  <label>Hex байты</label>
-                  <input type="text" bind:value={newPatternBytes} placeholder="A1B2C3D4" />
-                </div>
-              </div>
-              <div class="form-group">
-                <label>Описание</label>
-                <input type="text" bind:value={newPatternDesc} placeholder="Событие началось" />
-              </div>
-              <button class="btn btn-success" onclick={addPattern}>➕ Добавить паттерн</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <h2>Список паттернов ({(config.target?.patterns || []).length})</h2>
-          </div>
-          <div class="card-body">
-            {#if (config.target?.patterns || []).length === 0}
-              <p class="empty-text">Нет паттернов</p>
-            {:else}
-              <ul class="pattern-list">
-                {#each config.target.patterns as pattern}
-                  <li class="pattern-item">
-                    <div class="pattern-info">
-                      <span class="pattern-name">{pattern.name}</span>
-                      <span class="pattern-bytes">{pattern.bytes}</span>
-                      <span class="pattern-desc">{pattern.description}</span>
-                    </div>
-                    <button class="btn btn-danger btn-sm" onclick={() => removePattern(pattern.name)}>🗑</button>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-          </div>
-        </div>
-      </div>
-    {/if}
-
-    {#if currentPage === 'notifications'}
-      <div class="page-header">
-        <h1>История уведомлений</h1>
-      </div>
-      <div class="notifications-page">
-        <div class="card">
-          <div class="card-header">
-            <h2>Все уведомления ({notifications.length})</h2>
-          </div>
-          <div class="card-body">
-            {#if notifications.length === 0}
-              <p class="empty-text">Нет уведомлений</p>
-            {:else}
-              <ul class="full-notification-list">
-                {#each notifications as notif}
-                  <li class="notification-item">
-                    <div class="notif-content">
-                      <span class="notif-time">{notif.time}</span>
-                      <span class="notif-title">{notif.title}</span>
-                      <span class="notif-body">{notif.body}</span>
-                    </div>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-          </div>
-        </div>
-      </div>
-    {/if}
-
-    {#if currentPage === 'users'}
-      <div class="page-header">
-        <h1>Управление пользователями</h1>
-      </div>
-      <div class="users-page">
-        <div class="card">
-          <div class="card-header">
-            <h2>Зарегистрированные пользователи ({(config.telegram?.registered_users || []).length})</h2>
-          </div>
-          <div class="card-body">
-            <div class="form-group">
-              <label class="checkbox-label">
-                <input 
-                  type="checkbox" 
-                  checked={config.telegram?.notify_all_users ?? true} 
-                  onchange={() => toggleNotifyAll()} 
-                />
-                <span>Отправлять уведомления всем зарегистрированным пользователям</span>
-              </label>
-            </div>
-            {#if (config.telegram?.registered_users || []).length === 0}
-              <p class="empty-text">Нет зарегистрированных пользователей</p>
-              <p class="hint-text">Пользователи автоматически добавляются при отправке команды /start боту</p>
-            {:else}
-              <ul class="user-list">
-                {#each config.telegram.registered_users as user}
-                  <li class="user-item">
-                    <div class="user-info">
-                      <span class="user-name">{user.first_name || 'Unknown'}</span>
-                      <span class="user-username">@{user.username || '-'}</span>
-                      <span class="user-id">ID: {user.chat_id}</span>
-                    </div>
-                    <div class="user-actions">
-                      <button 
-                        class="btn btn-sm" 
-                        class:btn-success={user.enabled} 
-                        class:btn-danger={!user.enabled}
-                        onclick={() => toggleUser(user.chat_id, !user.enabled)}
-                      >
-                        {user.enabled ? '✅ Включён' : '❌ Отключён'}
-                      </button>
-                    </div>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-          </div>
-        </div>
-      </div>
-    {/if}
-
-    {#if statusMessage}
-      <div class="toast">{statusMessage}</div>
-    {/if}
+    <Toast message={statusMessage} />
   </main>
 </div>
-
-<style>
-  :global(*) {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-  }
-
-  :global(body) {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #0f0f1a;
-    color: #e0e0e0;
-  }
-
-  .app-container {
-    display: flex;
-    min-height: 100vh;
-  }
-
-  .sidebar {
-    width: 240px;
-    background: linear-gradient(180deg, #1a1a2e 0%, #16162a 100%);
-    border-right: 1px solid #2a2a4a;
-    display: flex;
-    flex-direction: column;
-    padding: 20px 0;
-  }
-
-  .logo {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 0 20px 30px;
-    border-bottom: 1px solid #2a2a4a;
-    margin-bottom: 20px;
-  }
-
-  .logo-icon {
-    font-size: 28px;
-  }
-
-  .logo-text {
-    font-size: 20px;
-    font-weight: bold;
-    color: #e94560;
-  }
-
-  .nav {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 0 12px;
-  }
-
-  .nav-item {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 14px 16px;
-    border: none;
-    background: transparent;
-    color: #8888aa;
-    border-radius: 10px;
-    cursor: pointer;
-    font-size: 15px;
-    transition: all 0.2s ease;
-    text-align: left;
-  }
-
-  .nav-item:hover {
-    background: #252540;
-    color: #aaaacc;
-  }
-
-  .nav-item.active {
-    background: linear-gradient(135deg, #e94560 0%, #c73e54 100%);
-    color: white;
-    box-shadow: 0 4px 15px rgba(233, 69, 96, 0.3);
-  }
-
-  .nav-icon {
-    font-size: 18px;
-  }
-
-  .sidebar-footer {
-    padding: 20px;
-    border-top: 1px solid #2a2a4a;
-  }
-
-  .version {
-    color: #555577;
-    font-size: 12px;
-    text-align: center;
-  }
-
-  .content {
-    flex: 1;
-    padding: 30px 40px;
-    overflow-y: auto;
-  }
-
-  .page-header {
-    margin-bottom: 30px;
-  }
-
-  .page-header h1 {
-    font-size: 28px;
-    font-weight: 600;
-    color: #ffffff;
-  }
-
-  .dashboard-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 24px;
-  }
-
-  .settings-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-    gap: 24px;
-  }
-
-  .card {
-    background: #1a1a2e;
-    border-radius: 16px;
-    border: 1px solid #2a2a4a;
-    overflow: hidden;
-  }
-
-  .card-header {
-    padding: 20px 24px;
-    border-bottom: 1px solid #2a2a4a;
-    background: #1e1e35;
-  }
-
-  .card-header h2 {
-    font-size: 16px;
-    font-weight: 600;
-    color: #aaaacc;
-  }
-
-  .card-body {
-    padding: 24px;
-  }
-
-  .status-display {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    margin-bottom: 24px;
-  }
-
-  .status-indicator {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: #e94560;
-    box-shadow: 0 0 20px rgba(233, 69, 96, 0.5);
-  }
-
-  .status-indicator.active {
-    background: #4caf50;
-    box-shadow: 0 0 20px rgba(76, 175, 80, 0.5);
-    animation: pulse 1.5s infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.6; }
-  }
-
-  .status-text {
-    font-size: 18px;
-    font-weight: 500;
-  }
-
-  .status-controls {
-    display: flex;
-    gap: 12px;
-  }
-
-  .btn {
-    padding: 14px 28px;
-    border: none;
-    border-radius: 10px;
-    cursor: pointer;
-    font-size: 15px;
-    font-weight: 600;
-    transition: all 0.2s ease;
-  }
-
-  .btn-success {
-    background: linear-gradient(135deg, #4caf50 0%, #43a047 100%);
-    color: white;
-    box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
-  }
-
-  .btn-success:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(76, 175, 80, 0.4);
-  }
-
-  .btn-danger {
-    background: linear-gradient(135deg, #e94560 0%, #c73e54 100%);
-    color: white;
-    box-shadow: 0 4px 15px rgba(233, 69, 96, 0.3);
-  }
-
-  .btn-danger:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(233, 69, 96, 0.4);
-  }
-
-  .btn-secondary {
-    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
-    color: white;
-    box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
-  }
-
-  .btn-secondary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4);
-  }
-
-  .btn-primary {
-    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
-    color: white;
-    box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
-  }
-
-  .btn-primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4);
-  }
-
-  .btn-sm {
-    padding: 8px 12px;
-    font-size: 13px;
-  }
-
-  .info-row {
-    display: flex;
-    justify-content: space-between;
-    padding: 12px 0;
-    border-bottom: 1px solid #2a2a4a;
-  }
-
-  .info-row:last-child {
-    border-bottom: none;
-  }
-
-  .info-label {
-    color: #8888aa;
-  }
-
-  .info-value {
-    color: #ffffff;
-    font-weight: 500;
-  }
-
-  .info-value.enabled {
-    color: #4caf50;
-  }
-
-  .empty-text {
-    color: #555577;
-    text-align: center;
-    padding: 40px;
-  }
-
-  .notification-list, .full-notification-list {
-    list-style: none;
-  }
-
-  .notification-list li, .full-notification-list li {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 0;
-    border-bottom: 1px solid #2a2a4a;
-  }
-
-  .notification-list li:last-child, .full-notification-list li:last-child {
-    border-bottom: none;
-  }
-
-  .notif-time {
-    color: #555577;
-    font-size: 13px;
-    min-width: 70px;
-  }
-
-  .notif-title {
-    font-weight: 500;
-    color: #e94560;
-  }
-
-  .notif-content {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    width: 100%;
-  }
-
-  .notif-body {
-    color: #8888aa;
-    flex: 1;
-  }
-
-  .form-group {
-    margin-bottom: 20px;
-  }
-
-  .form-group label {
-    display: block;
-    margin-bottom: 8px;
-    color: #aaaacc;
-    font-size: 14px;
-    font-weight: 500;
-  }
-
-  .form-group input[type="text"],
-  .form-group input[type="number"] {
-    width: 100%;
-    padding: 14px 16px;
-    background: #16162a;
-    border: 1px solid #2a2a4a;
-    border-radius: 10px;
-    color: #ffffff;
-    font-size: 15px;
-    transition: border-color 0.2s ease;
-  }
-
-  .form-group input:focus {
-    outline: none;
-    border-color: #e94560;
-  }
-
-  .form-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
-  }
-
-  .checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    cursor: pointer;
-  }
-
-  .checkbox-label input {
-    width: 20px;
-    height: 20px;
-    accent-color: #e94560;
-  }
-
-  .card-actions {
-    grid-column: 1 / -1;
-    display: flex;
-    justify-content: flex-end;
-  }
-
-  .add-pattern-form {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-
-  .add-pattern-form .btn {
-    align-self: flex-start;
-  }
-
-  .pattern-list {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .pattern-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px;
-    background: #16162a;
-    border-radius: 10px;
-    border: 1px solid #2a2a4a;
-  }
-
-  .pattern-info {
-    display: flex;
-    align-items: center;
-    gap: 20px;
-    flex: 1;
-  }
-
-  .pattern-name {
-    font-weight: 600;
-    color: #e94560;
-    min-width: 120px;
-  }
-
-  .pattern-bytes {
-    font-family: 'Fira Code', monospace;
-    color: #4caf50;
-    background: #1a2a1a;
-    padding: 4px 10px;
-    border-radius: 6px;
-    font-size: 13px;
-  }
-
-  .pattern-desc {
-    color: #8888aa;
-    flex: 1;
-  }
-
-  .notifications-page .card-body {
-    max-height: 600px;
-    overflow-y: auto;
-  }
-
-  .toast {
-    position: fixed;
-    bottom: 30px;
-    right: 30px;
-    background: linear-gradient(135deg, #4caf50 0%, #43a047 100%);
-    color: white;
-    padding: 16px 28px;
-    border-radius: 12px;
-    font-weight: 500;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-    animation: slideIn 0.3s ease;
-  }
-
-  @keyframes slideIn {
-    from {
-      transform: translateY(20px);
-      opacity: 0;
-    }
-    to {
-      transform: translateY(0);
-      opacity: 1;
-    }
-  }
-
-  .button-row {
-    display: flex;
-    gap: 12px;
-    margin-top: 16px;
-  }
-
-  .users-page .card-body {
-    max-height: 600px;
-    overflow-y: auto;
-  }
-
-  .user-list {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .user-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px;
-    background: #16162a;
-    border-radius: 10px;
-    border: 1px solid #2a2a4a;
-  }
-
-  .user-info {
-    display: flex;
-    align-items: center;
-    gap: 20px;
-    flex: 1;
-  }
-
-  .user-name {
-    font-weight: 600;
-    color: #ffffff;
-    min-width: 100px;
-  }
-
-  .user-username {
-    color: #6366f1;
-    min-width: 100px;
-  }
-
-  .user-id {
-    color: #555577;
-    font-size: 13px;
-  }
-
-  .user-actions {
-    display: flex;
-    gap: 8px;
-  }
-
-  .hint-text {
-    color: #555577;
-    font-size: 13px;
-    text-align: center;
-    padding: 20px;
-  }
-
-  .loading {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    height: 200px;
-    color: #8888aa;
-    font-size: 18px;
-  }
-</style>

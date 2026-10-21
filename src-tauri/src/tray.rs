@@ -1,20 +1,8 @@
-use crate::config::AppConfig;
-use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::Mutex;
+//! Tray helpers (menu/actions live in `lib.rs`).
+
 use tracing::info;
 
-pub fn show_notification(config: &Arc<Mutex<AppConfig>>, title: &str, body: &str) {
-    info!("Showing tray notification: {} - {}", title, body);
-
-    #[cfg(windows)]
-    {
-        if let Err(e) = notify_rust::Notification::new()
-            .summary(title)
-            .body(body)
-            .show()
-        {
-            tracing::warn!("Failed to show notification: {}", e);
-        }
-    }
+/// Log-only helper kept for callers that want a consistent "notify" trace line.
+pub fn show_notification(title: &str, body: &str) {
+    info!("Notification: {} — {}", title, body);
 }

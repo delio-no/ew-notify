@@ -1,27 +1,39 @@
 {
   "telegram": {
     "bot_token": "",
-    "chat_id": "",
-    "auto_start": false
+    "admin_chat_id": "",
+    "auto_start": false,
+    "registered_users": [],
+    "notify_all_users": true
   },
   "target": {
     "process_name": "EndlessWar.exe",
+    "capture_mode": "auto",
+    "tcp_port": 7777,
+    "udp_port": null,
+    "remote_ip": null,
     "patterns": [
       {
-        "name": "event_started",
-        "bytes": "A1B2C3D4",
-        "description": "Событие началось"
+        "name": "DEATH",
+        "bytes": "00FE06032C010000",
+        "description": "Персонаж умер"
       },
       {
-        "name": "tournament",
-        "bytes": "FF000100",
-        "description": "Тнир"
+        "name": "STOP_FARM",
+        "bytes": "4E00FE11006100750074006F006600610072006D000000",
+        "description": "Автофарм остановлен"
       }
     ]
   },
   "notifications": {
     "telegram_enabled": true,
     "tray_enabled": true,
-    "cooldown_seconds": 60
+    "cooldown_seconds": 60,
+    "burst_dedup_ms": 2000
+  },
+  "startup": {
+    "auto_start_monitoring": false,
+    "start_minimized_to_tray": false,
+    "close_to_tray": true
   }
 }

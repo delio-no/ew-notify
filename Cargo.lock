@@ -1064,7 +1064,6 @@ dependencies = [
  "anyhow",
  "chrono",
  "dirs 5.0.1",
- "notify-rust",
  "serde",
  "serde_json",
  "tauri",
@@ -1077,6 +1076,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "windivert",
+ "windivert-sys",
+ "windows 0.48.0",
 ]
 
 [[package]]

@@ -4,180 +4,109 @@
 
 ## Описание
 
-EndlessWar Notifier — это локальное десктопное приложение для Windows, которое анализирует сетевые пакеты процесса игры `EndlessWar.exe` и отправляет уведомления при обнаружении заданных байтовых последовательностей.
+Локальное Windows-приложение (Tauri 2 + Svelte), которое перехватывает inbound-трафик игры через WinDivert, ищет байтовые паттерны и шлёт уведомления в Telegram и системный трей.
 
 ### Как это работает
 
-1. Приложение запускается и отображает GUI-интерфейс
-2. Пользователь запускает игру EndlessWar
-3. Приложение перехватывает сетевые пакеты игры через WinDivert
-4. При обнаружении заданной байтовой последовательности — отправляется уведомление
-5. Уведомления приходят в Telegram-бот и в системный трэй Windows
+1. Запускаешь приложение (нужны права администратора).
+2. Режим **авто**: ждём `EndlessWar.exe`, берём remote IP/port из TCP-таблицы процесса.
+3. Режим **ручной**: фильтр по порту/IP из настроек (по умолчанию TCP `7777`).
+4. При совпадении паттерна — уведомление в трей и Telegram.
 
 ### Возможности
 
-- **Анализ сетевых пакетов**: Перехват и анализ трафика процесса EndlessWar.exe через WinDivert
-- **Поиск по сигнатурам**: Обнаружение заданных байтовых последовательностей в пакетах
-- **Telegram-уведомления**: Отправка мгновенных уведомлений через Telegram-бот
-- **Windows Tray**: Уведомления в системном трэе Windows
-- **GUI-интерфейс**: Удобное управление и мониторинг через десктопное приложение
-- **Настраиваемые правила**: Гибкая настройка паттернов для поиска
+- Автообнаружение remote endpoint процесса или ручной фильтр
+- Паттерны DEATH / STOP_FARM из коробки, экспорт/импорт, тест hex
+- Telegram-бот (`/start`, `/myid`, `/users` только для admin)
+- Трей, автозапуск мониторинга, свернуть в трей
+- Консоль логов и опциональный дамп пакетов
 
-## Технический стэк
+## Стек
 
-- **Язык**: Rust
-- **GUI**: [Tauri](https://tauri.app/) — фреймворк для создания десктопных приложений на Rust + WebView
-- **Перехват пакетов**: [WinDivert](https://reqrypt.org/windivert.html) — перехват сетевых пакетов в Windows
-- **Telegram-бот**: [teloxide](https://github.com/teloxide/teloxide) — библиотека для создания Telegram-ботов на Rust
-- **Системный трэй**: [tauri-plugin-notification](https://github.com/tauri-apps/plugin-notification) + системные уведомления Windows
+- Rust + [Tauri 2](https://tauri.app/)
+- [WinDivert](https://reqrypt.org/windivert.html)
+- [teloxide](https://github.com/teloxide/teloxide)
 
-### Зависимости
+## Требования
 
 - Windows 10+
-- Rust 1.70+
-- WinDivert (драйвер устанавливается вместе с приложением)
+- Rust, Node.js, WebView2
+- Права администратора (манифест `requireAdministrator`)
+- Рядом с exe: `WinDivert.dll`, `WinDivert64.sys` / `WinDivert32.sys`
 
-## Установка
-
-### Требования
-
-- [Rust](https://rustup.rs/) — установлен через rustup
-- [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) — для Tauri GUI
-- WinDivert driver — устанавливается при первом запуске
-
-### Сборка из исходников
+## Сборка и запуск
 
 ```bash
-git clone https://github.com/yourusername/ew_notify.git
-cd ew_notify
-cargo build --release
+npm install
+npm run tauri dev     # разработка
+npm run tauri build   # NSIS-инсталлятор + exe
 ```
 
-### Запуск
+При `tauri build` WinDivert-файлы кладутся рядом с приложением (bundle resources). При `cargo`/`tauri dev` их копирует `build.rs` в `target/...`.
 
-```bash
-cargo tauri dev    # Режим разработки
-cargo tauri build # Сборка релиз-версии
-```
+**Важно:**
+- Один экземпляр (mutex).
+- `config.json` и `app.log` — **рядом с exe** (или `EW_NOTIFY_CONFIG` для конфига).
+- Не коммить токен бота.
 
-## Настройка
+## Конфигурация
 
-### Файл конфигурации
-
-При первом запуске создаётся файл `config.json`:
+Пример `config.json`:
 
 ```json
 {
   "telegram": {
-    "bot_token": "your_bot_token",
-    "chat_id": "123456789"
+    "bot_token": "",
+    "admin_chat_id": "",
+    "auto_start": false,
+    "registered_users": [],
+    "notify_all_users": true
   },
   "target": {
     "process_name": "EndlessWar.exe",
+    "capture_mode": "auto",
+    "tcp_port": 7777,
+    "udp_port": null,
+    "remote_ip": null,
     "patterns": [
       {
-        "name": "event_started",
-        "bytes": "A1B2C3D4",
-        "description": "Событие началось"
+        "name": "DEATH",
+        "bytes": "00FE06032C010000",
+        "description": "Персонаж умер"
       },
       {
-        "name": "tournament",
-        "bytes": "FF000100",
-        "description": "Турнир"
+        "name": "STOP_FARM",
+        "bytes": "4E00FE11006100750074006F006600610072006D000000",
+        "description": "Автофарм остановлен"
       }
     ]
   },
   "notifications": {
     "telegram_enabled": true,
     "tray_enabled": true,
-    "cooldown_seconds": 60
+    "cooldown_seconds": 60,
+    "burst_dedup_ms": 2000
+  },
+  "startup": {
+    "auto_start_monitoring": false,
+    "start_minimized_to_tray": false,
+    "close_to_tray": true
   }
 }
 ```
 
-### Настройка Telegram-бота
+### Telegram
 
-1. Создайте бота через @BotFather в Telegram
-2. Получите токен бота
-3. Укажите токен и chat_id в конфигурации
+1. Создай бота у @BotFather, вставь токен в настройки.
+2. Напиши боту `/start` (регистрация).
+3. `/myid` — узнать свой ID.
+4. Укажи `admin_chat_id` (свой ID) — только он может `/users`.
 
 ## Использование
 
-### Запуск мониторинга
-
-1. Запустите приложение
-2. Введите имя процесса (по умолчанию: EndlessWar.exe)
-3. Нажмите "Начать мониторинг"
-4. Запустите игру EndlessWar
-
-### Добавление паттернов
-
-1. Введите hex-строку (например: `A1B2C3D4` или `A1 B2 C3 D4`)
-2. Введите описание
-3. Нажмите "Добавить паттерн"
-
-### Системный трэй
-
-Приложение отображается в системном трэе:
-- Правый клик — меню (Свернуть, Выход)
-- Левая кнопка — показать/скрыть окно
-
-## Структура проекта
-
-```
-ew_notify/
-├── Cargo.toml
-├── src-tauri/
-│   ├── Cargo.toml
-│   ├── src/
-│   │   ├── main.rs           # Точка входа Tauri
-│   │   ├── lib.rs           # Библиотека
-│   │   ├── packet/
-│   │   │   ├── mod.rs       # Перехват пакетов
-│   │   │   └── analyzer.rs  # Анализ паттернов
-│   │   ├── telegram/
-│   │   │   ├── mod.rs       # Telegram-модуль
-│   │   │   └── client.rs    # Teloxide клиент
-│   │   ├── tray.rs          # Системный трэй
-│   │   └── config.rs        # Конфигурация
-│   ├── tauri.conf.json
-│   └── icons/
-├── src/                      # Frontend (WebView)
-│   ├── main.ts
-│   ├── App.svelte
-│   └── styles.css
-├── config.json              # Конфигурация по умолчанию
-└── package.json
-```
-
-## Архитектура
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    EndlessWar Notifier                   │
-├─────────────────────────────────────────────────────────┤
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐│
-│  │  Tauri GUI  │───▶│  Analyzer   │───▶│   Telegram   ││
-│  │  (WebView)  │    │  (patterns) │    │  (teloxide)  ││
-│  └─────────────┘    └─────────────┘    └─────────────┘│
-│         │                  │                  │         │
-│         ▼                  ▼                  ▼         │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │              WinDivert (packet capture)             ││
-│  └─────────────────────────────────────────────────────┘│
-│         │                                                │
-│         ▼                                                │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │              EndlessWar.exe (process)               ││
-│  └─────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-              ┌─────────────────────────┐
-              │   Windows Tray Icon      │
-              │   (системные уведомления)│
-              └─────────────────────────┘
-```
+1. Настройки → режим захвата (авто/ручной), Telegram, трей.
+2. Дашборд → «Начать мониторинг».
+3. Паттерны — добавить / импорт / тест hex; из консоли пакетов можно создать паттерн из dump.
 
 ## Лицензия
 
@@ -185,7 +114,7 @@ MIT License
 
 ## Ссылки
 
-- [EndlessWar](https://endlesswar.live) — официальный сайт игры
-- [Tauri](https://tauri.app/) — документация фреймворка
-- [teloxide](https://github.com/teloxide/teloxide) — документация Telegram-бота
-- [WinDivert](https://reqrypt.org/windivert.html) — документация перехвата пакетов
+- [EndlessWar](https://endlesswar.live)
+- [Tauri](https://tauri.app/)
+- [teloxide](https://github.com/teloxide/teloxide)
+- [WinDivert](https://reqrypt.org/windivert.html)

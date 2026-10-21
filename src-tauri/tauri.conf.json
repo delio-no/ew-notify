@@ -12,11 +12,15 @@
     "withGlobalTauri": true,
     "windows": [
       {
+        "label": "main",
         "title": "EndlessWar Notifier",
-        "width": 800,
-        "height": 600,
+        "width": 1024,
+        "height": 720,
+        "minWidth": 720,
+        "minHeight": 520,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "visible": false
       }
     ],
     "security": {
@@ -25,10 +29,22 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi", "nsis"],
+    "targets": ["nsis"],
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "windivert/WinDivert.dll": "WinDivert.dll",
+      "windivert/WinDivert64.sys": "WinDivert64.sys",
+      "windivert/WinDivert32.sys": "WinDivert32.sys"
+    },
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser"
       }
     }
   }
