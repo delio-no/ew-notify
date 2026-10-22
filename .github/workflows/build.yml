@@ -48,36 +48,24 @@ jobs:
         run: cargo test --verbose
 
       - name: Build Tauri Application
-        run: npm run tauri build
+        run: npm run tauri build -- --no-bundle
 
       - name: Prepare Release Artifacts & Generate Hashes
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path artifacts
 
-          # 1. Installer (NSIS)
-          $nsis = Get-ChildItem -Path target/release/bundle/nsis/*.exe, src-tauri/target/release/bundle/nsis/*.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($nsis) {
-            Write-Host "Found NSIS installer: $($nsis.FullName)"
-            Copy-Item $nsis.FullName -Destination artifacts/
-          } else {
-            Write-Error "NSIS installer was not found in release bundles!"
-            exit 1
-          }
-
-          # 2. Standalone binary
+          # Find executable
           $exe = Get-ChildItem -Path target/release/ew-notify.exe, src-tauri/target/release/ew-notify.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($exe) {
-            Write-Host "Found executable: $($exe.FullName)"
-            Copy-Item $exe.FullName -Destination artifacts/
-          } else {
+          if (-not $exe) {
             Write-Error "ew-notify.exe was not found in target/release!"
             exit 1
           }
+          Write-Host "Found executable: $($exe.FullName)"
 
-          # 3. Portable bundle (exe + WinDivert files + template config + README)
+          # Portable bundle (exe + WinDivert files + template config + README)
           New-Item -ItemType Directory -Force -Path artifacts/ew-notify-portable
-          Copy-Item $exe.FullName artifacts/ew-notify-portable/
+          Copy-Item $exe.FullName artifacts/ew-notify-portable/ew-notify.exe
           Copy-Item src-tauri/windivert/WinDivert.dll artifacts/ew-notify-portable/
           Copy-Item src-tauri/windivert/WinDivert64.sys artifacts/ew-notify-portable/
           Copy-Item src-tauri/windivert/WinDivert32.sys artifacts/ew-notify-portable/
@@ -87,7 +75,7 @@ jobs:
           Compress-Archive -Path artifacts/ew-notify-portable/* -DestinationPath artifacts/ew-notify-portable.zip -Force
           Remove-Item -Recurse -Force artifacts/ew-notify-portable
 
-          # 4. Generate SHA256 hashes
+          # Generate SHA256 hashes
           Set-Location artifacts
           $hashes = Get-ChildItem -File | Where-Object { $_.Name -ne "SHA256SUMS.txt" } | Get-FileHash -Algorithm SHA256 | ForEach-Object {
             "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)"
