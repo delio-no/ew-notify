@@ -74,6 +74,7 @@ pub struct AppState {
     pub capture: Arc<std::sync::Mutex<Option<Arc<PacketCapture>>>>,
     pub monitoring: Arc<AtomicBool>,
     pub bot_running: Arc<AtomicBool>,
+    pub bot_task: Arc<std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
     pub packets_seen: Arc<AtomicU64>,
     pub matches_seen: Arc<AtomicU64>,
     pub dedup_suppressed: Arc<AtomicU64>,
@@ -913,10 +914,13 @@ async fn start_telegram_bot(
     }
 
     // Stop previous bot loop if any
-    if state.bot_running.load(Ordering::SeqCst) {
-        state.bot_running.store(false, Ordering::SeqCst);
-        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    state.bot_running.store(false, Ordering::SeqCst);
+    if let Ok(mut guard) = state.bot_task.lock() {
+        if let Some(handle) = guard.take() {
+            handle.abort();
+        }
     }
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
     let config = state.config.clone();
     let running = state.bot_running.clone();
@@ -927,11 +931,15 @@ async fn start_telegram_bot(
         let _ = config::save_config(&cfg);
     }
 
-    tokio::spawn(async move {
+    let bot_task_slot = state.bot_task.clone();
+    let handle = tokio::spawn(async move {
         if let Err(e) = telegram::start_bot(&token, config, running, app).await {
             tracing::error!("Failed to start telegram bot: {}", e);
         }
     });
+    if let Ok(mut guard) = bot_task_slot.lock() {
+        *guard = Some(handle);
+    }
 
     // Give the loop a moment to set running=true
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -941,6 +949,11 @@ async fn start_telegram_bot(
 #[tauri::command]
 async fn stop_telegram_bot(state: State<'_, AppState>) -> Result<String, String> {
     state.bot_running.store(false, Ordering::SeqCst);
+    if let Ok(mut guard) = state.bot_task.lock() {
+        if let Some(handle) = guard.take() {
+            handle.abort();
+        }
+    }
     Ok("Telegram bot stop requested".to_string())
 }
 
@@ -1123,6 +1136,7 @@ pub fn run() {
         capture: Arc::new(std::sync::Mutex::new(None)),
         monitoring: Arc::new(AtomicBool::new(false)),
         bot_running: Arc::new(AtomicBool::new(false)),
+        bot_task: Arc::new(std::sync::Mutex::new(None)),
         packets_seen: Arc::new(AtomicU64::new(0)),
         matches_seen: Arc::new(AtomicU64::new(0)),
         dedup_suppressed: Arc::new(AtomicU64::new(0)),

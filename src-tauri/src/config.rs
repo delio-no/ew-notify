@@ -256,7 +256,7 @@ pub fn default_patterns() -> Vec<Pattern> {
         },
         Pattern {
             name: "STOP_FARM".to_string(),
-            bytes: "4E00FE11006100750074006F006600610072006D000000".to_string(),
+            bytes: "FE11006100750074006F006600610072006D00".to_string(),
             description: "Автофарм остановлен".to_string(),
         },
     ]

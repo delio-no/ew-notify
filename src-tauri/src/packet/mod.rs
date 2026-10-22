@@ -521,7 +521,7 @@ mod tests {
     fn stop_farm_pattern() -> Pattern {
         Pattern {
             name: "STOP_FARM".into(),
-            bytes: "4E00FE11006100750074006F006600610072006D000000".into(),
+            bytes: "FE11006100750074006F006600610072006D00".into(),
             description: "Автофарм остановлен".into(),
         }
     }

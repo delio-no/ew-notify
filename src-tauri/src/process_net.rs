@@ -97,6 +97,12 @@ mod tests {
     }
 
     #[test]
+    fn test_live_discover() {
+        let eps = discover_remote_endpoints("EndlessWar.exe");
+        eprintln!("LIVE ENDPOINTS: {:?}", eps);
+    }
+
+    #[test]
     fn filter_dedups() {
         let out = filter_game_endpoints(vec![
             ep("1.2.3.4", 7777),
@@ -168,7 +174,7 @@ mod win {
     }
 
     fn ipv4_string(addr_be: u32) -> String {
-        let b = addr_be.to_be_bytes();
+        let b = addr_be.to_ne_bytes();
         format!("{}.{}.{}.{}", b[0], b[1], b[2], b[3])
     }
 
