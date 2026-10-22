@@ -51,6 +51,12 @@
             {showBotToken ? 'Скрыть' : 'Показать'}
           </button>
         </div>
+        {#if isBotRunning && isTokenChanged}
+          <div class="token-notice">
+            <span class="notice-icon">⚠️</span>
+            <span>Токен изменён. Бот сейчас работает со старым токеном.</span>
+          </div>
+        {/if}
       </div>
       <div class="form-group">
         <label>Admin chat ID (для /users)</label>
@@ -83,7 +89,13 @@
       <div class="actions">
         <button class="btn btn-secondary" onclick={onTestTelegram}>Проверить токен</button>
         {#if isBotRunning}
-          <button class="btn btn-secondary" onclick={onRestartBot}>Перезапустить</button>
+          {#if isTokenChanged && onApplyAndRestartBot}
+            <button class="btn btn-warning" onclick={onApplyAndRestartBot} title="Применить новый токен и перезапустить бота">
+              Применить и перезапустить
+            </button>
+          {:else}
+            <button class="btn btn-secondary" onclick={onRestartBot}>Перезапустить</button>
+          {/if}
         {/if}
       </div>
       <div class="actions actions-primary">
@@ -206,3 +218,26 @@
     <button type="button" class="btn btn-danger" onclick={onReset}>Сбросить</button>
   </div>
 </div>
+
+<style>
+  .token-notice {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--warn, #f0c674);
+    background: rgba(240, 198, 116, 0.1);
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(240, 198, 116, 0.25);
+  }
+
+  .btn-warning {
+    background: #d97706;
+    color: #fff;
+  }
+  .btn-warning:hover {
+    background: #b45309;
+  }
+</style>

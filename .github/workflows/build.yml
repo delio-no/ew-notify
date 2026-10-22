@@ -64,16 +64,16 @@ jobs:
           Write-Host "Found executable: $($exe.FullName)"
 
           # Portable bundle (exe + WinDivert files + template config + README)
-          New-Item -ItemType Directory -Force -Path artifacts/ew-notify-portable
-          Copy-Item $exe.FullName artifacts/ew-notify-portable/ew-notify.exe
-          Copy-Item src-tauri/windivert/WinDivert.dll artifacts/ew-notify-portable/
-          Copy-Item src-tauri/windivert/WinDivert64.sys artifacts/ew-notify-portable/
-          Copy-Item src-tauri/windivert/WinDivert32.sys artifacts/ew-notify-portable/
-          Copy-Item config.json artifacts/ew-notify-portable/
-          Copy-Item README.md artifacts/ew-notify-portable/
+          New-Item -ItemType Directory -Force -Path artifacts/ew-notify
+          Copy-Item $exe.FullName artifacts/ew-notify/ew-notify.exe
+          Copy-Item src-tauri/windivert/WinDivert.dll artifacts/ew-notify/
+          Copy-Item src-tauri/windivert/WinDivert64.sys artifacts/ew-notify/
+          Copy-Item src-tauri/windivert/WinDivert32.sys artifacts/ew-notify/
+          Copy-Item config.json artifacts/ew-notify/
+          Copy-Item README.md artifacts/ew-notify/
 
-          Compress-Archive -Path artifacts/ew-notify-portable/* -DestinationPath artifacts/ew-notify-portable.zip -Force
-          Remove-Item -Recurse -Force artifacts/ew-notify-portable
+          Compress-Archive -Path artifacts/ew-notify/* -DestinationPath artifacts/ew-notify.zip -Force
+          Remove-Item -Recurse -Force artifacts/ew-notify
 
           # Generate SHA256 hashes
           Set-Location artifacts

@@ -25,6 +25,8 @@
   let configLoaded = $state(false);
   let isMonitoring = $state(false);
   let isBotRunning = $state(false);
+  let savedToken = $state('');
+  let isTokenChanged = $derived(config.telegram.bot_token.trim() !== savedToken.trim());
   let monitorStatus = $state<MonitoringStatus>({
     active: false,
     process_name: '',
@@ -141,16 +143,11 @@
   async function refreshUsers() {
     try {
       const users = await api.getRegisteredUsers();
-      const cfg = await api.getConfig();
       config = {
         ...config,
         telegram: {
           ...config.telegram,
           registered_users: [...users],
-          notify_all_users: cfg.telegram.notify_all_users,
-          bot_token: cfg.telegram.bot_token || config.telegram.bot_token,
-          admin_chat_id: cfg.telegram.admin_chat_id ?? config.telegram.admin_chat_id ?? '',
-          auto_start: cfg.telegram.auto_start,
         },
       };
     } catch (e) {
@@ -399,7 +396,11 @@
   async function saveConfig() {
     try {
       const wasMonitoring = isMonitoring;
+      const wasBotRunning = isBotRunning;
       const prevPort = monitorStatus.tcp_port;
+      const prevSavedToken = savedToken.trim();
+      const newBotToken = config.telegram.bot_token.trim();
+      const botTokenChanged = wasBotRunning && prevSavedToken !== '' && prevSavedToken !== newBotToken;
       const tcpPort = config.target.tcp_port;
       const latest = await api.getConfig();
       const patterns =
@@ -445,7 +446,19 @@
       };
       const result = await api.updateConfig(payload);
       config = payload;
+      savedToken = payload.telegram.bot_token;
       await refreshMonitorStatus();
+
+      if (botTokenChanged) {
+        await api.stopTelegramBot();
+        await new Promise((r) => setTimeout(r, 200));
+        await api.startTelegramBot(payload.telegram.bot_token);
+        isBotRunning = true;
+        await refreshMonitorStatus();
+        showStatus('Конфиг сохранён, бот перезапущен с новым токеном');
+        return;
+      }
+
       if (result.includes('monitoring restarted') || result.includes('restart failed')) {
         showStatus(result);
       } else if (wasMonitoring && prevPort !== payload.target.tcp_port) {
@@ -469,12 +482,14 @@
   }
 
   async function startBot() {
-    if (!config.telegram.bot_token) {
+    const token = config.telegram.bot_token.trim();
+    if (!token) {
       showStatus('Введите токен бота');
       return;
     }
     try {
-      await api.startTelegramBot(config.telegram.bot_token);
+      await api.startTelegramBot(token);
+      savedToken = token;
       isBotRunning = true;
       await refreshMonitorStatus();
       showStatus('Бот запущен');
@@ -484,19 +499,43 @@
   }
 
   async function restartBot() {
-    if (!config.telegram.bot_token) {
+    const token = config.telegram.bot_token.trim();
+    if (!token) {
       showStatus('Введите токен бота');
       return;
     }
     try {
       await api.stopTelegramBot();
-      await new Promise((r) => setTimeout(r, 700));
-      await api.startTelegramBot(config.telegram.bot_token);
+      await new Promise((r) => setTimeout(r, 200));
+      await api.startTelegramBot(token);
+      savedToken = token;
       isBotRunning = true;
       await refreshMonitorStatus();
       showStatus('Бот перезапущен');
     } catch (e) {
       showStatus(`Ошибка: ${e}`);
+    }
+  }
+
+  async function applyAndRestartBot() {
+    const token = config.telegram.bot_token.trim();
+    if (!token) {
+      showStatus('Введите токен бота');
+      return;
+    }
+    try {
+      showStatus('Проверка токена...');
+      await api.testTelegram(token);
+      await saveConfig();
+      await api.stopTelegramBot();
+      await new Promise((r) => setTimeout(r, 200));
+      await api.startTelegramBot(token);
+      savedToken = token;
+      isBotRunning = true;
+      await refreshMonitorStatus();
+      showStatus('Новый токен применён, бот перезапущен');
+    } catch (e) {
+      showStatus(`Ошибка применения токена: ${e}`);
     }
   }
 
@@ -547,7 +586,9 @@
       }
     }, 500);
     const usersTimer = setInterval(() => {
-      void refreshUsers();
+      if (currentPage === 'users') {
+        void refreshUsers();
+      }
     }, 2000);
 
     const unlisteners: Array<() => void> = [];
@@ -555,6 +596,7 @@
     void (async () => {
       try {
         const loaded = await api.getConfig();
+        savedToken = loaded.telegram?.bot_token || '';
         config = {
           ...loaded,
           telegram: {
@@ -660,6 +702,7 @@
         bind:config
         {isBotRunning}
         {isCaptureAuto}
+        {isTokenChanged}
         bind:showBotToken
         onSave={saveConfig}
         onReset={resetConfig}
@@ -667,6 +710,7 @@
         onStartBot={startBot}
         onStopBot={stopBot}
         onRestartBot={restartBot}
+        onApplyAndRestartBot={applyAndRestartBot}
       />
     {:else if currentPage === 'patterns'}
       <PatternsPage

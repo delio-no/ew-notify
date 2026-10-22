@@ -23,7 +23,7 @@
 
 ## Быстрый старт
 
-1. Скачайте архив **`ew-notify-portable.zip`** со страницы **[Releases](https://github.com/delio-no/ew-notify/releases)**.
+1. Скачайте архив **`ew-notify.zip`** со страницы **[Releases](https://github.com/delio-no/ew-notify/releases)**.
 2. Распакуйте архив в любую удобную папку.
 3. Запустите `ew-notify.exe` (требуются права администратора для работы фильтра трафика).
 4. В разделе **Настройки**:
