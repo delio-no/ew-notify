@@ -66,26 +66,26 @@ jobs:
           }
 
           # 2. Standalone binary
-          $exe = Get-ChildItem -Path target/release/ew_notify.exe, src-tauri/target/release/ew_notify.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          $exe = Get-ChildItem -Path target/release/ew-notify.exe, src-tauri/target/release/ew-notify.exe -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($exe) {
             Write-Host "Found executable: $($exe.FullName)"
             Copy-Item $exe.FullName -Destination artifacts/
           } else {
-            Write-Error "ew_notify.exe was not found in target/release!"
+            Write-Error "ew-notify.exe was not found in target/release!"
             exit 1
           }
 
           # 3. Portable bundle (exe + WinDivert files + template config + README)
-          New-Item -ItemType Directory -Force -Path artifacts/ew_notify_portable
-          Copy-Item $exe.FullName artifacts/ew_notify_portable/
-          Copy-Item src-tauri/windivert/WinDivert.dll artifacts/ew_notify_portable/
-          Copy-Item src-tauri/windivert/WinDivert64.sys artifacts/ew_notify_portable/
-          Copy-Item src-tauri/windivert/WinDivert32.sys artifacts/ew_notify_portable/
-          Copy-Item config.json artifacts/ew_notify_portable/
-          Copy-Item README.md artifacts/ew_notify_portable/
+          New-Item -ItemType Directory -Force -Path artifacts/ew-notify-portable
+          Copy-Item $exe.FullName artifacts/ew-notify-portable/
+          Copy-Item src-tauri/windivert/WinDivert.dll artifacts/ew-notify-portable/
+          Copy-Item src-tauri/windivert/WinDivert64.sys artifacts/ew-notify-portable/
+          Copy-Item src-tauri/windivert/WinDivert32.sys artifacts/ew-notify-portable/
+          Copy-Item config.json artifacts/ew-notify-portable/
+          Copy-Item README.md artifacts/ew-notify-portable/
 
-          Compress-Archive -Path artifacts/ew_notify_portable/* -DestinationPath artifacts/ew_notify_portable.zip -Force
-          Remove-Item -Recurse -Force artifacts/ew_notify_portable
+          Compress-Archive -Path artifacts/ew-notify-portable/* -DestinationPath artifacts/ew-notify-portable.zip -Force
+          Remove-Item -Recurse -Force artifacts/ew-notify-portable
 
           # 4. Generate SHA256 hashes
           Set-Location artifacts

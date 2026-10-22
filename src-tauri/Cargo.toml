@@ -1,16 +1,16 @@
 [package]
-name = "ew_notify"
+name = "ew-notify"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-default-run = "ew_notify"
+default-run = "ew-notify"
 
 [lib]
 name = "ew_notify_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
-name = "ew_notify"
+name = "ew-notify"
 path = "src/main.rs"
 test = false
 

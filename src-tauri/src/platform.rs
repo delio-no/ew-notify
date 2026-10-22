@@ -71,7 +71,7 @@ pub use win::{acquire_single_instance, is_elevated, InstanceLock};
 static INSTANCE: Mutex<Option<InstanceLock>> = Mutex::new(None);
 
 pub fn ensure_single_instance() -> Result<()> {
-    let lock = acquire_single_instance("Local\\EW_Notify_SingleInstance")?;
+    let lock = acquire_single_instance("Local\\ew-notify_SingleInstance")?;
     *INSTANCE.lock().map_err(|e| anyhow!("{e}"))? = Some(lock);
     Ok(())
 }

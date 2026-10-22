@@ -204,9 +204,9 @@ impl Pattern {
 }
 
 /// Config always lives next to the executable (stable path).
-/// Override with env `EW_NOTIFY_CONFIG=/path/to/config.json`.
+/// Override with env `EW_NOTIFY_CONFIG=/path/to/config.json` (или `EW-NOTIFY-CONFIG`).
 pub fn get_config_path() -> PathBuf {
-    if let Ok(custom) = std::env::var("EW_NOTIFY_CONFIG") {
+    if let Ok(custom) = std::env::var("EW_NOTIFY_CONFIG").or_else(|_| std::env::var("EW-NOTIFY-CONFIG")) {
         if !custom.is_empty() {
             return PathBuf::from(custom);
         }

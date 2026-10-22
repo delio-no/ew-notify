@@ -28,7 +28,7 @@
 
 ## Быстрый старт
 
-1. Скачайте свежий установщик `ew_notify_*_x64-setup.exe` или архив `ew_notify_portable.zip` со страницы **Releases**.
+1. Скачайте свежий установщик `ew-notify_*_x64-setup.exe` или архив `ew-notify-portable.zip` со страницы **Releases**.
 2. Запустите приложение от имени администратора.
 3. В разделе **Настройки**:
    - Укажите токен бота от [@BotFather](https://t.me/BotFather) и нажмите **«Запустить бота»**.
@@ -57,8 +57,8 @@ npm run tauri build
 ```
 
 Готовые файлы сборки находятся в:
-- Инсталлятор: `src-tauri/target/release/bundle/nsis/`
-- Бинарный файл: `src-tauri/target/release/ew_notify.exe`
+- Инсталлятор: `target/release/bundle/nsis/`
+- Бинарный файл: `target/release/ew-notify.exe`
 
 ---
 
@@ -68,10 +68,10 @@ npm run tauri build
 
 ```bash
 # Пакетный сниффер в консоли (только совпадения паттернов)
-cargo run -p ew_notify --bin sniff -- --matches-only
+cargo run -p ew-notify --bin sniff -- --matches-only
 
 # Офлайн-проверка hex-байтов без WinDivert и без админ-прав
-cargo run -p ew_notify --bin match_hex -- 00FE06032C010000
+cargo run -p ew-notify --bin match_hex -- 00FE06032C010000
 ```
 
 ---

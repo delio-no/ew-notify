@@ -1,7 +1,7 @@
 //! Debug packet sniffer (Windows / WinDivert sniff mode).
 //!
 //! Usage:
-//!   cargo run -p ew_notify --bin sniff -- [--port 7777] [--ip 192.168.x.x] [--matches-only]
+//!   cargo run -p ew-notify --bin sniff -- [--port 7777] [--ip 192.168.x.x] [--matches-only]
 //!
 //! Port defaults to `target.tcp_port` from config.json (cwd or next to exe).
 
@@ -60,7 +60,7 @@ fn parse_args() -> Result<Args> {
 
 fn print_help() {
     eprintln!(
-        "ew_notify sniff — WinDivert packet sniffer (sniff mode, no reinject)
+        "ew-notify sniff — WinDivert packet sniffer (sniff mode, no reinject)
 
 USAGE:
   sniff [OPTIONS]

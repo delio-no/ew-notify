@@ -3,10 +3,10 @@
 //! Paste hex from sniff/`app.log` and check DEATH / STOP_FARM (or config patterns).
 //!
 //! Examples:
-//!   cargo run -p ew_notify --bin match_hex -- 00FE06032C010000
-//!   cargo run -p ew_notify --bin match_hex -- --packet <full-ip-packet-hex>
-//!   cargo run -p ew_notify --bin match_hex -- --file dump.txt
-//!   cargo run -p ew_notify --bin match_hex -- --wrap-tcp 00FE06032C010000
+//!   cargo run -p ew-notify --bin match_hex -- 00FE06032C010000
+//!   cargo run -p ew-notify --bin match_hex -- --packet <full-ip-packet-hex>
+//!   cargo run -p ew-notify --bin match_hex -- --file dump.txt
+//!   cargo run -p ew-notify --bin match_hex -- --wrap-tcp 00FE06032C010000
 
 use anyhow::{anyhow, Result};
 use ew_notify_lib::config::{self, AppConfig};
