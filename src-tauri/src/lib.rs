@@ -350,10 +350,29 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     }
                 }
 
+                let payload = PacketAnalyzer::extract_transport_payload(&raw_packet);
+
+                // Debug log any packet containing "autofarm" (UTF-16LE: autofarm)
+                const AUTOFARM_TAG: &[u8] = &[
+                    0x61, 0x00, 0x75, 0x00, 0x74, 0x00, 0x6F, 0x00,
+                    0x66, 0x00, 0x61, 0x00, 0x72, 0x00, 0x6D, 0x00,
+                ];
+                if payload.windows(AUTOFARM_TAG.len()).any(|w| w == AUTOFARM_TAG) {
+                    let hex_preview: String = payload
+                        .iter()
+                        .take(128)
+                        .map(|b| format!("{:02X}", b))
+                        .collect();
+                    tracing::info!(
+                        "[AUTOFARM_DEBUG] len={} hex={}",
+                        payload.len(),
+                        hex_preview
+                    );
+                }
+
                 // Packet dump (full payload hex), rate-limited
                 if packet_log.is_enabled() {
                     let conn = extract_connection_key(&raw_packet);
-                    let payload = PacketAnalyzer::extract_transport_payload(&raw_packet);
                     let (remote, local) = match &conn {
                         Some(c) => (
                             format!("{}:{}", c.remote_ip, c.remote_port),
@@ -450,12 +469,20 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                 let notify_title = pattern.description.clone();
                 let notify_body = pattern.name.clone();
 
+                let hex_preview: String = payload
+                    .iter()
+                    .take(128)
+                    .map(|b| format!("{:02X}", b))
+                    .collect();
+
                 tracing::info!(
-                    "Pattern detected: {} ({}) client={} (match #{})",
+                    "Pattern detected: {} ({}) client={} (match #{}) len={} hex={}",
                     pattern.name,
                     pattern.description,
                     client_label,
-                    matches_n
+                    matches_n,
+                    payload.len(),
+                    hex_preview
                 );
 
                 let time = chrono::Local::now().format("%H:%M:%S").to_string();
