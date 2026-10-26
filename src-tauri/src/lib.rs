@@ -603,7 +603,7 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                                 let delay_ms = act.delay_ms;
                                 let pattern_name = pattern.name.clone();
                                 let pid = win.pid;
-                                tokio::spawn(async move {
+                                rt.spawn(async move {
                                     if delay_ms > 0 {
                                         tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
                                     }
@@ -1250,6 +1250,29 @@ async fn open_url(url: String) -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+async fn test_send_key(
+    state: State<'_, AppState>,
+    key: String,
+) -> Result<String, String> {
+    let process_name = {
+        let config = state.config.lock().await;
+        config.target.process_name.clone()
+    };
+
+    let windows = screen_capture::find_target_windows(&process_name);
+    if windows.is_empty() {
+        return Err(format!("Окно процесса '{}' не найдено. Игра запущена?", process_name));
+    }
+
+    let win = &windows[0];
+    input_sender::send_key_background(win.hwnd, &key, 75)
+        .await
+        .map_err(|e| format!("Ошибка отправки клавиши: {}", e))?;
+
+    Ok(format!("Клавиша '{}' отправлена в окно [PID {}]", key, win.pid))
+}
+
 pub fn run() {
     if let Err(e) = platform::ensure_single_instance() {
         eprintln!("{e}");
@@ -1463,6 +1486,7 @@ pub fn run() {
             set_user_screenshot_allowed,
             set_notify_all_users,
             open_url,
+            test_send_key,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

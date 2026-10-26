@@ -82,7 +82,7 @@ mod win {
         MapVirtualKeyW, MAPVK_VK_TO_VSC,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        IsWindow, PostMessageW, WM_KEYDOWN, WM_KEYUP,
+        IsWindow, PostMessageW, WM_CHAR, WM_KEYDOWN, WM_KEYUP,
     };
 
     pub async fn send_key_background(hwnd_val: isize, key: &str, hold_ms: u64) -> Result<()> {
@@ -120,6 +120,18 @@ mod win {
         };
         if !down_res.as_bool() {
             return Err(anyhow!("PostMessageW WM_KEYDOWN failed for HWND {}", hwnd_val));
+        }
+
+        // Also post WM_CHAR for printable characters (e.g. letters and digits)
+        if (0x20..=0x7E).contains(&vk) {
+            let _ = unsafe {
+                PostMessageW(
+                    hwnd,
+                    WM_CHAR,
+                    WPARAM(vk as usize),
+                    LPARAM(lparam_down),
+                )
+            };
         }
 
         let sleep_duration = Duration::from_millis(if hold_ms == 0 { 75 } else { hold_ms });

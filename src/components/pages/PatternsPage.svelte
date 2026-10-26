@@ -26,6 +26,7 @@
     onImport,
     onTestHex,
     onSavePatternAction,
+    onTestKey,
   }: {
     config: Config;
     newPatternName?: string;
@@ -49,6 +50,7 @@
     onImport: (replace: boolean) => void;
     onTestHex: () => void;
     onSavePatternAction?: (pattern: Pattern) => void;
+    onTestKey?: (key: string) => void;
   } = $props();
 
   let openActionName = $state<string | null>(null);
@@ -293,6 +295,16 @@
                         />
                       </div>
 
+                      <button
+                        type="button"
+                        class="btn btn-secondary btn-sm"
+                        onclick={() => {
+                          if (onTestKey) onTestKey(pattern.action?.key ?? 'Z');
+                        }}
+                        title="Отправить тестовое нажатие в окно игры прямо сейчас"
+                      >
+                        Тест
+                      </button>
                       <button
                         type="button"
                         class="btn btn-primary btn-sm"

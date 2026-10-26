@@ -51,6 +51,7 @@ export const api = {
     invoke<Pattern[]>('import_patterns', { json, replace }),
   testPatternHex: (hex: string) =>
     invoke<PatternMatchResult>('test_pattern_hex', { hex }),
+  testSendKey: (key: string) => invoke<string>('test_send_key', { key }),
 
   testTelegram: (token: string) => invoke<string>('test_telegram', { token }),
   startTelegramBot: (token: string) =>

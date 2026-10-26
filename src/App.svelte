@@ -314,6 +314,15 @@
     }
   }
 
+  async function testSendKey(key: string) {
+    try {
+      const res = await api.testSendKey(key);
+      showStatus(res);
+    } catch (e) {
+      showStatus(`Ошибка теста: ${e}`);
+    }
+  }
+
   async function savePatternAction(pattern: Pattern) {
     try {
       await api.updateConfig(config);
@@ -774,6 +783,7 @@
         bind:newPatternActionKey
         bind:newPatternActionDelay
         onSavePatternAction={savePatternAction}
+        onTestKey={testSendKey}
         onAdd={addPattern}
         onRemove={removePattern}
         onReset={resetPatterns}
