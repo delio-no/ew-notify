@@ -170,9 +170,13 @@
         <label>Кулдаун (секунды)</label>
         <input type="number" bind:value={config.notifications.cooldown_seconds} min="0" />
       </div>
-      <div class="form-group last">
+      <div class="form-group">
         <label>Burst dedup LAN+VPN (мс, 0 = выкл)</label>
         <input type="number" bind:value={config.notifications.burst_dedup_ms} min="0" step="100" />
+      </div>
+      <div class="form-group last">
+        <label>Задержка скриншота после алерта (мс)</label>
+        <input type="number" bind:value={config.notifications.screenshot_delay_ms} min="0" step="100" />
       </div>
     </div>
   </div>

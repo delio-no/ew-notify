@@ -477,20 +477,14 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     windows.iter().enumerate().find(|(_, w)| w.pid == pid)
                 });
 
-                let (window_label, photo_jpeg, minimized_hwnd) = match matched_win {
+                let (window_label, target_win) = match matched_win {
                     Some((idx, win)) => {
                         let label = if win.is_minimized {
                             format!("🎮 Окно #{} [PID {}] (свёрнуто)", idx + 1, win.pid)
                         } else {
                             format!("🎮 Окно #{} [PID {}]", idx + 1, win.pid)
                         };
-                        let photo = screen_capture::capture_window(win, true).ok();
-                        let min_hwnd = if win.is_minimized && photo.is_none() {
-                            Some(win.hwnd)
-                        } else {
-                            None
-                        };
-                        (Some(label), photo, min_hwnd)
+                        (Some(label), Some(win.clone()))
                     }
                     None => {
                         if windows.len() == 1 {
@@ -500,19 +494,13 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                             } else {
                                 format!("🎮 Окно #1 [PID {}]", win.pid)
                             };
-                            let photo = screen_capture::capture_window(win, true).ok();
-                            let min_hwnd = if win.is_minimized && photo.is_none() {
-                                Some(win.hwnd)
-                            } else {
-                                None
-                            };
-                            (Some(label), photo, min_hwnd)
+                            (Some(label), Some(win.clone()))
                         } else if let Some(pid) = target_pid {
-                            (Some(format!("🎮 Процесс [PID {}]", pid)), None, None)
+                            (Some(format!("🎮 Процесс [PID {}]", pid)), None)
                         } else if let Some(p) = local_port {
-                            (Some(format!("🎮 Соединение порт {}", p)), None, None)
+                            (Some(format!("🎮 Соединение порт {}", p)), None)
                         } else {
-                            (None, None, None)
+                            (None, None)
                         }
                     }
                 };
@@ -586,8 +574,7 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                         &notify_title,
                         &pattern.name,
                         window_label.as_deref(),
-                        photo_jpeg,
-                        minimized_hwnd,
+                        target_win,
                     )) {
                         let msg = format!("Telegram: {e}");
                         tracing::warn!("{}", msg);

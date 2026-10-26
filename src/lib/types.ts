@@ -33,6 +33,7 @@ export interface Config {
     tray_enabled: boolean;
     cooldown_seconds: number;
     burst_dedup_ms?: number;
+    screenshot_delay_ms?: number;
   };
   startup: {
     auto_start_monitoring: boolean;

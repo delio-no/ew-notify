@@ -35,6 +35,7 @@ impl Default for AppConfig {
                 tray_enabled: true,
                 cooldown_seconds: 60,
                 burst_dedup_ms: default_burst_dedup_ms(),
+                screenshot_delay_ms: default_screenshot_delay_ms(),
             },
             startup: StartupConfig::default(),
         }
@@ -154,6 +155,13 @@ pub struct NotificationsConfig {
     /// Suppress same pattern on another local IP (LAN+VPN) within this window.
     #[serde(default = "default_burst_dedup_ms")]
     pub burst_dedup_ms: u64,
+    /// Delay before capturing screenshot so game finishes animations and updates UI state.
+    #[serde(default = "default_screenshot_delay_ms")]
+    pub screenshot_delay_ms: u64,
+}
+
+fn default_screenshot_delay_ms() -> u64 {
+    1500
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
