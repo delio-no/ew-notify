@@ -38,8 +38,12 @@ export const api = {
   setPacketLogEnabled: (enabled: boolean) =>
     invoke('set_packet_log_enabled', { enabled }),
 
-  addPattern: (name: string, bytes: string, description: string) =>
-    invoke('add_pattern', { name, bytes, description }),
+  addPattern: (
+    name: string,
+    bytes: string,
+    description: string,
+    action?: PatternAction
+  ) => invoke('add_pattern', { name, bytes, description, action }),
   removePattern: (name: string) => invoke('remove_pattern', { name }),
   resetPatterns: () => invoke<Pattern[]>('reset_patterns_to_defaults'),
   exportPatterns: () => invoke<string>('export_patterns'),

@@ -1,7 +1,14 @@
+export interface PatternAction {
+  enabled: boolean;
+  key: string;
+  delay_ms: number;
+}
+
 export interface Pattern {
   name: string;
   bytes: string;
   description: string;
+  action?: PatternAction;
 }
 
 export interface RegisteredUser {
@@ -35,6 +42,7 @@ export interface Config {
     burst_dedup_ms?: number;
     screenshot_delay_ms?: number;
     screenshot_on_death?: boolean;
+    actions_enabled?: boolean;
   };
   startup: {
     auto_start_monitoring: boolean;
@@ -106,7 +114,23 @@ export const defaultConfig = (): Config => ({
     tcp_port: 7777,
     udp_port: null,
     remote_ip: null,
-    patterns: [],
+    patterns: [
+      {
+        name: 'DEATH',
+        bytes: '00FE06032C010000',
+        description: 'Персонаж умер',
+      },
+      {
+        name: 'STOP_FARM',
+        bytes: '4E00FE11006100750074006F006600610072006D000000',
+        description: 'Автофарм остановлен',
+        action: {
+          enabled: false,
+          key: 'Z',
+          delay_ms: 1000,
+        },
+      },
+    ],
   },
   notifications: {
     telegram_enabled: true,
@@ -115,6 +139,7 @@ export const defaultConfig = (): Config => ({
     burst_dedup_ms: 2000,
     screenshot_delay_ms: 1500,
     screenshot_on_death: true,
+    actions_enabled: true,
   },
   startup: {
     auto_start_monitoring: false,

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct PacketAnalyzer {
-    patterns: HashMap<String, (Vec<u8>, String)>,
+    patterns: HashMap<String, (Vec<u8>, String, Option<crate::config::PatternAction>)>,
 }
 
 impl PacketAnalyzer {
@@ -12,7 +12,7 @@ impl PacketAnalyzer {
         let mut map = HashMap::new();
         for p in patterns {
             if let Ok(bytes) = p.to_bytes() {
-                map.insert(p.name.clone(), (bytes, p.description));
+                map.insert(p.name.clone(), (bytes, p.description, p.action));
             }
         }
         Self { patterns: map }
@@ -21,7 +21,7 @@ impl PacketAnalyzer {
     pub fn add_pattern(&mut self, pattern: Pattern) {
         if let Ok(bytes) = pattern.to_bytes() {
             self.patterns
-                .insert(pattern.name, (bytes, pattern.description));
+                .insert(pattern.name, (bytes, pattern.description, pattern.action));
         }
     }
 
@@ -32,10 +32,11 @@ impl PacketAnalyzer {
     pub fn get_patterns(&self) -> Vec<Pattern> {
         self.patterns
             .iter()
-            .map(|(name, (bytes, desc))| Pattern {
+            .map(|(name, (bytes, desc, act))| Pattern {
                 name: name.clone(),
                 bytes: bytes.iter().map(|b| format!("{:02X}", b)).collect(),
                 description: desc.clone(),
+                action: act.clone(),
             })
             .collect()
     }
@@ -114,7 +115,7 @@ impl PacketAnalyzer {
             return None;
         }
 
-        for (name, (bytes, desc)) in &self.patterns {
+        for (name, (bytes, desc, act)) in &self.patterns {
             if bytes.is_empty() {
                 continue;
             }
@@ -123,6 +124,7 @@ impl PacketAnalyzer {
                     name: name.clone(),
                     bytes: bytes.iter().map(|b| format!("{:02X}", b)).collect(),
                     description: desc.clone(),
+                    action: act.clone(),
                 });
             }
         }
@@ -515,6 +517,7 @@ mod tests {
             name: "DEATH".into(),
             bytes: "00FE06032C010000".into(),
             description: "Персонаж умер".into(),
+            action: None,
         }
     }
 
@@ -523,6 +526,7 @@ mod tests {
             name: "STOP_FARM".into(),
             bytes: "4E00FE11006100750074006F006600610072006D000000".into(),
             description: "Автофарм остановлен".into(),
+            action: None,
         }
     }
 
@@ -700,6 +704,7 @@ mod tests {
             name: "BAD".into(),
             bytes: "ZZ".into(),
             description: "broken".into(),
+            action: None,
         }]);
         assert!(analyzer.get_patterns().is_empty());
     }

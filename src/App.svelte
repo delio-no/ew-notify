@@ -68,6 +68,9 @@
   let newPatternName = $state('');
   let newPatternBytes = $state('');
   let newPatternDesc = $state('');
+  let newPatternActionEnabled = $state(false);
+  let newPatternActionKey = $state('Z');
+  let newPatternActionDelay = $state(1000);
   let patternTouched = $state({ name: false, bytes: false, desc: false });
   let patternSubmitAttempted = $state(false);
   let testHexInput = $state('');
@@ -283,18 +286,38 @@
       return;
     }
     try {
+      const action = newPatternActionEnabled
+        ? {
+            enabled: true,
+            key: newPatternActionKey.trim().toUpperCase() || 'Z',
+            delay_ms: Math.max(0, Number(newPatternActionDelay) || 0),
+          }
+        : undefined;
       await api.addPattern(
         newPatternName.trim(),
         newPatternBytes.trim().replace(/\s+/g, ''),
         newPatternDesc.trim(),
+        action
       );
       config = await api.getConfig();
       newPatternName = '';
       newPatternBytes = '';
       newPatternDesc = '';
+      newPatternActionEnabled = false;
+      newPatternActionKey = 'Z';
+      newPatternActionDelay = 1000;
       patternTouched = { name: false, bytes: false, desc: false };
       patternSubmitAttempted = false;
       showStatus('Паттерн добавлен');
+    } catch (e) {
+      showStatus(`Ошибка: ${e}`);
+    }
+  }
+
+  async function savePatternAction(pattern: Pattern) {
+    try {
+      await api.updateConfig(config);
+      showStatus(`Действие для ${pattern.name} сохранено`);
     } catch (e) {
       showStatus(`Ошибка: ${e}`);
     }
@@ -444,6 +467,7 @@
               ? 1500
               : Number(config.notifications.screenshot_delay_ms),
           screenshot_on_death: config.notifications.screenshot_on_death !== false,
+          actions_enabled: config.notifications.actions_enabled !== false,
         },
         startup: {
           auto_start_monitoring: !!config.startup?.auto_start_monitoring,
@@ -631,6 +655,7 @@
             burst_dedup_ms: loaded.notifications?.burst_dedup_ms ?? 2000,
             screenshot_delay_ms: loaded.notifications?.screenshot_delay_ms ?? 1500,
             screenshot_on_death: loaded.notifications?.screenshot_on_death !== false,
+            actions_enabled: loaded.notifications?.actions_enabled !== false,
           },
           startup: {
             auto_start_monitoring: !!loaded.startup?.auto_start_monitoring,
@@ -745,6 +770,10 @@
         onTouchName={() => (patternTouched.name = true)}
         onTouchBytes={() => (patternTouched.bytes = true)}
         onTouchDesc={() => (patternTouched.desc = true)}
+        bind:newPatternActionEnabled
+        bind:newPatternActionKey
+        bind:newPatternActionDelay
+        onSavePatternAction={savePatternAction}
         onAdd={addPattern}
         onRemove={removePattern}
         onReset={resetPatterns}

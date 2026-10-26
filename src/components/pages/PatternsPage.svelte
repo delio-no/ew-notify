@@ -1,12 +1,15 @@
 <script lang="ts">
   import PageHeader from '../PageHeader.svelte';
-  import type { Config } from '../../lib/types';
+  import type { Config, Pattern } from '../../lib/types';
 
   let {
     config,
     newPatternName = $bindable(''),
     newPatternBytes = $bindable(''),
     newPatternDesc = $bindable(''),
+    newPatternActionEnabled = $bindable(false),
+    newPatternActionKey = $bindable('Z'),
+    newPatternActionDelay = $bindable(1000),
     testHexInput = $bindable(''),
     testHexResult = '',
     nameFieldError = null,
@@ -21,11 +24,15 @@
     onExport,
     onImport,
     onTestHex,
+    onSavePatternAction,
   }: {
     config: Config;
     newPatternName?: string;
     newPatternBytes?: string;
     newPatternDesc?: string;
+    newPatternActionEnabled?: boolean;
+    newPatternActionKey?: string;
+    newPatternActionDelay?: number;
     testHexInput?: string;
     testHexResult?: string;
     nameFieldError?: string | null;
@@ -40,7 +47,28 @@
     onExport: () => void;
     onImport: (replace: boolean) => void;
     onTestHex: () => void;
+    onSavePatternAction?: (pattern: Pattern) => void;
   } = $props();
+
+  let openActionName = $state<string | null>(null);
+
+  function toggleActionEditor(pattern: Pattern) {
+    if (openActionName === pattern.name) {
+      openActionName = null;
+    } else {
+      if (!pattern.action) {
+        pattern.action = { enabled: false, key: 'Z', delay_ms: 1000 };
+      }
+      openActionName = pattern.name;
+    }
+  }
+
+  function handleSaveAction(pattern: Pattern) {
+    if (onSavePatternAction) {
+      onSavePatternAction(pattern);
+    }
+    openActionName = null;
+  }
 </script>
 
 <PageHeader title="Паттерны">
@@ -132,6 +160,43 @@
             <p class="field-hint">Текст в уведомлениях</p>
           {/if}
         </div>
+
+        <div class="form-group action-toggle-group">
+          <label class="checkbox-label">
+            <input type="checkbox" bind:checked={newPatternActionEnabled} />
+            <span>⚡ Нажатие клавиши в окно игры при срабатывании</span>
+          </label>
+        </div>
+
+        {#if newPatternActionEnabled}
+          <div class="form-row action-config-row">
+            <div class="form-group">
+              <label for="action-key">Клавиша</label>
+              <input
+                id="action-key"
+                type="text"
+                class="action-input-key"
+                bind:value={newPatternActionKey}
+                placeholder="Z"
+                maxlength="10"
+              />
+              <p class="field-hint">Z, 1..9, F1..F12, Space</p>
+            </div>
+            <div class="form-group">
+              <label for="action-delay">Задержка перед нажатием (мс)</label>
+              <input
+                id="action-delay"
+                type="number"
+                class="action-input-delay"
+                bind:value={newPatternActionDelay}
+                min="0"
+                step="100"
+              />
+              <p class="field-hint">1000 мс = 1 сек</p>
+            </div>
+          </div>
+        {/if}
+
         <div class="actions">
           <button class="btn btn-success" onclick={onAdd}>Добавить паттерн</button>
         </div>
@@ -149,13 +214,105 @@
       {:else}
         <ul class="pattern-list">
           {#each config.target.patterns as pattern}
-            <li class="pattern-item">
-              <div class="pattern-info">
-                <span class="pattern-name">{pattern.name}</span>
-                <span class="pattern-bytes">{pattern.bytes}</span>
-                <span class="pattern-desc">{pattern.description}</span>
+            <li class="pattern-item-card">
+              <div class="pattern-row">
+                <div class="pattern-info">
+                  <span class="pattern-name">{pattern.name}</span>
+                  <span class="pattern-bytes">{pattern.bytes}</span>
+                  <span class="pattern-desc">{pattern.description}</span>
+                </div>
+                <div class="pattern-actions-col">
+                  <button
+                    type="button"
+                    class="pattern-action-badge"
+                    class:active={pattern.action?.enabled}
+                    onclick={() => toggleActionEditor(pattern)}
+                    title="Нажмите для настройки нажатия клавиши"
+                  >
+                    {#if pattern.action?.enabled}
+                      ⚡ [{pattern.action.key}] через {pattern.action.delay_ms}мс
+                    {:else}
+                      ⚡ Действие: Выкл
+                    {/if}
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-danger btn-sm"
+                    onclick={() => onRemove(pattern.name)}
+                  >
+                    Удалить
+                  </button>
+                </div>
               </div>
-              <button class="btn btn-danger btn-sm" onclick={() => onRemove(pattern.name)}>Удалить</button>
+
+              {#if openActionName === pattern.name}
+                <div class="pattern-action-editor">
+                  <div class="editor-header">
+                    <strong>⚡ Настройка фонового действия для {pattern.name}</strong>
+                  </div>
+                  <div class="editor-body">
+                    <label class="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={pattern.action?.enabled ?? false}
+                        onchange={(e) => {
+                          if (!pattern.action) {
+                            pattern.action = { enabled: false, key: 'Z', delay_ms: 1000 };
+                          }
+                          pattern.action.enabled = e.currentTarget.checked;
+                        }}
+                      />
+                      <span>Включить фоновое нажатие клавиши</span>
+                    </label>
+
+                    <div class="editor-inputs">
+                      <div class="form-group inline">
+                        <label for="edit-key-{pattern.name}">Клавиша:</label>
+                        <input
+                          id="edit-key-{pattern.name}"
+                          type="text"
+                          class="action-input-key"
+                          value={pattern.action?.key ?? 'Z'}
+                          placeholder="Z"
+                          maxlength="10"
+                          oninput={(e) => {
+                            if (!pattern.action) {
+                              pattern.action = { enabled: false, key: 'Z', delay_ms: 1000 };
+                            }
+                            pattern.action.key = e.currentTarget.value.trim().toUpperCase() || 'Z';
+                          }}
+                        />
+                      </div>
+
+                      <div class="form-group inline">
+                        <label for="edit-delay-{pattern.name}">Задержка (мс):</label>
+                        <input
+                          id="edit-delay-{pattern.name}"
+                          type="number"
+                          class="action-input-delay"
+                          value={pattern.action?.delay_ms ?? 1000}
+                          min="0"
+                          step="100"
+                          oninput={(e) => {
+                            if (!pattern.action) {
+                              pattern.action = { enabled: false, key: 'Z', delay_ms: 1000 };
+                            }
+                            pattern.action.delay_ms = Math.max(0, Number(e.currentTarget.value) || 0);
+                          }}
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        class="btn btn-primary btn-sm"
+                        onclick={() => handleSaveAction(pattern)}
+                      >
+                        Сохранить
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              {/if}
             </li>
           {/each}
         </ul>

@@ -37,6 +37,7 @@ impl Default for AppConfig {
                 burst_dedup_ms: default_burst_dedup_ms(),
                 screenshot_delay_ms: default_screenshot_delay_ms(),
                 screenshot_on_death: true,
+                actions_enabled: true,
             },
             startup: StartupConfig::default(),
         }
@@ -162,10 +163,41 @@ pub struct NotificationsConfig {
     /// Send screenshot when DEATH pattern matches.
     #[serde(default = "default_true")]
     pub screenshot_on_death: bool,
+    /// Master switch for background keystroke actions on pattern detection.
+    #[serde(default = "default_true")]
+    pub actions_enabled: bool,
 }
 
 fn default_screenshot_delay_ms() -> u64 {
     1500
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PatternAction {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_action_key")]
+    pub key: String,
+    #[serde(default = "default_action_delay_ms")]
+    pub delay_ms: u64,
+}
+
+fn default_action_key() -> String {
+    "Z".to_string()
+}
+
+fn default_action_delay_ms() -> u64 {
+    1000
+}
+
+impl Default for PatternAction {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            key: default_action_key(),
+            delay_ms: default_action_delay_ms(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,6 +205,8 @@ pub struct Pattern {
     pub name: String,
     pub bytes: String,
     pub description: String,
+    #[serde(default)]
+    pub action: Option<PatternAction>,
 }
 
 impl Pattern {
@@ -192,6 +226,7 @@ impl Pattern {
             name: name.clone(),
             bytes: bytes.clone(),
             description: description.clone(),
+            action: None,
         }
         .to_bytes()?;
 
@@ -199,6 +234,7 @@ impl Pattern {
             name,
             bytes,
             description,
+            action: None,
         })
     }
 
@@ -267,11 +303,17 @@ pub fn default_patterns() -> Vec<Pattern> {
             name: "DEATH".to_string(),
             bytes: "00FE06032C010000".to_string(),
             description: "Персонаж умер".to_string(),
+            action: None,
         },
         Pattern {
             name: "STOP_FARM".to_string(),
             bytes: "4E00FE11006100750074006F006600610072006D000000".to_string(),
             description: "Автофарм остановлен".to_string(),
+            action: Some(PatternAction {
+                enabled: false,
+                key: "Z".to_string(),
+                delay_ms: 1000,
+            }),
         },
     ]
 }
@@ -544,6 +586,7 @@ mod tests {
             name: "CUSTOM".into(),
             bytes: "AA".into(),
             description: "c".into(),
+            action: None,
         }];
         assert!(!ensure_default_patterns(&mut filled));
         assert_eq!(filled.target.patterns.len(), 1);

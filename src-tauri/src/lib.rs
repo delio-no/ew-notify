@@ -1,5 +1,6 @@
 pub mod config;
 pub mod crypto;
+pub mod input_sender;
 pub mod logging;
 pub mod packet;
 pub mod packet_log;
@@ -9,7 +10,7 @@ pub mod telegram;
 pub mod tray;
 pub mod screen_capture;
 
-use config::{AppConfig, CaptureMode, Pattern};
+use config::{AppConfig, CaptureMode, Pattern, PatternAction};
 use packet::{
     build_filter, build_filter_from_endpoints, extract_connection_key, parse_hex, PacketAnalyzer,
     PacketCapture,
@@ -412,7 +413,7 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     .map(|c| c.short_label())
                     .unwrap_or_else(|| "unknown".into());
 
-                let (cooldown_secs, tray_enabled, telegram_enabled, burst_window_ms, screenshot_on_death) =
+                let (cooldown_secs, tray_enabled, telegram_enabled, burst_window_ms, screenshot_on_death, actions_enabled) =
                     rt.block_on(async {
                         let cfg = config.lock().await;
                         (
@@ -421,6 +422,7 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                             cfg.notifications.telegram_enabled,
                             cfg.notifications.burst_dedup_ms,
                             cfg.notifications.screenshot_on_death,
+                            cfg.notifications.actions_enabled,
                         )
                     });
 
@@ -573,7 +575,7 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     let send_win = if pattern.name == "DEATH" && !screenshot_on_death {
                         None
                     } else {
-                        target_win
+                        target_win.clone()
                     };
 
                     if let Err(e) = rt.block_on(telegram::send_notification(
@@ -589,6 +591,48 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                             *err = msg.clone();
                         }
                         let _ = app_notify.emit("bot-error", msg);
+                    }
+                }
+
+                if actions_enabled {
+                    if let Some(act) = &pattern.action {
+                        if act.enabled {
+                            if let Some(win) = &target_win {
+                                let hwnd = win.hwnd;
+                                let key = act.key.clone();
+                                let delay_ms = act.delay_ms;
+                                let pattern_name = pattern.name.clone();
+                                let pid = win.pid;
+                                tokio::spawn(async move {
+                                    if delay_ms > 0 {
+                                        tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+                                    }
+                                    match input_sender::send_key_background(hwnd, &key, 75).await {
+                                        Ok(()) => {
+                                            tracing::info!(
+                                                "Action executed for pattern '{}': sent key '{}' in background to window [PID {}]",
+                                                pattern_name,
+                                                key,
+                                                pid
+                                            );
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                "Action failed for pattern '{}' [PID {}]: {}",
+                                                pattern_name,
+                                                pid,
+                                                e
+                                            );
+                                        }
+                                    }
+                                });
+                            } else {
+                                tracing::warn!(
+                                    "Action for pattern '{}' skipped: target window not found",
+                                    pattern.name
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -791,10 +835,12 @@ async fn add_pattern(
     name: String,
     bytes: String,
     description: String,
+    action: Option<PatternAction>,
 ) -> Result<String, String> {
     info!("Adding pattern: {}", name);
-    let pattern = Pattern::new(name.clone(), bytes.clone(), description.clone())
+    let mut pattern = Pattern::new(name.clone(), bytes.clone(), description.clone())
         .map_err(|e| e.to_string())?;
+    pattern.action = action;
 
     #[cfg(windows)]
     {

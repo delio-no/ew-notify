@@ -194,10 +194,16 @@
           <span>Системные уведомления Windows</span>
         </label>
       </div>
-      <div class="form-group last">
+      <div class="form-group">
         <label class="checkbox-label">
           <input type="checkbox" bind:checked={config.notifications.screenshot_on_death} />
           <span>Отправлять скриншот при гибели персонажа (DEATH)</span>
+        </label>
+      </div>
+      <div class="form-group last">
+        <label class="checkbox-label">
+          <input type="checkbox" bind:checked={config.notifications.actions_enabled} />
+          <span>Разрешить фоновую отправку клавиш в игру</span>
         </label>
       </div>
     </div>
