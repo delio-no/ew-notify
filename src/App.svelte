@@ -560,6 +560,16 @@
     }
   }
 
+  async function toggleScreenshot(chatId: string, allowed: boolean) {
+    try {
+      await api.setUserScreenshotAllowed(chatId, allowed);
+      await refreshUsers();
+      showStatus(`Скриншоты ${allowed ? 'разрешены' : 'запрещены'}`);
+    } catch (e) {
+      showStatus(`Ошибка: ${e}`);
+    }
+  }
+
   async function toggleNotifyAll() {
     try {
       await api.setNotifyAllUsers(!config.telegram.notify_all_users);
@@ -740,6 +750,7 @@
         {config}
         onRefresh={refreshUsers}
         onToggleUser={toggleUser}
+        onToggleScreenshot={toggleScreenshot}
         onToggleNotifyAll={toggleNotifyAll}
       />
     {:else if currentPage === 'console'}

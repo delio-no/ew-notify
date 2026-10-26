@@ -19,6 +19,7 @@ thiserror = "1"
 anyhow = "1"
 chrono = "0.4"
 dirs = "5"
+image = { version = "0.24", default-features = false, features = ["jpeg"] }
 
 [profile.release]
 strip = true

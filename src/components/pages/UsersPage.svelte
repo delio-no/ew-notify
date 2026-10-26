@@ -6,11 +6,13 @@
     config,
     onRefresh,
     onToggleUser,
+    onToggleScreenshot,
     onToggleNotifyAll,
   }: {
     config: Config;
     onRefresh: () => void;
     onToggleUser: (chatId: string, enabled: boolean) => void;
+    onToggleScreenshot: (chatId: string, allowed: boolean) => void;
     onToggleNotifyAll: () => void;
   } = $props();
 </script>
@@ -40,21 +42,50 @@
       {:else}
         <ul class="user-list">
           {#each config.telegram.registered_users as user (user.chat_id)}
+            {@const isAdmin = Boolean(config.telegram?.admin_chat_id && config.telegram.admin_chat_id === user.chat_id)}
             <li class="user-item">
               <div class="user-info">
-                <span class="user-name">{user.first_name || 'Unknown'}</span>
+                <span class="user-name">
+                  {user.first_name || 'Unknown'}
+                  {#if isAdmin}
+                    <span class="admin-badge ok" style="margin-left: 6px;">👑 Админ</span>
+                  {/if}
+                </span>
                 <span class="user-username">@{user.username || '-'}</span>
                 <span class="user-id">ID: {user.chat_id}</span>
               </div>
               <div class="user-actions">
                 <button
+                  type="button"
                   class="btn btn-sm"
                   class:btn-success={user.enabled}
                   class:btn-danger={!user.enabled}
                   onclick={() => onToggleUser(user.chat_id, !user.enabled)}
+                  title={user.enabled ? "Уведомления включены" : "Уведомления отключены"}
                 >
-                  {user.enabled ? 'Включён' : 'Отключён'}
+                  {user.enabled ? '🔔 Уведомления: Вкл' : '🔕 Уведомления: Выкл'}
                 </button>
+                {#if isAdmin}
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-secondary"
+                    disabled
+                    title="Администратору всегда разрешены скриншоты"
+                  >
+                    📷 Скриншоты: Всегда
+                  </button>
+                {:else}
+                  <button
+                    type="button"
+                    class="btn btn-sm"
+                    class:btn-success={user.allow_screenshot}
+                    class:btn-secondary={!user.allow_screenshot}
+                    onclick={() => onToggleScreenshot(user.chat_id, !user.allow_screenshot)}
+                    title={user.allow_screenshot ? "Разрешено делать скриншоты (/screen)" : "Запрещено делать скриншоты"}
+                  >
+                    📷 Скриншоты: {user.allow_screenshot ? 'Вкл' : 'Выкл'}
+                  </button>
+                {/if}
               </div>
             </li>
           {/each}

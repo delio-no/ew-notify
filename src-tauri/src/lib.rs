@@ -7,6 +7,7 @@ pub mod platform;
 pub mod process_net;
 pub mod telegram;
 pub mod tray;
+pub mod screen_capture;
 
 use config::{AppConfig, CaptureMode, Pattern};
 use packet::{
@@ -1009,6 +1010,22 @@ async fn set_user_enabled(
 }
 
 #[tauri::command]
+async fn set_user_screenshot_allowed(
+    state: State<'_, AppState>,
+    chat_id: String,
+    allowed: bool,
+) -> Result<String, String> {
+    let mut config = state.config.lock().await;
+    config::set_user_screenshot_allowed(&mut config, &chat_id, allowed);
+    config::save_config(&config).map_err(|e| e.to_string())?;
+    Ok(format!(
+        "User {} screenshot {}",
+        chat_id,
+        if allowed { "allowed" } else { "disallowed" }
+    ))
+}
+
+#[tauri::command]
 async fn set_notify_all_users(state: State<'_, AppState>, enabled: bool) -> Result<String, String> {
     let mut config = state.config.lock().await;
     config.telegram.notify_all_users = enabled;
@@ -1340,6 +1357,7 @@ pub fn run() {
             stop_telegram_bot,
             get_registered_users,
             set_user_enabled,
+            set_user_screenshot_allowed,
             set_notify_all_users,
             open_url,
         ])

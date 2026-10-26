@@ -107,12 +107,14 @@ pub fn validate_pattern_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RegisteredUser {
     pub chat_id: String,
     pub username: Option<String>,
     pub first_name: Option<String>,
     pub enabled: bool,
+    #[serde(default)]
+    pub allow_screenshot: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -355,6 +357,31 @@ pub fn set_user_enabled(config: &mut AppConfig, chat_id: &str, enabled: bool) {
     }
 }
 
+pub fn set_user_screenshot_allowed(config: &mut AppConfig, chat_id: &str, allowed: bool) {
+    if let Some(user) = config
+        .telegram
+        .registered_users
+        .iter_mut()
+        .find(|u| u.chat_id.trim() == chat_id.trim())
+    {
+        user.allow_screenshot = allowed;
+    }
+}
+
+pub fn can_user_screenshot(config: &AppConfig, chat_id: &str) -> bool {
+    let clean_id = chat_id.trim();
+    if !config.telegram.admin_chat_id.trim().is_empty()
+        && config.telegram.admin_chat_id.trim() == clean_id
+    {
+        return true;
+    }
+    config
+        .telegram
+        .registered_users
+        .iter()
+        .any(|u| u.chat_id.trim() == clean_id && u.enabled && u.allow_screenshot)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,10 +442,42 @@ mod tests {
                 username: Some("u".into()),
                 first_name: None,
                 enabled: true,
+                allow_screenshot: false,
             },
         );
         set_user_enabled(&mut cfg, "1", false);
         assert!(!cfg.telegram.registered_users[0].enabled);
+    }
+
+    #[test]
+    fn test_user_screenshot_permissions() {
+        let mut cfg = AppConfig::default();
+        cfg.telegram.admin_chat_id = "100".into();
+        add_registered_user(
+            &mut cfg,
+            RegisteredUser {
+                chat_id: "200".into(),
+                username: None,
+                first_name: None,
+                enabled: true,
+                allow_screenshot: false,
+            },
+        );
+
+        // Admin can always screenshot
+        assert!(can_user_screenshot(&cfg, "100"));
+        // Regular user cannot screenshot by default
+        assert!(!can_user_screenshot(&cfg, "200"));
+        // Unknown user cannot screenshot
+        assert!(!can_user_screenshot(&cfg, "999"));
+
+        // Allow regular user
+        set_user_screenshot_allowed(&mut cfg, "200", true);
+        assert!(can_user_screenshot(&cfg, "200"));
+
+        // If user is disabled, cannot screenshot even if allow_screenshot is true
+        set_user_enabled(&mut cfg, "200", false);
+        assert!(!can_user_screenshot(&cfg, "200"));
     }
 
     #[test]
@@ -498,6 +557,7 @@ mod tests {
             username: None,
             first_name: Some("A".into()),
             enabled: true,
+            allow_screenshot: false,
         };
         add_registered_user(&mut cfg, u.clone());
         add_registered_user(&mut cfg, u);

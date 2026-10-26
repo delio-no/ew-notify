@@ -23,6 +23,8 @@ export const api = {
   getRecentNotifications: () =>
     invoke<StoredNotification[]>('get_recent_notifications'),
   getRegisteredUsers: () => invoke<RegisteredUser[]>('get_registered_users'),
+  setUserScreenshotAllowed: (chatId: string, allowed: boolean) =>
+    invoke<string>('set_user_screenshot_allowed', { chatId, allowed }),
   setUserEnabled: (chatId: string, enabled: boolean) =>
     invoke<string>('set_user_enabled', { chatId, enabled }),
   setNotifyAllUsers: (enabled: boolean) =>

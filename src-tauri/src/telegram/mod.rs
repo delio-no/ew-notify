@@ -3,7 +3,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use teloxide::prelude::{Request, Requester};
-use teloxide::types::{BotCommand, ChatId};
+use teloxide::types::{
+    BotCommand, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile,
+};
 use tokio::sync::Mutex;
 use tracing::info;
 
@@ -86,6 +88,10 @@ pub async fn test_connection(token: &str) -> anyhow::Result<()> {
 
     let commands = vec![
         BotCommand {
+            command: "screen".to_string(),
+            description: "Скриншот игровых окон".to_string(),
+        },
+        BotCommand {
             command: "myid".to_string(),
             description: "Узнать свой Telegram ID".to_string(),
         },
@@ -110,12 +116,18 @@ pub async fn start_bot(
     running: Arc<AtomicBool>,
     app: AppHandle,
 ) -> anyhow::Result<()> {
-    use teloxide::payloads::GetUpdatesSetters;
+    use teloxide::payloads::{
+        AnswerCallbackQuerySetters, GetUpdatesSetters, SendMessageSetters, SendPhotoSetters,
+    };
     use teloxide::types::UpdateKind;
 
     let bot = teloxide::Bot::new(token);
 
     let commands = vec![
+        BotCommand {
+            command: "screen".to_string(),
+            description: "Скриншот игровых окон".to_string(),
+        },
         BotCommand {
             command: "myid".to_string(),
             description: "Узнать свой Telegram ID".to_string(),
@@ -171,6 +183,7 @@ pub async fn start_bot(
                                     username: username.clone(),
                                     first_name: first_name.clone(),
                                     enabled: true,
+                                    allow_screenshot: false,
                                 };
 
                                 {
@@ -187,6 +200,7 @@ pub async fn start_bot(
                                 let welcome = format!(
                                     "👋 Привет, {}!\nДобро пожаловать в EndlessWar Notifier!\n\n\
 📋 КОМАНДЫ:\n\
+/screen - Скриншот игровых окон\n\
 /myid - Узнать свой ID\n\
 /start - Зарегистрироваться\n\n\
 ✅ Ты зарегистрирован!",
@@ -239,19 +253,21 @@ pub async fn start_bot(
                                         String::from("📋 ЗАРЕГИСТРИРОВАННЫЕ ПОЛЬЗОВАТЕЛИ:\n\n");
                                     for user in &users {
                                         let status = if user.enabled { "✅" } else { "❌" };
+                                        let sc = if user.allow_screenshot { " 📷" } else { "" };
                                         let name = user
                                             .first_name
                                             .clone()
                                             .unwrap_or_else(|| "Unknown".to_string());
                                         user_list.push_str(&format!(
-                                            "{} {} (@{})\n",
+                                            "{} {} (@{}){}\n",
                                             status,
                                             name,
-                                            user.username.as_ref().unwrap_or(&"-".to_string())
+                                            user.username.as_ref().unwrap_or(&"-".to_string()),
+                                            sc
                                         ));
                                     }
                                     user_list.push_str(&format!(
-                                        "\n📊 Рассылка всем: {}",
+                                        "\n📊 Рассылка всем: {}\n(📷 = разрешены скриншоты)",
                                         if notify_all {
                                             "включена"
                                         } else {
@@ -260,6 +276,150 @@ pub async fn start_bot(
                                     ));
                                     let _ =
                                         bot.send_message(ChatId(chat_id), user_list).send().await;
+                                }
+                            } else if *text == "/screen" || *text == "/shot" || *text == "/screenshot" {
+                                let config_guard = config.lock().await;
+                                let chat_str = chat_id.to_string();
+                                let allowed = crate::config::can_user_screenshot(&config_guard, &chat_str);
+                                let process_name = config_guard.target.process_name.clone();
+                                drop(config_guard);
+
+                                if !allowed {
+                                    let _ = bot
+                                        .send_message(
+                                            ChatId(chat_id),
+                                            "⛔ У вас нет прав на получение скриншотов.\n\
+                                             Обратитесь к администратору для включения доступа.",
+                                        )
+                                        .send()
+                                        .await;
+                                } else {
+                                    let windows = crate::screen_capture::find_target_windows(&process_name);
+                                    if windows.is_empty() {
+                                        let _ = bot
+                                            .send_message(
+                                                ChatId(chat_id),
+                                                format!(
+                                                    "⚠️ Окна процесса «{}» не найдены.\n\
+                                                     Убедитесь, что игра запущена.",
+                                                    process_name
+                                                ),
+                                            )
+                                            .send()
+                                            .await;
+                                    } else {
+                                        for (idx, win) in windows.iter().enumerate() {
+                                            let win_num = idx + 1;
+                                            let now_str = chrono::Local::now().format("%H:%M:%S").to_string();
+
+                                            if win.is_minimized {
+                                                let prompt = format!(
+                                                    "⚠️ Окно #{win_num} «{}» (PID {}) свёрнуто.\n\
+                                                     Принудительно развернуть для скриншота?",
+                                                    win.title, win.pid
+                                                );
+                                                let btn = InlineKeyboardButton::callback(
+                                                    "📷 Развернуть и сделать снимок",
+                                                    format!("unmin_screen:{}", win.hwnd),
+                                                );
+                                                let keyboard = InlineKeyboardMarkup::default().append_row(vec![btn]);
+                                                let _ = bot
+                                                    .send_message(ChatId(chat_id), prompt)
+                                                    .reply_markup(keyboard)
+                                                    .send()
+                                                    .await;
+                                            } else {
+                                                match crate::screen_capture::capture_window(win, false) {
+                                                    Ok(jpeg) => {
+                                                        let caption = format!(
+                                                            "🎮 Окно #{win_num} «{}» [PID {}] | {}",
+                                                            win.title, win.pid, now_str
+                                                        );
+                                                        let file = InputFile::memory(jpeg)
+                                                            .file_name(format!("screen_{}.jpg", win.pid));
+                                                        let _ = bot
+                                                            .send_photo(ChatId(chat_id), file)
+                                                            .caption(caption)
+                                                            .send()
+                                                            .await;
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::error!("Failed to capture window {}: {}", win.hwnd, e);
+                                                        let _ = bot
+                                                            .send_message(
+                                                                ChatId(chat_id),
+                                                                format!("❌ Ошибка снимка окна #{win_num}: {e}"),
+                                                            )
+                                                            .send()
+                                                            .await;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else if let UpdateKind::CallbackQuery(callback) = &update.kind {
+                        if let (Some(data), Some(message)) = (&callback.data, &callback.message) {
+                            if data.starts_with("unmin_screen:") {
+                                let hwnd_str = &data["unmin_screen:".len()..];
+                                let chat_id = message.chat().id.0;
+                                let chat_str = chat_id.to_string();
+                                let config_guard = config.lock().await;
+                                let allowed = crate::config::can_user_screenshot(&config_guard, &chat_str);
+                                let process_name = config_guard.target.process_name.clone();
+                                drop(config_guard);
+
+                                if !allowed {
+                                    let _ = bot
+                                        .answer_callback_query(callback.id.clone())
+                                        .text("⛔ Нет прав на скриншоты")
+                                        .send()
+                                        .await;
+                                } else if let Ok(hwnd_val) = hwnd_str.parse::<isize>() {
+                                    let _ = bot
+                                        .answer_callback_query(callback.id.clone())
+                                        .text("Разворачиваю окно и делаю снимок...")
+                                        .send()
+                                        .await;
+
+                                    let windows = crate::screen_capture::find_target_windows(&process_name);
+                                    if let Some(target_win) = windows.into_iter().find(|w| w.hwnd == hwnd_val) {
+                                        let now_str = chrono::Local::now().format("%H:%M:%S").to_string();
+                                        match crate::screen_capture::capture_window(&target_win, true) {
+                                            Ok(jpeg) => {
+                                                let caption = format!(
+                                                    "🎮 «{}» [PID {}] (развёрнуто программно) | {}",
+                                                    target_win.title, target_win.pid, now_str
+                                                );
+                                                let file = InputFile::memory(jpeg)
+                                                    .file_name(format!("screen_{}.jpg", target_win.pid));
+                                                let _ = bot
+                                                    .send_photo(ChatId(chat_id), file)
+                                                    .caption(caption)
+                                                    .send()
+                                                    .await;
+                                            }
+                                            Err(e) => {
+                                                let _ = bot
+                                                    .send_message(
+                                                        ChatId(chat_id),
+                                                        format!("❌ Не удалось сделать снимок: {e}"),
+                                                    )
+                                                    .send()
+                                                    .await;
+                                            }
+                                        }
+                                    } else {
+                                        let _ = bot
+                                            .send_message(
+                                                ChatId(chat_id),
+                                                "⚠️ Окно больше не найдено (возможно, игра закрыта).",
+                                            )
+                                            .send()
+                                            .await;
+                                    }
                                 }
                             }
                         }
@@ -296,3 +456,5 @@ pub async fn start_bot(
     info!("Telegram bot stopped");
     Ok(())
 }
+
+

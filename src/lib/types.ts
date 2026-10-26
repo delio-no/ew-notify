@@ -9,6 +9,7 @@ export interface RegisteredUser {
   username: string | null;
   first_name: string | null;
   enabled: boolean;
+  allow_screenshot?: boolean;
 }
 
 export interface Config {
