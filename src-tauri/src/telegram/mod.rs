@@ -2,6 +2,7 @@ use crate::config::{AppConfig, RegisteredUser};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
+use teloxide::payloads::{SendMessageSetters, SendPhotoSetters};
 use teloxide::prelude::{Request, Requester};
 use teloxide::types::{
     BotCommand, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile,
@@ -13,6 +14,9 @@ pub async fn send_notification(
     config: &Arc<Mutex<AppConfig>>,
     event_title: &str,
     pattern_id: &str,
+    window_label: Option<&str>,
+    photo_jpeg: Option<Vec<u8>>,
+    minimized_hwnd: Option<isize>,
 ) -> anyhow::Result<()> {
     let config_guard = config.lock().await;
 
@@ -38,10 +42,21 @@ pub async fn send_notification(
     drop(config_guard);
 
     let bot = teloxide::Bot::new(&token);
-    let message = if pattern_id.is_empty() || pattern_id == event_title {
-        format!("🔔 {event_title}")
-    } else {
-        format!("🔔 {event_title}\n\n{pattern_id}")
+    let message = match window_label {
+        Some(label) => {
+            if pattern_id.is_empty() || pattern_id == event_title {
+                format!("🔔 {event_title}\n\n{label}")
+            } else {
+                format!("🔔 {event_title}\n{pattern_id}\n\n{label}")
+            }
+        }
+        None => {
+            if pattern_id.is_empty() || pattern_id == event_title {
+                format!("🔔 {event_title}")
+            } else {
+                format!("🔔 {event_title}\n\n{pattern_id}")
+            }
+        }
     };
 
     if !notify_all {
@@ -60,11 +75,40 @@ pub async fn send_notification(
         if chat_id_num == 0 {
             continue;
         }
-        match bot
-            .send_message(ChatId(chat_id_num), &message)
-            .send()
-            .await
-        {
+
+        if let Some(photo_bytes) = &photo_jpeg {
+            let file = InputFile::memory(photo_bytes.clone()).file_name("event.jpg");
+            match bot
+                .send_photo(ChatId(chat_id_num), file)
+                .caption(&message)
+                .send()
+                .await
+            {
+                Ok(_) => {
+                    sent += 1;
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Telegram photo send to {} failed: {}, falling back to text",
+                        user.chat_id,
+                        e
+                    );
+                }
+            }
+        }
+
+        let mut send_msg = bot.send_message(ChatId(chat_id_num), &message);
+        if let Some(hwnd) = minimized_hwnd {
+            let btn = InlineKeyboardButton::callback(
+                "📸 Развернуть и сделать снимок",
+                format!("unmin_screen:{hwnd}"),
+            );
+            let keyboard = InlineKeyboardMarkup::default().append_row(vec![btn]);
+            send_msg = send_msg.reply_markup(keyboard);
+        }
+
+        match send_msg.send().await {
             Ok(_) => sent += 1,
             Err(e) => {
                 tracing::warn!("Telegram send to {} failed: {}", user.chat_id, e);

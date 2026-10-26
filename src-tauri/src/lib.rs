@@ -468,7 +468,60 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                 let matches_n = matches_seen.fetch_add(1, Ordering::SeqCst) + 1;
                 // User-facing: description only; pattern id without IP/client.
                 let notify_title = pattern.description.clone();
-                let notify_body = pattern.name.clone();
+
+                let local_port = conn.as_ref().map(|c| c.local_port);
+                let target_pid = local_port.and_then(|p| process_net::find_pid_by_local_port(&process_name, p));
+
+                let windows = screen_capture::find_target_windows(&process_name);
+                let matched_win = target_pid.and_then(|pid| {
+                    windows.iter().enumerate().find(|(_, w)| w.pid == pid)
+                });
+
+                let (window_label, photo_jpeg, minimized_hwnd) = match matched_win {
+                    Some((idx, win)) => {
+                        let label = if win.is_minimized {
+                            format!("🎮 Окно #{} [PID {}] (свёрнуто)", idx + 1, win.pid)
+                        } else {
+                            format!("🎮 Окно #{} [PID {}]", idx + 1, win.pid)
+                        };
+                        let photo = screen_capture::capture_window(win, true).ok();
+                        let min_hwnd = if win.is_minimized && photo.is_none() {
+                            Some(win.hwnd)
+                        } else {
+                            None
+                        };
+                        (Some(label), photo, min_hwnd)
+                    }
+                    None => {
+                        if windows.len() == 1 {
+                            let win = &windows[0];
+                            let label = if win.is_minimized {
+                                format!("🎮 Окно #1 [PID {}] (свёрнуто)", win.pid)
+                            } else {
+                                format!("🎮 Окно #1 [PID {}]", win.pid)
+                            };
+                            let photo = screen_capture::capture_window(win, true).ok();
+                            let min_hwnd = if win.is_minimized && photo.is_none() {
+                                Some(win.hwnd)
+                            } else {
+                                None
+                            };
+                            (Some(label), photo, min_hwnd)
+                        } else if let Some(pid) = target_pid {
+                            (Some(format!("🎮 Процесс [PID {}]", pid)), None, None)
+                        } else if let Some(p) = local_port {
+                            (Some(format!("🎮 Соединение порт {}", p)), None, None)
+                        } else {
+                            (None, None, None)
+                        }
+                    }
+                };
+
+                let notify_body = if let Some(lbl) = &window_label {
+                    format!("{} • {}", pattern.name, lbl)
+                } else {
+                    pattern.name.clone()
+                };
 
                 let hex_preview: String = payload
                     .iter()
@@ -477,10 +530,12 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     .collect();
 
                 tracing::info!(
-                    "Pattern detected: {} ({}) client={} (match #{}) len={} hex={}",
+                    "Pattern detected: {} ({}) client={} target_pid={:?} window={:?} (match #{}) len={} hex={}",
                     pattern.name,
                     pattern.description,
                     client_label,
+                    target_pid,
+                    window_label,
                     matches_n,
                     payload.len(),
                     hex_preview
@@ -509,11 +564,16 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                 if tray_enabled {
                     // Single toast via Tauri (avoid duplicate notify_rust).
                     use tauri_plugin_notification::NotificationExt;
+                    let tray_body = if let Some(lbl) = &window_label {
+                        format!("{}\n{}", pattern.name, lbl)
+                    } else {
+                        pattern.name.clone()
+                    };
                     if let Err(e) = app_notify
                         .notification()
                         .builder()
                         .title(&notify_title)
-                        .body(&notify_body)
+                        .body(&tray_body)
                         .show()
                     {
                         tracing::warn!("system notification failed: {}", e);
@@ -524,7 +584,10 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     if let Err(e) = rt.block_on(telegram::send_notification(
                         &config,
                         &notify_title,
-                        &notify_body,
+                        &pattern.name,
+                        window_label.as_deref(),
+                        photo_jpeg,
+                        minimized_hwnd,
                     )) {
                         let msg = format!("Telegram: {e}");
                         tracing::warn!("{}", msg);

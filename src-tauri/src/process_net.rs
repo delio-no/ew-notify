@@ -15,6 +15,19 @@ impl RemoteEndpoint {
     }
 }
 
+/// Find process PID that owns a connection matching `local_port` (or proximate proxied port).
+pub fn find_pid_by_local_port(process_name: &str, local_port: u16) -> Option<u32> {
+    #[cfg(windows)]
+    {
+        win::find_pid_by_local_port(process_name, local_port)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (process_name, local_port);
+        None
+    }
+}
+
 /// Find PIDs whose image name matches `process_name` (case-insensitive; `.exe` optional).
 pub fn find_pids_by_name(process_name: &str) -> Vec<u32> {
     #[cfg(windows)]
@@ -100,6 +113,16 @@ mod tests {
     fn test_live_discover() {
         let eps = discover_remote_endpoints("EndlessWar.exe");
         eprintln!("LIVE ENDPOINTS: {:?}", eps);
+    }
+
+    #[test]
+    fn test_find_pid_by_local_port_live() {
+        let pids = find_pids_by_name("EndlessWar.exe");
+        eprintln!("Live EndlessWar PIDs: {:?}", pids);
+        if !pids.is_empty() {
+            let found = find_pid_by_local_port("EndlessWar.exe", 12345);
+            eprintln!("Dummy port 12345 match: {:?}", found);
+        }
     }
 
     #[test]
@@ -245,5 +268,83 @@ mod win {
         }
 
         filter_game_endpoints(found)
+    }
+
+    pub fn find_pid_by_local_port(process_name: &str, local_port: u16) -> Option<u32> {
+        let pids = find_pids_by_name(process_name);
+        if pids.is_empty() {
+            return None;
+        }
+        if pids.len() == 1 {
+            return Some(pids[0]);
+        }
+        let pid_set: BTreeSet<u32> = pids.into_iter().collect();
+
+        unsafe {
+            let mut size: u32 = 0;
+            let _ = GetExtendedTcpTable(
+                None,
+                &mut size,
+                false,
+                AF_INET,
+                TCP_TABLE_OWNER_PID_CONNECTIONS,
+                0,
+            );
+            if size == 0 {
+                return None;
+            }
+
+            let mut buf = vec![0u8; size as usize];
+            let mut status = GetExtendedTcpTable(
+                Some(buf.as_mut_ptr() as *mut _),
+                &mut size,
+                false,
+                AF_INET,
+                TCP_TABLE_OWNER_PID_CONNECTIONS,
+                0,
+            );
+            if status == ERROR_INSUFFICIENT_BUFFER {
+                buf.resize(size as usize, 0);
+                status = GetExtendedTcpTable(
+                    Some(buf.as_mut_ptr() as *mut _),
+                    &mut size,
+                    false,
+                    AF_INET,
+                    TCP_TABLE_OWNER_PID_CONNECTIONS,
+                    0,
+                );
+            }
+            if status != 0 || buf.len() < size_of::<u32>() {
+                return None;
+            }
+
+            let table = &*(buf.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
+            let count = table.dwNumEntries as usize;
+            let rows_ptr = table.table.as_ptr();
+
+            // 1. Exact match on local_port
+            for i in 0..count {
+                let row = &*rows_ptr.add(i);
+                if pid_set.contains(&row.dwOwningPid) {
+                    let port = u16::from_be(row.dwLocalPort as u16);
+                    if port == local_port {
+                        return Some(row.dwOwningPid);
+                    }
+                }
+            }
+
+            // 2. Proxied/VPN port match (+/- 1)
+            for i in 0..count {
+                let row = &*rows_ptr.add(i);
+                if pid_set.contains(&row.dwOwningPid) {
+                    let port = u16::from_be(row.dwLocalPort as u16);
+                    if port == local_port.wrapping_sub(1) || port == local_port.wrapping_add(1) {
+                        return Some(row.dwOwningPid);
+                    }
+                }
+            }
+        }
+
+        None
     }
 }
