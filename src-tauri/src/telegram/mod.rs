@@ -5,7 +5,7 @@ use tauri::{AppHandle, Emitter};
 use teloxide::payloads::{SendMessageSetters, SendPhotoSetters};
 use teloxide::prelude::{Request, Requester};
 use teloxide::types::{
-    BotCommand, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, ReplyParameters,
+    BotCommand, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, KeyboardButton, KeyboardMarkup, ReplyParameters,
 };
 use tokio::sync::Mutex;
 use tracing::info;
@@ -158,6 +158,22 @@ pub async fn send_notification(
     Ok(())
 }
 
+pub fn make_user_keyboard(is_admin: bool) -> KeyboardMarkup {
+    let mut rows = vec![
+        vec![
+            KeyboardButton::new("📸 Скриншот"),
+            KeyboardButton::new("⚙️ Настройки"),
+        ],
+        vec![
+            KeyboardButton::new("🆔 Мой ID"),
+        ],
+    ];
+    if is_admin {
+        rows[1].push(KeyboardButton::new("👥 Пользователи"));
+    }
+    KeyboardMarkup::new(rows).resize_keyboard().persistent()
+}
+
 pub async fn test_connection(token: &str) -> anyhow::Result<()> {
     let bot = teloxide::Bot::new(token);
 
@@ -167,12 +183,16 @@ pub async fn test_connection(token: &str) -> anyhow::Result<()> {
             description: "Скриншот игровых окон".to_string(),
         },
         BotCommand {
+            command: "settings".to_string(),
+            description: "Настройки (скриншот при смерти)".to_string(),
+        },
+        BotCommand {
             command: "myid".to_string(),
             description: "Узнать свой Telegram ID".to_string(),
         },
         BotCommand {
             command: "start".to_string(),
-            description: "Зарегистрироваться в боте".to_string(),
+            description: "Главное меню / клавиатура".to_string(),
         },
     ];
     let _ = bot.set_my_commands(commands).send().await;
@@ -192,7 +212,8 @@ pub async fn start_bot(
     app: AppHandle,
 ) -> anyhow::Result<()> {
     use teloxide::payloads::{
-        AnswerCallbackQuerySetters, GetUpdatesSetters, SendMessageSetters, SendPhotoSetters,
+        AnswerCallbackQuerySetters, EditMessageTextSetters, GetUpdatesSetters, SendMessageSetters,
+        SendPhotoSetters,
     };
     use teloxide::types::UpdateKind;
 
@@ -204,12 +225,16 @@ pub async fn start_bot(
             description: "Скриншот игровых окон".to_string(),
         },
         BotCommand {
+            command: "settings".to_string(),
+            description: "Настройки (скриншот при смерти)".to_string(),
+        },
+        BotCommand {
             command: "myid".to_string(),
             description: "Узнать свой Telegram ID".to_string(),
         },
         BotCommand {
             command: "start".to_string(),
-            description: "Зарегистрироваться".to_string(),
+            description: "Главное меню / клавиатура".to_string(),
         },
         BotCommand {
             command: "users".to_string(),
@@ -249,10 +274,17 @@ pub async fn start_bot(
 
                         if let Some(text) = message.text().as_ref() {
                             let chat_id = message.chat.id.0;
+                            let chat_str = chat_id.to_string();
+                            let is_admin = {
+                                let config_guard = config.lock().await;
+                                let admin = config_guard.telegram.admin_chat_id.trim().to_string();
+                                !admin.is_empty() && admin == chat_str
+                            };
+                            let text_cmd = text.trim();
                             let username = message.chat.username().map(|s| s.to_string());
                             let first_name = message.chat.first_name().map(|s| s.to_string());
 
-                            if *text == "/start" {
+                            if text_cmd == "/start" {
                                 let new_user = RegisteredUser {
                                     chat_id: chat_id.to_string(),
                                     username: username.clone(),
@@ -274,15 +306,15 @@ pub async fn start_bot(
 
                                 let welcome = format!(
                                     "👋 Привет, {}!\nДобро пожаловать в EndlessWar Notifier!\n\n\
-📋 КОМАНДЫ:\n\
-/screen - Скриншот игровых окон\n\
-/myid - Узнать свой ID\n\
-/start - Зарегистрироваться\n\n\
+📋 Кнопки быстрого доступа доступны на клавиатуре ниже.\n\n\
 ✅ Ты зарегистрирован!",
                                     first_name.unwrap_or_else(|| "друг".to_string())
                                 );
-                                if let Err(e) =
-                                    bot.send_message(ChatId(chat_id), welcome).send().await
+                                if let Err(e) = bot
+                                    .send_message(ChatId(chat_id), welcome)
+                                    .reply_markup(make_user_keyboard(is_admin))
+                                    .send()
+                                    .await
                                 {
                                     tracing::error!("Failed to send welcome message: {}", e);
                                     let _ = app.emit(
@@ -295,10 +327,13 @@ pub async fn start_bot(
                                     chat_id,
                                     username.unwrap_or_default()
                                 );
-                            } else if *text == "/myid" {
+                            } else if text_cmd == "/myid" || text_cmd == "🆔 Мой ID" {
                                 let msg = format!("🆔 Ваш Telegram ID: {}", chat_id);
-                                if let Err(e) =
-                                    bot.send_message(ChatId(chat_id), msg).send().await
+                                if let Err(e) = bot
+                                    .send_message(ChatId(chat_id), msg)
+                                    .reply_markup(make_user_keyboard(is_admin))
+                                    .send()
+                                    .await
                                 {
                                     tracing::error!("Failed to send /myid: {}", e);
                                     let _ = app.emit(
@@ -306,21 +341,47 @@ pub async fn start_bot(
                                         format!("Telegram send failed: {e}"),
                                     );
                                 }
-                            } else if *text == "/users" {
+                            } else if text_cmd == "/settings" || text_cmd == "⚙️ Настройки" {
                                 let config_guard = config.lock().await;
-                                let admin = config_guard.telegram.admin_chat_id.trim().to_string();
+                                let on_death = config_guard.notifications.screenshot_on_death;
+                                let delay = config_guard.notifications.screenshot_delay_ms;
+                                drop(config_guard);
+
+                                let text_msg = format!(
+                                    "⚙️ Настройки уведомлений:\n\n\
+• 💀 Скриншот при смерти (DEATH): {}\n\
+• ⏱ Задержка скриншота: {} мс\n\n\
+Нажмите кнопку ниже для переключения:",
+                                    if on_death { "Включён ✅" } else { "Выключен ❌" },
+                                    delay
+                                );
+                                let btn_text = if on_death {
+                                    "💀 Скрин при смерти: Вкл ✅"
+                                } else {
+                                    "💀 Скрин при смерти: Выкл ❌"
+                                };
+                                let kb = InlineKeyboardMarkup::default().append_row(vec![
+                                    InlineKeyboardButton::callback(btn_text, "toggle_death_screen"),
+                                ]);
+                                let _ = bot
+                                    .send_message(ChatId(chat_id), text_msg)
+                                    .reply_markup(kb)
+                                    .send()
+                                    .await;
+                            } else if text_cmd == "/users" || text_cmd == "👥 Пользователи" {
+                                let config_guard = config.lock().await;
                                 let users = config_guard.telegram.registered_users.clone();
                                 let notify_all = config_guard.telegram.notify_all_users;
                                 drop(config_guard);
 
-                                let chat_str = chat_id.to_string();
-                                if admin.is_empty() || admin != chat_str {
+                                if !is_admin {
                                     let _ = bot
                                         .send_message(
                                             ChatId(chat_id),
                                             "⛔ Команда /users только для администратора.\n\
 Укажи admin_chat_id в настройках (свой ID из /myid).",
                                         )
+                                        .reply_markup(make_user_keyboard(is_admin))
                                         .send()
                                         .await;
                                 } else {
@@ -349,10 +410,13 @@ pub async fn start_bot(
                                             "выключена"
                                         }
                                     ));
-                                    let _ =
-                                        bot.send_message(ChatId(chat_id), user_list).send().await;
+                                    let _ = bot
+                                        .send_message(ChatId(chat_id), user_list)
+                                        .reply_markup(make_user_keyboard(is_admin))
+                                        .send()
+                                        .await;
                                 }
-                            } else if *text == "/screen" || *text == "/shot" || *text == "/screenshot" {
+                            } else if text_cmd == "/screen" || text_cmd == "/shot" || text_cmd == "/screenshot" || text_cmd == "📸 Скриншот" {
                                 let config_guard = config.lock().await;
                                 let chat_str = chat_id.to_string();
                                 let allowed = crate::config::can_user_screenshot(&config_guard, &chat_str);
@@ -496,6 +560,50 @@ pub async fn start_bot(
                                             .await;
                                     }
                                 }
+                            } else if data == "toggle_death_screen" {
+                                let (new_val, delay) = {
+                                    let mut config_guard = config.lock().await;
+                                    config_guard.notifications.screenshot_on_death =
+                                        !config_guard.notifications.screenshot_on_death;
+                                    let v = config_guard.notifications.screenshot_on_death;
+                                    let d = config_guard.notifications.screenshot_delay_ms;
+                                    let _ = crate::config::save_config(&config_guard);
+                                    (v, d)
+                                };
+                                let _ = app.emit("config-updated", ());
+
+                                let status_toast = if new_val {
+                                    "Скриншот при смерти включён ✅"
+                                } else {
+                                    "Скриншот при смерти выключен ❌"
+                                };
+                                let _ = bot
+                                    .answer_callback_query(callback.id.clone())
+                                    .text(status_toast)
+                                    .send()
+                                    .await;
+
+                                let btn_text = if new_val {
+                                    "💀 Скрин при смерти: Вкл ✅"
+                                } else {
+                                    "💀 Скрин при смерти: Выкл ❌"
+                                };
+                                let new_text = format!(
+                                    "⚙️ Настройки бота:\n\n\
+• 💀 Скриншот при смерти (DEATH): {}\n\
+• ⏱ Задержка скриншота: {} мс\n\n\
+Нажмите кнопку ниже, чтобы переключить:",
+                                    if new_val { "Включён ✅" } else { "Выключен ❌" },
+                                    delay
+                                );
+                                let kb = InlineKeyboardMarkup::default().append_row(vec![
+                                    InlineKeyboardButton::callback(btn_text, "toggle_death_screen"),
+                                ]);
+                                let _ = bot
+                                    .edit_message_text(message.chat().id, message.id(), new_text)
+                                    .reply_markup(kb)
+                                    .send()
+                                    .await;
                             }
                         }
                     }

@@ -188,10 +188,16 @@
   <div class="card settings-card-notify">
     <div class="card-header"><h2>Уведомления</h2></div>
     <div class="card-body">
-      <div class="form-group last">
+      <div class="form-group">
         <label class="checkbox-label">
           <input type="checkbox" bind:checked={config.notifications.tray_enabled} />
-          <span>Системные уведомления</span>
+          <span>Системные уведомления Windows</span>
+        </label>
+      </div>
+      <div class="form-group last">
+        <label class="checkbox-label">
+          <input type="checkbox" bind:checked={config.notifications.screenshot_on_death} />
+          <span>Отправлять скриншот при гибели персонажа (DEATH)</span>
         </label>
       </div>
     </div>

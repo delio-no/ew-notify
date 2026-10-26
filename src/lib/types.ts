@@ -34,6 +34,7 @@ export interface Config {
     cooldown_seconds: number;
     burst_dedup_ms?: number;
     screenshot_delay_ms?: number;
+    screenshot_on_death?: boolean;
   };
   startup: {
     auto_start_monitoring: boolean;
@@ -113,6 +114,7 @@ export const defaultConfig = (): Config => ({
     cooldown_seconds: 60,
     burst_dedup_ms: 2000,
     screenshot_delay_ms: 1500,
+    screenshot_on_death: true,
   },
   startup: {
     auto_start_monitoring: false,

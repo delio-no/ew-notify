@@ -412,7 +412,7 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     .map(|c| c.short_label())
                     .unwrap_or_else(|| "unknown".into());
 
-                let (cooldown_secs, tray_enabled, telegram_enabled, burst_window_ms) =
+                let (cooldown_secs, tray_enabled, telegram_enabled, burst_window_ms, screenshot_on_death) =
                     rt.block_on(async {
                         let cfg = config.lock().await;
                         (
@@ -420,6 +420,7 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                             cfg.notifications.tray_enabled,
                             cfg.notifications.telegram_enabled,
                             cfg.notifications.burst_dedup_ms,
+                            cfg.notifications.screenshot_on_death,
                         )
                     });
 
@@ -569,12 +570,18 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                 }
 
                 if telegram_enabled {
+                    let send_win = if pattern.name == "DEATH" && !screenshot_on_death {
+                        None
+                    } else {
+                        target_win
+                    };
+
                     if let Err(e) = rt.block_on(telegram::send_notification(
                         &config,
                         &notify_title,
                         &pattern.name,
                         window_label.as_deref(),
-                        target_win,
+                        send_win,
                     )) {
                         let msg = format!("Telegram: {e}");
                         tracing::warn!("{}", msg);

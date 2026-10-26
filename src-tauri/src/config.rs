@@ -36,6 +36,7 @@ impl Default for AppConfig {
                 cooldown_seconds: 60,
                 burst_dedup_ms: default_burst_dedup_ms(),
                 screenshot_delay_ms: default_screenshot_delay_ms(),
+                screenshot_on_death: true,
             },
             startup: StartupConfig::default(),
         }
@@ -158,6 +159,9 @@ pub struct NotificationsConfig {
     /// Delay before capturing screenshot so game finishes animations and updates UI state.
     #[serde(default = "default_screenshot_delay_ms")]
     pub screenshot_delay_ms: u64,
+    /// Send screenshot when DEATH pattern matches.
+    #[serde(default = "default_true")]
+    pub screenshot_on_death: bool,
 }
 
 fn default_screenshot_delay_ms() -> u64 {

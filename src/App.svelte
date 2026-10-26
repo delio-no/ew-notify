@@ -443,6 +443,7 @@
             (config.notifications.screenshot_delay_ms as unknown) === ''
               ? 1500
               : Number(config.notifications.screenshot_delay_ms),
+          screenshot_on_death: config.notifications.screenshot_on_death !== false,
         },
         startup: {
           auto_start_monitoring: !!config.startup?.auto_start_monitoring,
@@ -629,6 +630,7 @@
             ...loaded.notifications,
             burst_dedup_ms: loaded.notifications?.burst_dedup_ms ?? 2000,
             screenshot_delay_ms: loaded.notifications?.screenshot_delay_ms ?? 1500,
+            screenshot_on_death: loaded.notifications?.screenshot_on_death !== false,
           },
           startup: {
             auto_start_monitoring: !!loaded.startup?.auto_start_monitoring,
