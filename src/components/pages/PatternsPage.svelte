@@ -1,5 +1,6 @@
 <script lang="ts">
   import PageHeader from '../PageHeader.svelte';
+  import KeyRecorder from '../KeyRecorder.svelte';
   import type { Config, Pattern } from '../../lib/types';
 
   let {
@@ -171,16 +172,11 @@
         {#if newPatternActionEnabled}
           <div class="form-row action-config-row">
             <div class="form-group">
-              <label for="action-key">Клавиша</label>
-              <input
-                id="action-key"
-                type="text"
-                class="action-input-key"
-                bind:value={newPatternActionKey}
-                placeholder="Z"
-                maxlength="10"
-              />
-              <p class="field-hint">Z, 1..9, F1..F12, Space</p>
+              <span class="field-title">Клавиша</span>
+              <div class="key-recorder-box">
+                <KeyRecorder bind:value={newPatternActionKey} />
+              </div>
+              <p class="field-hint">Кликните и нажмите любую клавишу (Z, F1-F12, Space...)</p>
             </div>
             <div class="form-group">
               <label for="action-delay">Задержка перед нажатием (мс)</label>
@@ -267,19 +263,14 @@
 
                     <div class="editor-inputs">
                       <div class="form-group inline">
-                        <label for="edit-key-{pattern.name}">Клавиша:</label>
-                        <input
-                          id="edit-key-{pattern.name}"
-                          type="text"
-                          class="action-input-key"
+                        <span class="inline-label">Клавиша:</span>
+                        <KeyRecorder
                           value={pattern.action?.key ?? 'Z'}
-                          placeholder="Z"
-                          maxlength="10"
-                          oninput={(e) => {
+                          onChange={(k) => {
                             if (!pattern.action) {
                               pattern.action = { enabled: false, key: 'Z', delay_ms: 1000 };
                             }
-                            pattern.action.key = e.currentTarget.value.trim().toUpperCase() || 'Z';
+                            pattern.action.key = k;
                           }}
                         />
                       </div>
