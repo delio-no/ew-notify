@@ -2,11 +2,14 @@ use crate::config::{AppConfig, RegisteredUser};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
-use teloxide::payloads::{SendMessageSetters, SendPhotoSetters};
+use teloxide::payloads::{EditMessageMediaSetters, SendPhotoSetters};
 use teloxide::prelude::{Request, Requester};
 use teloxide::types::{
-    BotCommand, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, KeyboardButton, KeyboardMarkup, ReplyParameters,
+    BotCommand, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, InputMedia,
+    InputMediaPhoto, KeyboardButton, KeyboardMarkup,
 };
+
+const PLACEHOLDER_JPEG: &[u8] = include_bytes!("../../icons/placeholder.jpg");
 use tokio::sync::Mutex;
 use tracing::info;
 
@@ -70,26 +73,52 @@ pub async fn send_notification(
 
     let mut sent = 0usize;
     let mut last_err: Option<String> = None;
-    let mut sent_alerts: Vec<(i64, teloxide::types::MessageId)> = Vec::new();
+    let mut sent_photo_alerts: Vec<(i64, teloxide::types::MessageId)> = Vec::new();
 
-    for user in enabled_users {
-        let chat_id_num: i64 = user.chat_id.parse().unwrap_or(0);
-        if chat_id_num == 0 {
-            continue;
-        }
-
-        match bot
-            .send_message(ChatId(chat_id_num), &message)
-            .send()
-            .await
-        {
-            Ok(msg) => {
-                sent += 1;
-                sent_alerts.push((chat_id_num, msg.id));
+    // If we have a target window to screenshot, start with placeholder photo so we can editMessageMedia in-place!
+    if target_win.is_some() {
+        let init_caption = format!("{message}\n\n⏳ Захват кадра игры...");
+        for user in &enabled_users {
+            let chat_id_num: i64 = user.chat_id.parse().unwrap_or(0);
+            if chat_id_num == 0 {
+                continue;
             }
-            Err(e) => {
-                tracing::warn!("Telegram send to {} failed: {}", user.chat_id, e);
-                last_err = Some(e.to_string());
+
+            let file = InputFile::memory(PLACEHOLDER_JPEG.to_vec()).file_name("loading.jpg");
+            match bot
+                .send_photo(ChatId(chat_id_num), file)
+                .caption(&init_caption)
+                .send()
+                .await
+            {
+                Ok(msg) => {
+                    sent += 1;
+                    sent_photo_alerts.push((chat_id_num, msg.id));
+                }
+                Err(e) => {
+                    tracing::warn!("Telegram initial photo send to {} failed: {}", user.chat_id, e);
+                    last_err = Some(e.to_string());
+                }
+            }
+        }
+    } else {
+        // Plain text message (no screenshot expected, e.g. DEATH with screenshot_on_death=false)
+        for user in &enabled_users {
+            let chat_id_num: i64 = user.chat_id.parse().unwrap_or(0);
+            if chat_id_num == 0 {
+                continue;
+            }
+
+            match bot
+                .send_message(ChatId(chat_id_num), &message)
+                .send()
+                .await
+            {
+                Ok(_) => sent += 1,
+                Err(e) => {
+                    tracing::warn!("Telegram send to {} failed: {}", user.chat_id, e);
+                    last_err = Some(e.to_string());
+                }
             }
         }
     }
@@ -102,9 +131,10 @@ pub async fn send_notification(
 
     info!("Telegram notification sent to {} user(s): {}", sent, event_title);
 
-    // If there is a target window, capture screenshot with delay and send as reply
+    // If there is a target window, capture screenshot with delay and EDIT the photo in-place!
     if let Some(win) = target_win {
-        let bot_reply = bot.clone();
+        let bot_edit = bot.clone();
+        let final_caption = message.clone();
         tokio::spawn(async move {
             if delay_ms > 0 {
                 tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
@@ -112,40 +142,41 @@ pub async fn send_notification(
 
             match crate::screen_capture::capture_window(&win, true) {
                 Ok(photo_bytes) => {
-                    for (chat_id, msg_id) in sent_alerts {
-                        let file = InputFile::memory(photo_bytes.clone()).file_name("screen.jpg");
-                        let caption = if win.title.is_empty() {
-                            format!("🎮 Окно [PID {}]", win.pid)
-                        } else {
-                            format!("🎮 {} [PID {}]", win.title, win.pid)
-                        };
-                        if let Err(e) = bot_reply
-                            .send_photo(ChatId(chat_id), file)
-                            .caption(caption)
-                            .reply_parameters(ReplyParameters::new(msg_id))
+                    let media = InputMedia::Photo(
+                        InputMediaPhoto::new(InputFile::memory(photo_bytes).file_name("screen.jpg"))
+                            .caption(&final_caption),
+                    );
+
+                    for (chat_id, msg_id) in sent_photo_alerts {
+                        if let Err(e) = bot_edit
+                            .edit_message_media(ChatId(chat_id), msg_id, media.clone())
                             .send()
                             .await
                         {
-                            tracing::warn!("Failed to send reply photo to {}: {}", chat_id, e);
+                            tracing::warn!("Failed to editMessageMedia for chat {}: {}", chat_id, e);
                         }
                     }
                 }
                 Err(e) => {
                     tracing::warn!("Delayed window capture failed for PID {}: {}", win.pid, e);
                     if win.is_minimized {
-                        for (chat_id, msg_id) in sent_alerts {
-                            let btn = InlineKeyboardButton::callback(
-                                "📸 Развернуть и сделать снимок",
-                                format!("unmin_screen:{}", win.hwnd),
-                            );
-                            let keyboard = InlineKeyboardMarkup::default().append_row(vec![btn]);
-                            let _ = bot_reply
-                                .send_message(
-                                    ChatId(chat_id),
-                                    "⚠️ Окно свёрнуто. Нажмите для снимка:",
-                                )
-                                .reply_parameters(ReplyParameters::new(msg_id))
-                                .reply_markup(keyboard)
+                        let btn = InlineKeyboardButton::callback(
+                            "📸 Развернуть и сделать снимок",
+                            format!("unmin_screen:{}", win.hwnd),
+                        );
+                        let keyboard = InlineKeyboardMarkup::default().append_row(vec![btn]);
+                        let caption_fail = format!("{final_caption}\n\n⚠️ Окно свёрнуто. Нажмите кнопку:");
+                        let media = InputMedia::Photo(
+                            InputMediaPhoto::new(
+                                InputFile::memory(PLACEHOLDER_JPEG.to_vec()).file_name("loading.jpg"),
+                            )
+                            .caption(&caption_fail),
+                        );
+
+                        for (chat_id, msg_id) in sent_photo_alerts {
+                            let _ = bot_edit
+                                .edit_message_media(ChatId(chat_id), msg_id, media.clone())
+                                .reply_markup(keyboard.clone())
                                 .send()
                                 .await;
                         }
