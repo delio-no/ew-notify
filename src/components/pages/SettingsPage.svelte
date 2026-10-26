@@ -6,6 +6,7 @@
     config = $bindable(),
     isBotRunning = false,
     isCaptureAuto = true,
+    isTokenChanged = false,
     showBotToken = $bindable(false),
     onSave,
     onReset,
@@ -13,10 +14,12 @@
     onStartBot,
     onStopBot,
     onRestartBot,
+    onApplyAndRestartBot,
   }: {
     config: Config;
     isBotRunning?: boolean;
     isCaptureAuto?: boolean;
+    isTokenChanged?: boolean;
     showBotToken?: boolean;
     onSave: () => void;
     onReset: () => void;
@@ -24,6 +27,7 @@
     onStartBot: () => void;
     onStopBot: () => void;
     onRestartBot: () => void;
+    onApplyAndRestartBot?: () => void;
   } = $props();
 </script>
 

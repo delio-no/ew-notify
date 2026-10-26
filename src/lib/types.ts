@@ -112,6 +112,7 @@ export const defaultConfig = (): Config => ({
     tray_enabled: true,
     cooldown_seconds: 60,
     burst_dedup_ms: 2000,
+    screenshot_delay_ms: 1500,
   },
   startup: {
     auto_start_monitoring: false,

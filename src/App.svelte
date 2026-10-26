@@ -437,6 +437,12 @@
             (config.notifications.burst_dedup_ms as unknown) === ''
               ? 2000
               : Number(config.notifications.burst_dedup_ms),
+          screenshot_delay_ms:
+            config.notifications.screenshot_delay_ms === undefined ||
+            config.notifications.screenshot_delay_ms === null ||
+            (config.notifications.screenshot_delay_ms as unknown) === ''
+              ? 1500
+              : Number(config.notifications.screenshot_delay_ms),
         },
         startup: {
           auto_start_monitoring: !!config.startup?.auto_start_monitoring,
@@ -622,6 +628,7 @@
           notifications: {
             ...loaded.notifications,
             burst_dedup_ms: loaded.notifications?.burst_dedup_ms ?? 2000,
+            screenshot_delay_ms: loaded.notifications?.screenshot_delay_ms ?? 1500,
           },
           startup: {
             auto_start_monitoring: !!loaded.startup?.auto_start_monitoring,
