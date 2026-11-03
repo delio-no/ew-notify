@@ -853,6 +853,7 @@
         {logLines}
         {packetLines}
         {packetLogEnabled}
+        {targetWindows}
         bind:consoleAutoScroll
         bind:consoleEl
         onRefreshLogs={refreshLogs}

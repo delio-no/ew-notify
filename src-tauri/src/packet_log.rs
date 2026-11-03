@@ -16,6 +16,9 @@ pub struct PacketLogEntry {
     pub local: String,
     pub len: usize,
     pub hex: String,
+    pub pid: Option<u32>,
+    pub slot: Option<u32>,
+    pub window_title: Option<String>,
 }
 
 struct RateState {
@@ -73,7 +76,15 @@ impl PacketLog {
     }
 
     /// Push one packet if logging enabled and under rate limit. Full hex, no truncation.
-    pub fn try_push(&self, remote: String, local: String, payload: &[u8]) {
+    pub fn try_push(
+        &self,
+        remote: String,
+        local: String,
+        payload: &[u8],
+        pid: Option<u32>,
+        slot: Option<u32>,
+        window_title: Option<String>,
+    ) {
         if !self.is_enabled() {
             return;
         }
@@ -107,6 +118,9 @@ impl PacketLog {
             local,
             len: payload.len(),
             hex,
+            pid,
+            slot,
+            window_title,
         };
         if let Ok(mut q) = self.entries.lock() {
             q.push_back(entry);
@@ -118,7 +132,15 @@ impl PacketLog {
 
     /// Bypass rate-limit (tests only).
     #[cfg(test)]
-    fn push_unchecked(&self, remote: String, local: String, payload: &[u8]) {
+    fn push_unchecked(
+        &self,
+        remote: String,
+        local: String,
+        payload: &[u8],
+        pid: Option<u32>,
+        slot: Option<u32>,
+        window_title: Option<String>,
+    ) {
         let hex: String = payload.iter().map(|b| format!("{b:02X}")).collect();
         let entry = PacketLogEntry {
             time: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
@@ -126,6 +148,9 @@ impl PacketLog {
             local,
             len: payload.len(),
             hex,
+            pid,
+            slot,
+            window_title,
         };
         if let Ok(mut q) = self.entries.lock() {
             q.push_back(entry);
@@ -143,7 +168,7 @@ mod tests {
     #[test]
     fn disabled_writes_nothing() {
         let log = PacketLog::new();
-        log.try_push("1.1.1.1:1".into(), "10.0.0.1:2".into(), &[0xAA, 0xBB]);
+        log.try_push("1.1.1.1:1".into(), "10.0.0.1:2".into(), &[0xAA, 0xBB], None, None, None);
         assert!(log.snapshot().is_empty());
         assert_eq!(log.skipped(), 0);
     }
@@ -153,12 +178,21 @@ mod tests {
         let log = PacketLog::new();
         log.set_enabled(true);
         let payload = [0x00, 0xFE, 0x06, 0x03];
-        log.try_push("1.2.3.4:7777".into(), "10.0.0.5:40000".into(), &payload);
+        log.try_push(
+            "1.2.3.4:7777".into(),
+            "10.0.0.5:40000".into(),
+            &payload,
+            Some(1234),
+            Some(1),
+            Some("EndlessWar".into()),
+        );
         let snap = log.snapshot();
         assert_eq!(snap.len(), 1);
         assert_eq!(snap[0].hex, "00FE0603");
         assert_eq!(snap[0].len, 4);
         assert_eq!(snap[0].remote, "1.2.3.4:7777");
+        assert_eq!(snap[0].pid, Some(1234));
+        assert_eq!(snap[0].slot, Some(1));
     }
 
     #[test]
@@ -167,7 +201,7 @@ mod tests {
         log.set_enabled(true);
         // Bypass rate-limit so we can fill past MAX_ENTRIES in one go.
         for i in 0..(MAX_ENTRIES + 20) {
-            log.push_unchecked(format!("r:{i}"), format!("l:{i}"), &[i as u8]);
+            log.push_unchecked(format!("r:{i}"), format!("l:{i}"), &[i as u8], None, None, None);
         }
         let snap = log.snapshot();
         assert_eq!(snap.len(), MAX_ENTRIES);
@@ -183,7 +217,7 @@ mod tests {
         let log = PacketLog::new();
         log.set_enabled(true);
         for i in 0..(RATE_LIMIT_PER_SEC as usize + 10) {
-            log.try_push("r".into(), "l".into(), &[i as u8]);
+            log.try_push("r".into(), "l".into(), &[i as u8], None, None, None);
         }
         assert_eq!(log.snapshot().len(), RATE_LIMIT_PER_SEC as usize);
         assert_eq!(log.skipped(), 10);
@@ -193,9 +227,9 @@ mod tests {
     fn disable_clears_buffer_and_skipped() {
         let log = PacketLog::new();
         log.set_enabled(true);
-        log.try_push("r".into(), "l".into(), &[1]);
+        log.try_push("r".into(), "l".into(), &[1], None, None, None);
         for _ in 0..40 {
-            log.try_push("r".into(), "l".into(), &[2]);
+            log.try_push("r".into(), "l".into(), &[2], None, None, None);
         }
         assert!(!log.snapshot().is_empty());
         log.set_enabled(false);

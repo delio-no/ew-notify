@@ -334,6 +334,12 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
 
             // Capture loop for this filter session
             let session_start_packets = packets_seen.load(Ordering::SeqCst);
+            let mut port_pid_cache: std::collections::HashMap<u16, (u32, Instant)> = std::collections::HashMap::new();
+            let mut windows_cache: (Vec<screen_capture::TargetWindow>, Instant) = (
+                Vec::new(),
+                Instant::now().checked_sub(std::time::Duration::from_secs(10)).unwrap_or_else(Instant::now),
+            );
+
             while monitoring.load(Ordering::SeqCst) {
                 let raw_packet = match capture.read_packet() {
                     Ok(p) => p,
@@ -377,9 +383,49 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     );
                 }
 
+                let conn = extract_connection_key(&raw_packet);
+                let local_port = conn.as_ref().map(|c| c.local_port);
+
+                let now_inst = Instant::now();
+                if now_inst.duration_since(windows_cache.1) > std::time::Duration::from_secs(2) {
+                    windows_cache.0 = screen_capture::find_target_windows(&process_name);
+                    windows_cache.1 = now_inst;
+                }
+
+                let target_pid = local_port.and_then(|p| {
+                    if let Some(&(cached_pid, ts)) = port_pid_cache.get(&p) {
+                        if now_inst.duration_since(ts) < std::time::Duration::from_secs(5) {
+                            return Some(cached_pid);
+                        }
+                    }
+                    let resolved = process_net::find_pid_by_local_port(&process_name, p);
+                    if let Some(r_pid) = resolved {
+                        port_pid_cache.insert(p, (r_pid, now_inst));
+                        if port_pid_cache.len() > 256 {
+                            port_pid_cache.retain(|_, (_, t)| now_inst.duration_since(*t) < std::time::Duration::from_secs(10));
+                        }
+                    }
+                    resolved
+                });
+
+                let matched_win = target_pid.and_then(|pid| {
+                    windows_cache.0.iter().enumerate().find(|(_, w)| w.pid == pid)
+                });
+
+                let (target_slot, target_win, target_title) = match matched_win {
+                    Some((idx, win)) => (Some((idx + 1) as u32), Some(win.clone()), Some(win.title.clone())),
+                    None => {
+                        if windows_cache.0.len() == 1 {
+                            let win = &windows_cache.0[0];
+                            (Some(1), Some(win.clone()), Some(win.title.clone()))
+                        } else {
+                            (None, None, None)
+                        }
+                    }
+                };
+
                 // Packet dump (full payload hex), rate-limited
                 if packet_log.is_enabled() {
-                    let conn = extract_connection_key(&raw_packet);
                     let (remote, local) = match &conn {
                         Some(c) => (
                             format!("{}:{}", c.remote_ip, c.remote_port),
@@ -387,7 +433,14 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                         ),
                         None => ("?".into(), "?".into()),
                     };
-                    packet_log.try_push(remote, local, payload);
+                    packet_log.try_push(
+                        remote,
+                        local,
+                        payload,
+                        target_pid,
+                        target_slot,
+                        target_title,
+                    );
                 }
 
                 #[cfg(windows)]
@@ -408,7 +461,6 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     continue;
                 };
 
-                let conn = extract_connection_key(&raw_packet);
                 let cooldown_key = match &conn {
                     Some(c) => c.cooldown_id(&pattern.name),
                     None => pattern.name.clone(),
@@ -477,43 +529,34 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                 // User-facing: description only; pattern id without IP/client.
                 let notify_title = pattern.description.clone();
 
-                let local_port = conn.as_ref().map(|c| c.local_port);
-                let target_pid = local_port.and_then(|p| process_net::find_pid_by_local_port(&process_name, p));
-
-                let pid_for_filter = target_pid.unwrap_or(0);
+                let pid_for_filter = target_pid.or_else(|| target_win.as_ref().map(|w| w.pid)).unwrap_or(0);
                 if !window_filter.is_pid_allowed(pid_for_filter) {
                     continue;
                 }
 
-                let windows = screen_capture::find_target_windows(&process_name);
-                let matched_win = target_pid.and_then(|pid| {
-                    windows.iter().enumerate().find(|(_, w)| w.pid == pid)
-                });
-
-                let (window_label, target_win) = match matched_win {
-                    Some((idx, win)) => {
+                let window_label = match (&target_slot, &target_win) {
+                    (Some(slot), Some(win)) => {
                         let label = if win.is_minimized {
-                            format!("🎮 Окно #{} [PID {}] (свёрнуто)", idx + 1, win.pid)
+                            format!("🎮 Окно #{} [PID {}] (свёрнуто)", slot, win.pid)
                         } else {
-                            format!("🎮 Окно #{} [PID {}]", idx + 1, win.pid)
+                            format!("🎮 Окно #{} [PID {}]", slot, win.pid)
                         };
-                        (Some(label), Some(win.clone()))
+                        Some(label)
                     }
-                    None => {
-                        if windows.len() == 1 {
-                            let win = &windows[0];
-                            let label = if win.is_minimized {
-                                format!("🎮 Окно #1 [PID {}] (свёрнуто)", win.pid)
-                            } else {
-                                format!("🎮 Окно #1 [PID {}]", win.pid)
-                            };
-                            (Some(label), Some(win.clone()))
-                        } else if let Some(pid) = target_pid {
-                            (Some(format!("🎮 Процесс [PID {}]", pid)), None)
-                        } else if let Some(p) = local_port {
-                            (Some(format!("🎮 Соединение порт {}", p)), None)
+                    (Some(slot), None) => {
+                        if let Some(pid) = target_pid {
+                            Some(format!("🎮 Окно #{} [PID {}]", slot, pid))
                         } else {
-                            (None, None)
+                            Some(format!("🎮 Окно #{}", slot))
+                        }
+                    }
+                    (None, _) => {
+                        if let Some(pid) = target_pid {
+                            Some(format!("🎮 Процесс [PID {}]", pid))
+                        } else if let Some(p) = local_port {
+                            Some(format!("🎮 Соединение порт {}", p))
+                        } else {
+                            None
                         }
                     }
                 };

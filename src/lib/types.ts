@@ -77,6 +77,9 @@ export interface PacketLogEntry {
   local: string;
   len: number;
   hex: string;
+  pid?: number | null;
+  slot?: number | null;
+  window_title?: string | null;
 }
 
 export interface PatternMatchResult {
