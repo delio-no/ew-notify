@@ -1284,10 +1284,10 @@ async fn test_send_key(
 }
 
 #[tauri::command]
-async fn get_window_filter_status(
+fn get_window_filter_status(
     state: State<'_, AppState>,
 ) -> Result<window_filter::WindowFilterMode, String> {
-    Ok(state.window_filter.get_mode().await)
+    Ok(state.window_filter.get_mode())
 }
 
 #[tauri::command]
@@ -1309,18 +1309,17 @@ async fn set_window_filter(
     let label = format!("🟢 EW #{} [PID {}]", slot, win.pid);
     state
         .window_filter
-        .set_single(slot, win.pid, win.hwnd, win.title.clone())
-        .await;
+        .set_single(slot, win.pid, win.hwnd, win.title.clone());
     overlay::show_overlay(win.hwnd, &label, true);
     hotkeys::play_beep();
-    Ok(state.window_filter.get_mode().await)
+    Ok(state.window_filter.get_mode())
 }
 
 #[tauri::command]
-async fn reset_window_filter(
+fn reset_window_filter(
     state: State<'_, AppState>,
 ) -> Result<window_filter::WindowFilterMode, String> {
-    state.window_filter.reset_to_all().await;
+    state.window_filter.reset_to_all();
     overlay::hide_overlay();
     hotkeys::play_beep();
     Ok(window_filter::WindowFilterMode::All)

@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TrackedWindowInfo {
@@ -12,7 +11,7 @@ pub struct TrackedWindowInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "mode", content = "window")]
+#[serde(tag = "mode", content = "data")]
 pub enum WindowFilterMode {
     All,
     Single(TrackedWindowInfo),
@@ -46,11 +45,11 @@ impl WindowFilterState {
         active == 0 || active == pid
     }
 
-    pub async fn get_mode(&self) -> WindowFilterMode {
-        self.mode.read().await.clone()
+    pub fn get_mode(&self) -> WindowFilterMode {
+        self.mode.read().unwrap().clone()
     }
 
-    pub async fn set_single(&self, slot: u32, pid: u32, hwnd: isize, title: String) {
+    pub fn set_single(&self, slot: u32, pid: u32, hwnd: isize, title: String) {
         let info = TrackedWindowInfo {
             slot,
             pid,
@@ -58,13 +57,13 @@ impl WindowFilterState {
             title,
         };
         self.active_pid.store(pid, Ordering::SeqCst);
-        let mut guard = self.mode.write().await;
+        let mut guard = self.mode.write().unwrap();
         *guard = WindowFilterMode::Single(info);
     }
 
-    pub async fn reset_to_all(&self) {
+    pub fn reset_to_all(&self) {
         self.active_pid.store(0, Ordering::SeqCst);
-        let mut guard = self.mode.write().await;
+        let mut guard = self.mode.write().unwrap();
         *guard = WindowFilterMode::All;
     }
 }
@@ -73,23 +72,21 @@ impl WindowFilterState {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_window_filter_default_all() {
+    #[test]
+    fn test_window_filter_default_all() {
         let filter = WindowFilterState::new();
-        assert_eq!(filter.get_mode().await, WindowFilterMode::All);
+        assert_eq!(filter.get_mode(), WindowFilterMode::All);
         assert!(filter.is_pid_allowed(100));
         assert!(filter.is_pid_allowed(200));
     }
 
-    #[tokio::test]
-    async fn test_window_filter_single_mode() {
+    #[test]
+    fn test_window_filter_single_mode() {
         let filter = WindowFilterState::new();
-        filter
-            .set_single(1, 1234, 5678, "EndlessWar".to_string())
-            .await;
+        filter.set_single(1, 1234, 5678, "EndlessWar".to_string());
 
         assert_eq!(
-            filter.get_mode().await,
+            filter.get_mode(),
             WindowFilterMode::Single(TrackedWindowInfo {
                 slot: 1,
                 pid: 1234,
@@ -101,8 +98,8 @@ mod tests {
         assert!(filter.is_pid_allowed(1234));
         assert!(!filter.is_pid_allowed(9999));
 
-        filter.reset_to_all().await;
-        assert_eq!(filter.get_mode().await, WindowFilterMode::All);
+        filter.reset_to_all();
+        assert_eq!(filter.get_mode(), WindowFilterMode::All);
         assert!(filter.is_pid_allowed(9999));
     }
 }
