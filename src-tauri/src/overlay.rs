@@ -35,7 +35,6 @@ mod win {
         Show {
             target_hwnd: isize,
             label: String,
-            flash: bool,
         },
         Hide,
     }
@@ -56,7 +55,6 @@ mod win {
     // Shared state between worker and window proc
     struct WindowDrawState {
         label: String,
-        is_flash_bright: bool,
     }
     static DRAW_STATE: Mutex<Option<WindowDrawState>> = Mutex::new(None);
 
@@ -81,24 +79,20 @@ mod win {
                 FillRect(hdc, &rc, black_brush);
                 let _ = DeleteObject(black_brush);
 
-                let (label, flash_bright) = {
+                let label = {
                     if let Ok(guard) = DRAW_STATE.lock() {
                         if let Some(state) = guard.as_ref() {
-                            (state.label.clone(), state.is_flash_bright)
+                            state.label.clone()
                         } else {
-                            (String::new(), false)
+                            String::new()
                         }
                     } else {
-                        (String::new(), false)
+                        String::new()
                     }
                 };
 
-                // 2. Draw 2px neon green border (or brighter on pulse)
-                let border_col = if flash_bright {
-                    rgb(255, 255, 255)
-                } else {
-                    rgb(34, 197, 94) // Neon green #22c55e
-                };
+                // 2. Draw 2px neon green border (steady, non-flashing)
+                let border_col = rgb(34, 197, 94); // Neon green #22c55e
                 let border_brush = CreateSolidBrush(border_col);
 
                 // Outer border line
@@ -251,7 +245,6 @@ mod win {
 
             let mut active_target: Option<HWND> = None;
             let mut last_rect = RECT::default();
-            let mut flash_ticks = 0u32;
             let mut is_visible = false;
 
             loop {
@@ -261,22 +254,16 @@ mod win {
                         OverlayCmd::Show {
                             target_hwnd,
                             label,
-                            flash,
                         } => {
                             active_target = Some(HWND(target_hwnd as _));
-                            flash_ticks = if flash { 6 } else { 0 };
                             last_rect = RECT::default();
 
                             if let Ok(mut guard) = DRAW_STATE.lock() {
-                                *guard = Some(WindowDrawState {
-                                    label,
-                                    is_flash_bright: flash_ticks % 2 == 1,
-                                });
+                                *guard = Some(WindowDrawState { label });
                             }
                         }
                         OverlayCmd::Hide => {
                             active_target = None;
-                            flash_ticks = 0;
                             if is_visible {
                                 let _ = ShowWindow(overlay_hwnd, SW_HIDE);
                                 is_visible = false;
@@ -330,17 +317,6 @@ mod win {
                             }
                         }
                     }
-
-                    // Handle flash animation (pulse 3 times over ~300ms)
-                    if flash_ticks > 0 {
-                        flash_ticks -= 1;
-                        if let Ok(mut guard) = DRAW_STATE.lock() {
-                            if let Some(state) = guard.as_mut() {
-                                state.is_flash_bright = flash_ticks % 2 == 1;
-                            }
-                        }
-                        let _ = InvalidateRect(overlay_hwnd, None, false);
-                    }
                 } else if is_visible {
                     let _ = ShowWindow(overlay_hwnd, SW_HIDE);
                     is_visible = false;
@@ -366,7 +342,7 @@ mod win {
         }
     }
 
-    pub fn show_overlay(target_hwnd: isize, label: &str, flash: bool) {
+    pub fn show_overlay(target_hwnd: isize, label: &str, _flash: bool) {
         init_overlay_thread();
         IS_ACTIVE.store(true, Ordering::SeqCst);
         if let Ok(guard) = CONTROLLER.lock() {
@@ -374,7 +350,6 @@ mod win {
                 let _ = ctrl.sender.send(OverlayCmd::Show {
                     target_hwnd,
                     label: label.to_string(),
-                    flash,
                 });
             }
         }

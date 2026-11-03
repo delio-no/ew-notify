@@ -29,16 +29,7 @@ mod win {
         MSG, PM_NOREMOVE,
     };
 
-    #[link(name = "user32")]
-    extern "system" {
-        fn MessageBeep(uType: u32) -> i32;
-    }
-
-    pub fn play_beep() {
-        unsafe {
-            MessageBeep(0);
-        }
-    }
+    pub fn play_beep() {}
 
     pub fn start_hotkey_listener(
         app: AppHandle,
@@ -143,7 +134,6 @@ mod win {
             // Ctrl + 0: Reset to All Windows
             filter.reset_to_all();
             overlay::hide_overlay();
-            play_beep();
             let _ = app.emit("window-filter-changed", WindowFilterMode::All);
             tracing::info!("Window filter reset to All windows via Ctrl+0");
             return;
@@ -160,7 +150,6 @@ mod win {
             if info.slot == slot {
                 filter.reset_to_all();
                 overlay::hide_overlay();
-                play_beep();
                 let _ = app.emit("window-filter-changed", WindowFilterMode::All);
                 tracing::info!("Window filter toggled off via Ctrl+{} -> All windows", slot);
                 return;
@@ -180,7 +169,6 @@ mod win {
         let target_windows = screen_capture::find_target_windows(&process_name);
         if target_windows.is_empty() {
             tracing::warn!("Hotkey Ctrl+{}: no windows found for {}", slot, process_name);
-            play_beep();
             return;
         }
 
@@ -231,8 +219,7 @@ mod win {
             let label = format!("🟢 EW #{} [PID {}]", slot, target.pid);
             filter.set_single(slot, target.pid, target.hwnd, target.title.clone());
 
-            overlay::show_overlay(target.hwnd, &label, true);
-            play_beep();
+            overlay::show_overlay(target.hwnd, &label, false);
 
             let new_mode = filter.get_mode();
             let _ = app.emit("window-filter-changed", new_mode);

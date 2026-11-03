@@ -1310,8 +1310,7 @@ async fn set_window_filter(
     state
         .window_filter
         .set_single(slot, win.pid, win.hwnd, win.title.clone());
-    overlay::show_overlay(win.hwnd, &label, true);
-    hotkeys::play_beep();
+    overlay::show_overlay(win.hwnd, &label, false);
     Ok(state.window_filter.get_mode())
 }
 
@@ -1321,7 +1320,6 @@ fn reset_window_filter(
 ) -> Result<window_filter::WindowFilterMode, String> {
     state.window_filter.reset_to_all();
     overlay::hide_overlay();
-    hotkeys::play_beep();
     Ok(window_filter::WindowFilterMode::All)
 }
 
