@@ -200,13 +200,15 @@ impl Default for PatternAction {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Pattern {
     pub name: String,
     pub bytes: String,
     pub description: String,
     #[serde(default)]
     pub action: Option<PatternAction>,
+    #[serde(default = "default_true")]
+    pub notify_enabled: bool,
 }
 
 impl Pattern {
@@ -227,6 +229,7 @@ impl Pattern {
             bytes: bytes.clone(),
             description: description.clone(),
             action: None,
+            notify_enabled: true,
         }
         .to_bytes()?;
 
@@ -235,6 +238,7 @@ impl Pattern {
             bytes,
             description,
             action: None,
+            notify_enabled: true,
         })
     }
 
@@ -304,6 +308,7 @@ pub fn default_patterns() -> Vec<Pattern> {
             bytes: "00FE06032C010000".to_string(),
             description: "Персонаж умер".to_string(),
             action: None,
+            notify_enabled: true,
         },
         Pattern {
             name: "STOP_FARM".to_string(),
@@ -314,6 +319,7 @@ pub fn default_patterns() -> Vec<Pattern> {
                 key: "Z".to_string(),
                 delay_ms: 1000,
             }),
+            notify_enabled: true,
         },
     ]
 }
@@ -587,6 +593,7 @@ mod tests {
             bytes: "AA".into(),
             description: "c".into(),
             action: None,
+            notify_enabled: true,
         }];
         assert!(!ensure_default_patterns(&mut filled));
         assert_eq!(filled.target.patterns.len(), 1);

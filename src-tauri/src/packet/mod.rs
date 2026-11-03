@@ -3,8 +3,16 @@ use crate::process_net::RemoteEndpoint;
 use std::collections::HashMap;
 
 #[derive(Clone)]
+struct AnalyzerPattern {
+    bytes: Vec<u8>,
+    description: String,
+    action: Option<crate::config::PatternAction>,
+    notify_enabled: bool,
+}
+
+#[derive(Clone)]
 pub struct PacketAnalyzer {
-    patterns: HashMap<String, (Vec<u8>, String, Option<crate::config::PatternAction>)>,
+    patterns: HashMap<String, AnalyzerPattern>,
 }
 
 impl PacketAnalyzer {
@@ -12,7 +20,15 @@ impl PacketAnalyzer {
         let mut map = HashMap::new();
         for p in patterns {
             if let Ok(bytes) = p.to_bytes() {
-                map.insert(p.name.clone(), (bytes, p.description, p.action));
+                map.insert(
+                    p.name,
+                    AnalyzerPattern {
+                        bytes,
+                        description: p.description,
+                        action: p.action,
+                        notify_enabled: p.notify_enabled,
+                    },
+                );
             }
         }
         Self { patterns: map }
@@ -20,8 +36,15 @@ impl PacketAnalyzer {
 
     pub fn add_pattern(&mut self, pattern: Pattern) {
         if let Ok(bytes) = pattern.to_bytes() {
-            self.patterns
-                .insert(pattern.name, (bytes, pattern.description, pattern.action));
+            self.patterns.insert(
+                pattern.name,
+                AnalyzerPattern {
+                    bytes,
+                    description: pattern.description,
+                    action: pattern.action,
+                    notify_enabled: pattern.notify_enabled,
+                },
+            );
         }
     }
 
@@ -32,11 +55,12 @@ impl PacketAnalyzer {
     pub fn get_patterns(&self) -> Vec<Pattern> {
         self.patterns
             .iter()
-            .map(|(name, (bytes, desc, act))| Pattern {
+            .map(|(name, p)| Pattern {
                 name: name.clone(),
-                bytes: bytes.iter().map(|b| format!("{:02X}", b)).collect(),
-                description: desc.clone(),
-                action: act.clone(),
+                bytes: p.bytes.iter().map(|b| format!("{:02X}", b)).collect(),
+                description: p.description.clone(),
+                action: p.action.clone(),
+                notify_enabled: p.notify_enabled,
             })
             .collect()
     }
@@ -115,16 +139,17 @@ impl PacketAnalyzer {
             return None;
         }
 
-        for (name, (bytes, desc, act)) in &self.patterns {
-            if bytes.is_empty() {
+        for (name, p) in &self.patterns {
+            if p.bytes.is_empty() {
                 continue;
             }
-            if payload.windows(bytes.len()).any(|w| w == bytes.as_slice()) {
+            if payload.windows(p.bytes.len()).any(|w| w == p.bytes.as_slice()) {
                 return Some(Pattern {
                     name: name.clone(),
-                    bytes: bytes.iter().map(|b| format!("{:02X}", b)).collect(),
-                    description: desc.clone(),
-                    action: act.clone(),
+                    bytes: p.bytes.iter().map(|b| format!("{:02X}", b)).collect(),
+                    description: p.description.clone(),
+                    action: p.action.clone(),
+                    notify_enabled: p.notify_enabled,
                 });
             }
         }
@@ -518,6 +543,7 @@ mod tests {
             bytes: "00FE06032C010000".into(),
             description: "Персонаж умер".into(),
             action: None,
+            notify_enabled: true,
         }
     }
 
@@ -527,6 +553,7 @@ mod tests {
             bytes: "4E00FE11006100750074006F006600610072006D000000".into(),
             description: "Автофарм остановлен".into(),
             action: None,
+            notify_enabled: true,
         }
     }
 
@@ -705,6 +732,7 @@ mod tests {
             bytes: "ZZ".into(),
             description: "broken".into(),
             action: None,
+            notify_enabled: true,
         }]);
         assert!(analyzer.get_patterns().is_empty());
     }
@@ -716,6 +744,16 @@ mod tests {
         assert_eq!(analyzer.get_patterns().len(), 1);
         analyzer.remove_pattern("DEATH");
         assert!(analyzer.get_patterns().is_empty());
+    }
+
+    #[test]
+    fn pattern_notify_enabled_flag_preserved() {
+        let mut pat = death_pattern();
+        pat.notify_enabled = false;
+        let analyzer = PacketAnalyzer::new(vec![pat]);
+        let death_pkt = make_ipv4_tcp_packet(&parse_hex("00FE06032C010000").unwrap());
+        let matched = analyzer.analyze(&death_pkt).expect("DEATH should match");
+        assert!(!matched.notify_enabled);
     }
 
     #[test]

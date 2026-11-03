@@ -45,8 +45,18 @@ export const api = {
     name: string,
     bytes: string,
     description: string,
-    action?: PatternAction
-  ) => invoke('add_pattern', { name, bytes, description, action }),
+    action?: PatternAction,
+    notify_enabled?: boolean
+  ) =>
+    invoke('add_pattern', {
+      name,
+      bytes,
+      description,
+      action,
+      notifyEnabled: notify_enabled ?? true,
+    }),
+  setPatternNotifyEnabled: (name: string, enabled: boolean) =>
+    invoke<string>('set_pattern_notify_enabled', { name, enabled }),
   removePattern: (name: string) => invoke('remove_pattern', { name }),
   resetPatterns: () => invoke<Pattern[]>('reset_patterns_to_defaults'),
   exportPatterns: () => invoke<string>('export_patterns'),

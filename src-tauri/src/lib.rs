@@ -585,66 +585,73 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     hex_preview
                 );
 
-                let time = chrono::Local::now().format("%H:%M:%S").to_string();
-                let stored = StoredNotification {
-                    title: notify_title.clone(),
-                    body: notify_body.clone(),
-                    time,
-                };
-                if let Ok(mut list) = recent_notifications.lock() {
-                    list.insert(0, stored);
-                    list.truncate(50);
-                }
-
-                let event = NotificationEvent {
-                    title: notify_title.clone(),
-                    body: notify_body.clone(),
-                };
-                let _ = app_notify.emit("notification", event.clone());
-                if let Some(win) = app_notify.get_webview_window("main") {
-                    let _ = win.emit("notification", event);
-                }
-
-                if tray_enabled {
-                    // Single toast via Tauri (avoid duplicate notify_rust).
-                    use tauri_plugin_notification::NotificationExt;
-                    let tray_body = if let Some(lbl) = &window_label {
-                        format!("{}\n{}", pattern.name, lbl)
-                    } else {
-                        pattern.name.clone()
+                if pattern.notify_enabled {
+                    let time = chrono::Local::now().format("%H:%M:%S").to_string();
+                    let stored = StoredNotification {
+                        title: notify_title.clone(),
+                        body: notify_body.clone(),
+                        time,
                     };
-                    if let Err(e) = app_notify
-                        .notification()
-                        .builder()
-                        .title(&notify_title)
-                        .body(&tray_body)
-                        .show()
-                    {
-                        tracing::warn!("system notification failed: {}", e);
+                    if let Ok(mut list) = recent_notifications.lock() {
+                        list.insert(0, stored);
+                        list.truncate(50);
                     }
-                }
 
-                if telegram_enabled {
-                    let send_win = if pattern.name == "DEATH" && !screenshot_on_death {
-                        None
-                    } else {
-                        target_win.clone()
+                    let event = NotificationEvent {
+                        title: notify_title.clone(),
+                        body: notify_body.clone(),
                     };
+                    let _ = app_notify.emit("notification", event.clone());
+                    if let Some(win) = app_notify.get_webview_window("main") {
+                        let _ = win.emit("notification", event);
+                    }
 
-                    if let Err(e) = rt.block_on(telegram::send_notification(
-                        &config,
-                        &notify_title,
-                        &pattern.name,
-                        window_label.as_deref(),
-                        send_win,
-                    )) {
-                        let msg = format!("Telegram: {e}");
-                        tracing::warn!("{}", msg);
-                        if let Ok(mut err) = last_error.lock() {
-                            *err = msg.clone();
+                    if tray_enabled {
+                        // Single toast via Tauri (avoid duplicate notify_rust).
+                        use tauri_plugin_notification::NotificationExt;
+                        let tray_body = if let Some(lbl) = &window_label {
+                            format!("{}\n{}", pattern.name, lbl)
+                        } else {
+                            pattern.name.clone()
+                        };
+                        if let Err(e) = app_notify
+                            .notification()
+                            .builder()
+                            .title(&notify_title)
+                            .body(&tray_body)
+                            .show()
+                        {
+                            tracing::warn!("system notification failed: {}", e);
                         }
-                        let _ = app_notify.emit("bot-error", msg);
                     }
+
+                    if telegram_enabled {
+                        let send_win = if pattern.name == "DEATH" && !screenshot_on_death {
+                            None
+                        } else {
+                            target_win.clone()
+                        };
+
+                        if let Err(e) = rt.block_on(telegram::send_notification(
+                            &config,
+                            &notify_title,
+                            &pattern.name,
+                            window_label.as_deref(),
+                            send_win,
+                        )) {
+                            let msg = format!("Telegram: {e}");
+                            tracing::warn!("{}", msg);
+                            if let Ok(mut err) = last_error.lock() {
+                                *err = msg.clone();
+                            }
+                            let _ = app_notify.emit("bot-error", msg);
+                        }
+                    }
+                } else {
+                    tracing::info!(
+                        "Pattern notification for '{}' is disabled; notification skipped",
+                        pattern.name
+                    );
                 }
 
                 if actions_enabled {
@@ -889,11 +896,13 @@ async fn add_pattern(
     bytes: String,
     description: String,
     action: Option<PatternAction>,
+    notify_enabled: Option<bool>,
 ) -> Result<String, String> {
     info!("Adding pattern: {}", name);
     let mut pattern = Pattern::new(name.clone(), bytes.clone(), description.clone())
         .map_err(|e| e.to_string())?;
     pattern.action = action;
+    pattern.notify_enabled = notify_enabled.unwrap_or(true);
 
     #[cfg(windows)]
     {
@@ -907,6 +916,35 @@ async fn add_pattern(
     config::save_config(&config).map_err(|e| e.to_string())?;
 
     Ok("Pattern added".to_string())
+}
+
+#[tauri::command]
+async fn set_pattern_notify_enabled(
+    state: State<'_, AppState>,
+    name: String,
+    enabled: bool,
+) -> Result<String, String> {
+    let mut config = state.config.lock().await;
+    let Some(pattern) = config.target.patterns.iter_mut().find(|p| p.name == name) else {
+        return Err(format!("Pattern '{name}' not found"));
+    };
+    pattern.notify_enabled = enabled;
+    let patterns = config.target.patterns.clone();
+    config::save_config(&config).map_err(|e| e.to_string())?;
+    drop(config);
+
+    #[cfg(windows)]
+    {
+        if let Ok(mut analyzer) = state.analyzer.lock() {
+            *analyzer = PacketAnalyzer::new(patterns);
+        }
+    }
+
+    Ok(format!(
+        "Pattern {} notifications {}",
+        name,
+        if enabled { "enabled" } else { "disabled" }
+    ))
 }
 
 #[tauri::command]
@@ -1578,6 +1616,7 @@ pub fn run() {
             get_recent_packets,
             clear_packet_log,
             add_pattern,
+            set_pattern_notify_enabled,
             remove_pattern,
             reset_patterns_to_defaults,
             export_patterns,

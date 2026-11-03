@@ -9,6 +9,7 @@ export interface Pattern {
   bytes: string;
   description: string;
   action?: PatternAction;
+  notify_enabled?: boolean;
 }
 
 export interface RegisteredUser {

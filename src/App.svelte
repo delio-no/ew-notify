@@ -70,6 +70,7 @@
   let newPatternName = $state('');
   let newPatternBytes = $state('');
   let newPatternDesc = $state('');
+  let newPatternNotifyEnabled = $state(true);
   let newPatternActionEnabled = $state(false);
   let newPatternActionKey = $state('Z');
   let newPatternActionDelay = $state(1000);
@@ -329,12 +330,14 @@
         newPatternName.trim(),
         newPatternBytes.trim().replace(/\s+/g, ''),
         newPatternDesc.trim(),
-        action
+        action,
+        newPatternNotifyEnabled
       );
       config = await api.getConfig();
       newPatternName = '';
       newPatternBytes = '';
       newPatternDesc = '';
+      newPatternNotifyEnabled = true;
       newPatternActionEnabled = false;
       newPatternActionKey = 'Z';
       newPatternActionDelay = 1000;
@@ -343,6 +346,30 @@
       showStatus('Паттерн добавлен');
     } catch (e) {
       showStatus(`Ошибка: ${e}`);
+    }
+  }
+
+  async function togglePatternNotify(pattern: Pattern) {
+    const next = !(pattern.notify_enabled ?? true);
+    pattern.notify_enabled = next;
+    try {
+      await api.setPatternNotifyEnabled(pattern.name, next);
+      showStatus(
+        next
+          ? `Уведомления для ${pattern.name} включены`
+          : `Уведомления для ${pattern.name} выключены`
+      );
+    } catch {
+      try {
+        await api.updateConfig(config);
+        showStatus(
+          next
+            ? `Уведомления для ${pattern.name} включены`
+            : `Уведомления для ${pattern.name} выключены`
+        );
+      } catch (err) {
+        showStatus(`Ошибка: ${err}`);
+      }
     }
   }
 
@@ -818,6 +845,7 @@
         bind:newPatternName
         bind:newPatternBytes
         bind:newPatternDesc
+        bind:newPatternNotifyEnabled
         bind:testHexInput
         {testHexResult}
         {nameFieldError}
@@ -830,6 +858,7 @@
         bind:newPatternActionKey
         bind:newPatternActionDelay
         onSavePatternAction={savePatternAction}
+        onToggleNotify={togglePatternNotify}
         onTestKey={testSendKey}
         onAdd={addPattern}
         onRemove={removePattern}

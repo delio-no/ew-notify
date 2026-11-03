@@ -8,6 +8,7 @@
     newPatternName = $bindable(''),
     newPatternBytes = $bindable(''),
     newPatternDesc = $bindable(''),
+    newPatternNotifyEnabled = $bindable(true),
     newPatternActionEnabled = $bindable(false),
     newPatternActionKey = $bindable('Z'),
     newPatternActionDelay = $bindable(1000),
@@ -26,12 +27,14 @@
     onImport,
     onTestHex,
     onSavePatternAction,
+    onToggleNotify,
     onTestKey,
   }: {
     config: Config;
     newPatternName?: string;
     newPatternBytes?: string;
     newPatternDesc?: string;
+    newPatternNotifyEnabled?: boolean;
     newPatternActionEnabled?: boolean;
     newPatternActionKey?: string;
     newPatternActionDelay?: number;
@@ -50,6 +53,7 @@
     onImport: (replace: boolean) => void;
     onTestHex: () => void;
     onSavePatternAction?: (pattern: Pattern) => void;
+    onToggleNotify?: (pattern: Pattern) => void;
     onTestKey?: (key: string) => void;
   } = $props();
 
@@ -166,6 +170,13 @@
 
         <div class="form-group action-toggle-group">
           <label class="checkbox-label">
+            <input type="checkbox" bind:checked={newPatternNotifyEnabled} />
+            <span>🔔 Уведомление при срабатывании (Telegram / трей / тост)</span>
+          </label>
+        </div>
+
+        <div class="form-group action-toggle-group">
+          <label class="checkbox-label">
             <input type="checkbox" bind:checked={newPatternActionEnabled} />
             <span>⚡ Нажатие клавиши в окно игры при срабатывании</span>
           </label>
@@ -220,6 +231,21 @@
                   <span class="pattern-desc">{pattern.description}</span>
                 </div>
                 <div class="pattern-actions-col">
+                  <button
+                    type="button"
+                    class="pattern-notify-badge"
+                    class:active={pattern.notify_enabled ?? true}
+                    onclick={() => onToggleNotify?.(pattern)}
+                    title={pattern.notify_enabled ?? true
+                      ? 'Уведомления включены (кликните для отключения)'
+                      : 'Уведомления выключены (кликните для включения)'}
+                  >
+                    {#if pattern.notify_enabled ?? true}
+                      🔔 Уведомление: Вкл
+                    {:else}
+                      🔕 Уведомление: Выкл
+                    {/if}
+                  </button>
                   <button
                     type="button"
                     class="pattern-action-badge"
