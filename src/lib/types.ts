@@ -86,6 +86,26 @@ export interface PatternMatchResult {
   pattern_bytes: string | null;
 }
 
+export interface TrackedWindowInfo {
+  slot: number;
+  pid: number;
+  hwnd: number;
+  title: string;
+}
+
+export type WindowFilterMode =
+  | { mode: 'All' }
+  | { mode: 'Single'; data: TrackedWindowInfo };
+
+export interface TargetWindow {
+  hwnd: number;
+  pid: number;
+  title: string;
+  is_minimized: boolean;
+  width: number;
+  height: number;
+}
+
 export interface StoredNotification {
   title: string;
   body: string;

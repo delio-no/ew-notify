@@ -8,7 +8,10 @@ pub mod platform;
 pub mod process_net;
 pub mod telegram;
 pub mod tray;
+pub mod hotkeys;
+pub mod overlay;
 pub mod screen_capture;
+pub mod window_filter;
 
 use config::{AppConfig, CaptureMode, Pattern, PatternAction};
 use packet::{
@@ -89,6 +92,7 @@ pub struct AppState {
     pub last_error: Arc<std::sync::Mutex<String>>,
     pub log_buffer: logging::LogBuffer,
     pub packet_log: Arc<packet_log::PacketLog>,
+    pub window_filter: window_filter::WindowFilterState,
     #[cfg(windows)]
     pub analyzer: Arc<std::sync::Mutex<PacketAnalyzer>>,
 }
@@ -202,6 +206,7 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
     let active_tcp_port = state.active_tcp_port.clone();
     let discovered_endpoints = state.discovered_endpoints.clone();
     let packet_log = state.packet_log.clone();
+    let window_filter = state.window_filter.clone();
     let rt = tokio::runtime::Handle::current();
 
     #[cfg(windows)]
@@ -474,6 +479,11 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
 
                 let local_port = conn.as_ref().map(|c| c.local_port);
                 let target_pid = local_port.and_then(|p| process_net::find_pid_by_local_port(&process_name, p));
+
+                let pid_for_filter = target_pid.unwrap_or(0);
+                if !window_filter.is_pid_allowed(pid_for_filter) {
+                    continue;
+                }
 
                 let windows = screen_capture::find_target_windows(&process_name);
                 let matched_win = target_pid.and_then(|pid| {
@@ -1273,6 +1283,60 @@ async fn test_send_key(
     Ok(format!("Клавиша '{}' отправлена в окно [PID {}]", key, win.pid))
 }
 
+#[tauri::command]
+async fn get_window_filter_status(
+    state: State<'_, AppState>,
+) -> Result<window_filter::WindowFilterMode, String> {
+    Ok(state.window_filter.get_mode().await)
+}
+
+#[tauri::command]
+async fn set_window_filter(
+    state: State<'_, AppState>,
+    slot: u32,
+    pid: u32,
+) -> Result<window_filter::WindowFilterMode, String> {
+    let process_name = {
+        let guard = state.config.lock().await;
+        guard.target.process_name.clone()
+    };
+    let target_windows = screen_capture::find_target_windows(&process_name);
+    let win = target_windows
+        .into_iter()
+        .find(|w| w.pid == pid)
+        .ok_or_else(|| format!("Окно с PID {} не найдено", pid))?;
+
+    let label = format!("🟢 EW #{} [PID {}]", slot, win.pid);
+    state
+        .window_filter
+        .set_single(slot, win.pid, win.hwnd, win.title.clone())
+        .await;
+    overlay::show_overlay(win.hwnd, &label, true);
+    hotkeys::play_beep();
+    Ok(state.window_filter.get_mode().await)
+}
+
+#[tauri::command]
+async fn reset_window_filter(
+    state: State<'_, AppState>,
+) -> Result<window_filter::WindowFilterMode, String> {
+    state.window_filter.reset_to_all().await;
+    overlay::hide_overlay();
+    hotkeys::play_beep();
+    Ok(window_filter::WindowFilterMode::All)
+}
+
+#[tauri::command]
+async fn get_target_windows(
+    state: State<'_, AppState>,
+) -> Result<Vec<screen_capture::TargetWindow>, String> {
+    let process_name = {
+        let guard = state.config.lock().await;
+        guard.target.process_name.clone()
+    };
+    Ok(screen_capture::find_target_windows(&process_name))
+}
+
 pub fn run() {
     if let Err(e) = platform::ensure_single_instance() {
         eprintln!("{e}");
@@ -1319,6 +1383,7 @@ pub fn run() {
         last_error: Arc::new(std::sync::Mutex::new(String::new())),
         log_buffer,
         packet_log: packet_log::PacketLog::new(),
+        window_filter: window_filter::WindowFilterState::new(),
         #[cfg(windows)]
         analyzer: Arc::new(std::sync::Mutex::new(PacketAnalyzer::new(
             config.target.patterns.clone(),
@@ -1422,6 +1487,11 @@ pub fn run() {
                 }
             }
 
+            let state = app.state::<AppState>();
+            let filter_state = state.window_filter.clone();
+            let cfg_state = state.config.clone();
+            hotkeys::start_hotkey_listener(app.handle().clone(), filter_state, cfg_state);
+
             if let Some(token) = auto_start_token.clone() {
                 info!("Auto-starting Telegram bot...");
                 let handle = app.handle().clone();
@@ -1487,6 +1557,10 @@ pub fn run() {
             set_notify_all_users,
             open_url,
             test_send_key,
+            get_window_filter_status,
+            set_window_filter,
+            reset_window_filter,
+            get_target_windows,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

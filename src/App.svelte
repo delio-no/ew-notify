@@ -10,6 +10,8 @@
     type PacketLogEntry,
     type Pattern,
     type StoredNotification,
+    type TargetWindow,
+    type WindowFilterMode,
   } from './lib/types';
   import Sidebar from './components/Sidebar.svelte';
   import Toast from './components/Toast.svelte';
@@ -78,6 +80,8 @@
   let statusMessage = $state('');
   let statusTimeout: ReturnType<typeof setTimeout>;
   let notifications = $state<StoredNotification[]>([]);
+  let windowFilterMode = $state<WindowFilterMode>({ mode: 'All' });
+  let targetWindows = $state<TargetWindow[]>([]);
 
   function patternNameError(value: string): string | null {
     const name = value.trim();
@@ -158,12 +162,40 @@
     }
   }
 
+  async function refreshWindowFilter() {
+    try {
+      windowFilterMode = await api.getWindowFilterStatus();
+      targetWindows = await api.getTargetWindows();
+    } catch (e) {
+      console.error('refreshWindowFilter failed', e);
+    }
+  }
+
+  async function selectWindowFilter(slot: number, pid: number) {
+    try {
+      windowFilterMode = await api.setWindowFilter(slot, pid);
+      showStatus(`Выбрано окно #${slot} [PID ${pid}]`);
+    } catch (e) {
+      showStatus(`Ошибка выбора окна: ${e}`);
+    }
+  }
+
+  async function resetWindowFilter() {
+    try {
+      windowFilterMode = await api.resetWindowFilter();
+      showStatus('Отслеживаются все окна');
+    } catch (e) {
+      showStatus(`Ошибка сброса: ${e}`);
+    }
+  }
+
   async function refreshMonitorStatus() {
     try {
       const status = await api.getMonitoringStatus();
       applyMonitorStatus(status);
       const notes = await api.getRecentNotifications();
       notifications = notes.map((n) => ({ title: n.title, body: n.body, time: n.time }));
+      void refreshWindowFilter();
     } catch (e) {
       pollErrors += 1;
       console.error('refreshMonitorStatus failed', e);
@@ -706,6 +738,16 @@
             showStatus('Мониторинг остановлен (из трея)');
           }),
         );
+        unlisteners.push(
+          await listen<WindowFilterMode>('window-filter-changed', (event) => {
+            windowFilterMode = event.payload;
+            if (event.payload.mode === 'Single') {
+              showStatus(`Отслеживание: Окно #${event.payload.data.slot} (PID ${event.payload.data.pid})`);
+            } else {
+              showStatus('Отслеживание: Все окна');
+            }
+          }),
+        );
       } catch (e) {
         console.error('listen setup failed', e);
       }
@@ -746,9 +788,14 @@
         {pollErrors}
         monitorProcessName={monitorStatus.process_name}
         {notifications}
+        {windowFilterMode}
+        {targetWindows}
         onStart={startMonitoring}
         onStop={stopMonitoring}
         onHideTray={hideToTray}
+        onSelectWindow={selectWindowFilter}
+        onResetWindowFilter={resetWindowFilter}
+        onRefreshWindows={refreshWindowFilter}
       />
     {:else if currentPage === 'settings'}
       <SettingsPage

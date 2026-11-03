@@ -4,9 +4,12 @@ import type {
   MonitoringStatus,
   PacketLogEntry,
   Pattern,
+  PatternAction,
   PatternMatchResult,
   RegisteredUser,
   StoredNotification,
+  TargetWindow,
+  WindowFilterMode,
 } from './types';
 
 export const api = {
@@ -58,4 +61,14 @@ export const api = {
     invoke<string>('start_telegram_bot', { token }),
   stopTelegramBot: () => invoke('stop_telegram_bot'),
   openUrl: (url: string) => invoke('open_url', { url }),
+
+  // Selective window filtering
+  getWindowFilterStatus: () =>
+    invoke<WindowFilterMode>('get_window_filter_status'),
+  setWindowFilter: (slot: number, pid: number) =>
+    invoke<WindowFilterMode>('set_window_filter', { slot, pid }),
+  resetWindowFilter: () =>
+    invoke<WindowFilterMode>('reset_window_filter'),
+  getTargetWindows: () =>
+    invoke<TargetWindow[]>('get_target_windows'),
 };

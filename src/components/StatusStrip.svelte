@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { WindowFilterMode } from '../lib/types';
+
   let {
     isMonitoring = false,
     isBotRunning = false,
@@ -7,6 +9,7 @@
     discovered = '',
     packetsSeen = 0,
     matchesSeen = 0,
+    windowFilterMode = { mode: 'All' },
   }: {
     isMonitoring?: boolean;
     isBotRunning?: boolean;
@@ -15,6 +18,7 @@
     discovered?: string;
     packetsSeen?: number;
     matchesSeen?: number;
+    windowFilterMode?: WindowFilterMode;
   } = $props();
 </script>
 
@@ -37,6 +41,17 @@
   {#if captureMode === 'auto' && discovered}
     <span class="status-chip mono">{discovered}</span>
   {/if}
+  {#if windowFilterMode?.mode === 'Single'}
+    <span class="status-chip active-filter" title={`Отслеживается окно #${windowFilterMode.data.slot} (PID: ${windowFilterMode.data.pid})`}>
+      <span class="dot on"></span>
+      EW #{windowFilterMode.data.slot} (PID {windowFilterMode.data.pid})
+    </span>
+  {:else}
+    <span class="status-chip" title="Мониторинг всех запущенных окон">
+      <span class="dot"></span>
+      Все окна
+    </span>
+  {/if}
   <span class="status-chip">pkt {packetsSeen}</span>
   <span class="status-chip">evt {matchesSeen}</span>
 </div>
@@ -48,5 +63,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .active-filter {
+    border-color: rgba(34, 197, 94, 0.4);
+    background: rgba(34, 197, 94, 0.1);
+    color: #4ade80;
+    font-weight: 600;
   }
 </style>

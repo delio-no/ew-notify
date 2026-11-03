@@ -1,7 +1,7 @@
 <script lang="ts">
   import PageHeader from '../PageHeader.svelte';
   import StatusStrip from '../StatusStrip.svelte';
-  import type { Config, StoredNotification } from '../../lib/types';
+  import type { Config, StoredNotification, TargetWindow, WindowFilterMode } from '../../lib/types';
 
   let {
     config,
@@ -23,9 +23,14 @@
     pollErrors,
     monitorProcessName,
     notifications,
+    windowFilterMode = { mode: 'All' },
+    targetWindows = [],
     onStart,
     onStop,
     onHideTray,
+    onSelectWindow,
+    onResetWindowFilter,
+    onRefreshWindows,
   }: {
     config: Config;
     isMonitoring: boolean;
@@ -46,9 +51,14 @@
     pollErrors: number;
     monitorProcessName: string;
     notifications: StoredNotification[];
+    windowFilterMode?: WindowFilterMode;
+    targetWindows?: TargetWindow[];
     onStart: () => void;
     onStop: () => void;
     onHideTray: () => void;
+    onSelectWindow: (slot: number, pid: number) => void;
+    onResetWindowFilter: () => void;
+    onRefreshWindows: () => void;
   } = $props();
 
   let discoveredLabel = $derived(discoveredEndpoints.join(', '));
@@ -66,6 +76,7 @@
   discovered={discoveredLabel}
   {packetsSeen}
   {matchesSeen}
+  {windowFilterMode}
 />
 
 <div class="dashboard-grid">
@@ -85,6 +96,115 @@
           {:else}
             <button class="btn btn-success" onclick={onStart}>Начать мониторинг</button>
           {/if}
+        </div>
+      </div>
+    </div>
+
+    <!-- Window Filtering (Multi-box) -->
+    <div class="card window-filter-card">
+      <div class="card-header window-filter-header">
+        <div class="window-filter-title-wrap">
+          <h2>Отслеживание окон (Мульти-бокс)</h2>
+          <span class="hotkey-pill-hint">Ctrl + 1..6 / Ctrl + 0</span>
+        </div>
+        <button
+          type="button"
+          class="btn btn-secondary btn-xs"
+          onclick={onRefreshWindows}
+          title="Обновить список окон игры"
+        >
+          ↻ Обновить
+        </button>
+      </div>
+      <div class="card-body">
+        <!-- Active Filter Banner -->
+        <div class="filter-banner" class:filter-active={windowFilterMode.mode === 'Single'}>
+          <div class="filter-banner-info">
+            <span class="filter-mode-tag">
+              {#if windowFilterMode.mode === 'Single'}
+                🟢 EW #{windowFilterMode.data.slot} [PID {windowFilterMode.data.pid}]
+              {:else}
+                🌐 Все окна EndlessWar
+              {/if}
+            </span>
+            <span class="filter-subtext">
+              {#if windowFilterMode.mode === 'Single'}
+                {windowFilterMode.data.title || 'Окно игры'} (оверлей активен)
+              {:else}
+                Пакеты и действия обрабатываются для всех окон игры
+              {/if}
+            </span>
+          </div>
+          {#if windowFilterMode.mode === 'Single'}
+            <button
+              type="button"
+              class="btn btn-secondary btn-xs"
+              onclick={onResetWindowFilter}
+            >
+              Сбросить (Ctrl+0)
+            </button>
+          {/if}
+        </div>
+
+        <!-- Detected Windows List -->
+        <div class="target-windows-section">
+          <div class="section-subtitle">
+            <span>Обнаруженные окна EndlessWar ({targetWindows.length})</span>
+          </div>
+          {#if targetWindows.length === 0}
+            <div class="empty-windows-msg">
+              Окна EndlessWar.exe не найдены. Запустите игру или нажмите <b>Ctrl + 1..6</b> в окне игры.
+            </div>
+          {:else}
+            <div class="windows-grid">
+              {#each targetWindows as win, idx}
+                {@const isTracked = windowFilterMode.mode === 'Single' && windowFilterMode.data.pid === win.pid}
+                <div class="window-item" class:is-tracked={isTracked}>
+                  <div class="window-meta">
+                    <div class="window-title-row">
+                      <span class="window-slot-indicator">#{idx + 1}</span>
+                      <span class="window-title" title={win.title}>{win.title || 'EndlessWar'}</span>
+                    </div>
+                    <div class="window-details">
+                      <span>PID: {win.pid}</span>
+                      <span>{win.width}×{win.height}</span>
+                      {#if win.is_minimized}
+                        <span class="badge-minimized">Свёрнуто</span>
+                      {/if}
+                    </div>
+                  </div>
+                  <div class="window-actions">
+                    {#if isTracked}
+                      <span class="tracked-badge">✓ Активно</span>
+                      <button
+                        type="button"
+                        class="btn btn-secondary btn-xs"
+                        onclick={onResetWindowFilter}
+                        title="Сбросить на все окна"
+                      >
+                        Снять
+                      </button>
+                    {:else}
+                      <button
+                        type="button"
+                        class="btn btn-primary btn-xs"
+                        onclick={() => onSelectWindow(idx + 1, win.pid)}
+                        title={`Привязать как слот #${idx + 1}`}
+                      >
+                        Выбрать #{idx + 1}
+                      </button>
+                    {/if}
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+
+        <!-- Hotkeys Cheatsheet -->
+        <div class="hotkey-footer">
+          <span class="hotkey-item"><kbd>Ctrl</kbd> + <kbd>1..6</kbd> привязать окно</span>
+          <span class="hotkey-item"><kbd>Ctrl</kbd> + <kbd>0</kbd> сбросить на все окна</span>
         </div>
       </div>
     </div>
@@ -133,6 +253,16 @@
             <span class="info-value mono">{discoveredLabel || '—'}</span>
           </div>
         {/if}
+        <div class="info-row">
+          <span class="info-label">Фильтр окон</span>
+          <span class="info-value">
+            {#if windowFilterMode.mode === 'Single'}
+              EW #{windowFilterMode.data.slot} (PID {windowFilterMode.data.pid})
+            {:else}
+              Все окна
+            {/if}
+          </span>
+        </div>
         <div class="info-row">
           <span class="info-label">Dedup</span>
           <span class="info-value">{dedupSuppressed}</span>
@@ -189,3 +319,181 @@
     </div>
   </div>
 </div>
+
+<style>
+  .window-filter-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+  .window-filter-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .hotkey-pill-hint {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+  .filter-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    margin-bottom: 14px;
+  }
+  .filter-banner.filter-active {
+    background: rgba(34, 197, 94, 0.08);
+    border-color: rgba(34, 197, 94, 0.35);
+  }
+  .filter-banner-info {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+  .filter-mode-tag {
+    font-weight: 600;
+    font-size: 14px;
+    color: #ffffff;
+  }
+  .filter-active .filter-mode-tag {
+    color: #4ade80;
+  }
+  .filter-subtext {
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .target-windows-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .section-subtitle {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .empty-windows-msg {
+    font-size: 13px;
+    color: var(--text-dim);
+    padding: 12px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    border: 1px dashed var(--border);
+  }
+  .windows-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .window-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    transition: all 0.15s ease;
+  }
+  .window-item.is-tracked {
+    border-color: rgba(34, 197, 94, 0.5);
+    background: rgba(34, 197, 94, 0.06);
+  }
+  .window-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+  .window-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .window-slot-indicator {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.06);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .window-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 240px;
+  }
+  .window-details {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .badge-minimized {
+    color: var(--warn);
+    background: rgba(240, 198, 116, 0.15);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  .window-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .tracked-badge {
+    font-size: 12px;
+    font-weight: 600;
+    color: #4ade80;
+  }
+  .btn-xs {
+    padding: 5px 10px;
+    font-size: 12px;
+    border-radius: 6px;
+  }
+  .hotkey-footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .hotkey-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  kbd {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--text);
+  }
+</style>
