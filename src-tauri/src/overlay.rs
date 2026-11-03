@@ -107,16 +107,17 @@ mod win {
                 FrameRect(hdc, &inner_rc, border_brush);
                 let _ = DeleteObject(border_brush);
 
-                // 3. Top-Right Badge: [ 🟢 EW #1 (PID 7720) ]
-                if !label.is_empty() && (rc.right - rc.left) > 200 {
-                    let badge_w = 190;
-                    let badge_h = 28;
-                    let badge_margin = 8;
+                // 3. Badge: [ 🟢 EW #1 (PID 7720) ] - positioned below window title bar buttons (_ □ ✕)
+                if !label.is_empty() && (rc.right - rc.left) > 220 && (rc.bottom - rc.top) > 100 {
+                    let badge_w = 180;
+                    let badge_h = 24;
+                    let badge_margin_x = 10;
+                    let badge_top = rc.top + 40; // Lowered below standard title bar (0..34px)
                     let badge_rc = RECT {
-                        left: (rc.right - badge_w - badge_margin).max(0),
-                        top: rc.top + badge_margin,
-                        right: (rc.right - badge_margin).max(0),
-                        bottom: rc.top + badge_margin + badge_h,
+                        left: (rc.right - badge_w - badge_margin_x).max(0),
+                        top: badge_top,
+                        right: (rc.right - badge_margin_x).max(0),
+                        bottom: badge_top + badge_h,
                     };
 
                     // Pill dark background (slate-900 / dark charcoal)
@@ -134,7 +135,7 @@ mod win {
                     let _ = SetTextColor(hdc, rgb(255, 255, 255));
 
                     let font = CreateFontW(
-                        15,
+                        14,
                         0,
                         0,
                         0,
