@@ -4,7 +4,7 @@
   import type { Config, Pattern } from '../../lib/types';
 
   let {
-    config,
+    config = $bindable(),
     newPatternName = $bindable(''),
     newPatternBytes = $bindable(''),
     newPatternDesc = $bindable(''),
@@ -27,6 +27,7 @@
     onImport,
     onTestHex,
     onSavePatternAction,
+    onToggleActionEnabled,
     onToggleNotify,
     onTestKey,
   }: {
@@ -53,6 +54,7 @@
     onImport: (replace: boolean) => void;
     onTestHex: () => void;
     onSavePatternAction?: (pattern: Pattern) => void;
+    onToggleActionEnabled?: (pattern: Pattern, enabled: boolean) => void;
     onToggleNotify?: (pattern: Pattern) => void;
     onTestKey?: (key: string) => void;
   } = $props();
@@ -279,11 +281,15 @@
                       <input
                         type="checkbox"
                         checked={pattern.action?.enabled ?? false}
-                        onchange={(e) => {
+                        onchange={async (e) => {
+                          const checked = e.currentTarget.checked;
                           if (!pattern.action) {
                             pattern.action = { enabled: false, key: 'Z', delay_ms: 1000 };
                           }
-                          pattern.action.enabled = e.currentTarget.checked;
+                          pattern.action.enabled = checked;
+                          if (onToggleActionEnabled) {
+                            await onToggleActionEnabled(pattern, checked);
+                          }
                         }}
                       />
                       <span>Включить фоновое нажатие клавиши</span>

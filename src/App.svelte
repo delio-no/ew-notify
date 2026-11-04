@@ -382,10 +382,36 @@
     }
   }
 
-  async function savePatternAction(pattern: Pattern) {
+  async function togglePatternActionEnabled(pattern: Pattern, enabled: boolean) {
+    if (!pattern.action) {
+      pattern.action = { enabled, key: 'Z', delay_ms: 1000 };
+    } else {
+      pattern.action.enabled = enabled;
+    }
+    const p = config.target.patterns.find((x) => x.name === pattern.name);
+    if (p) {
+      p.action = { ...pattern.action };
+    }
     try {
-      await api.updateConfig(config);
-      showStatus(`Действие для ${pattern.name} сохранено`);
+      await api.setPatternActionEnabled(pattern.name, enabled);
+      showStatus(
+        enabled
+          ? `Фоновое нажатие для ${pattern.name} включено`
+          : `Фоновое нажатие для ${pattern.name} выключено`
+      );
+    } catch (e) {
+      showStatus(`Ошибка: ${e}`);
+    }
+  }
+
+  async function savePatternAction(pattern: Pattern) {
+    const p = config.target.patterns.find((x) => x.name === pattern.name);
+    if (p && pattern.action) {
+      p.action = { ...pattern.action };
+    }
+    try {
+      await api.setPatternAction(pattern.name, pattern.action);
+      showStatus(`Настройки действия для ${pattern.name} сохранены`);
     } catch (e) {
       showStatus(`Ошибка: ${e}`);
     }
@@ -841,7 +867,7 @@
       />
     {:else if currentPage === 'patterns'}
       <PatternsPage
-        {config}
+        bind:config
         bind:newPatternName
         bind:newPatternBytes
         bind:newPatternDesc
@@ -858,6 +884,7 @@
         bind:newPatternActionKey
         bind:newPatternActionDelay
         onSavePatternAction={savePatternAction}
+        onToggleActionEnabled={togglePatternActionEnabled}
         onToggleNotify={togglePatternNotify}
         onTestKey={testSendKey}
         onAdd={addPattern}

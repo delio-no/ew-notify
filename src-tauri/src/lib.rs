@@ -948,6 +948,68 @@ async fn set_pattern_notify_enabled(
 }
 
 #[tauri::command]
+async fn set_pattern_action_enabled(
+    state: State<'_, AppState>,
+    name: String,
+    enabled: bool,
+) -> Result<String, String> {
+    let mut config = state.config.lock().await;
+    let Some(pattern) = config.target.patterns.iter_mut().find(|p| p.name == name) else {
+        return Err(format!("Pattern '{name}' not found"));
+    };
+    if let Some(act) = &mut pattern.action {
+        act.enabled = enabled;
+    } else {
+        pattern.action = Some(PatternAction {
+            enabled,
+            key: "Z".to_string(),
+            delay_ms: 1000,
+        });
+    }
+    let patterns = config.target.patterns.clone();
+    config::save_config(&config).map_err(|e| e.to_string())?;
+    drop(config);
+
+    #[cfg(windows)]
+    {
+        if let Ok(mut analyzer) = state.analyzer.lock() {
+            *analyzer = PacketAnalyzer::new(patterns);
+        }
+    }
+
+    Ok(format!(
+        "Pattern {} action {}",
+        name,
+        if enabled { "enabled" } else { "disabled" }
+    ))
+}
+
+#[tauri::command]
+async fn set_pattern_action(
+    state: State<'_, AppState>,
+    name: String,
+    action: Option<PatternAction>,
+) -> Result<String, String> {
+    let mut config = state.config.lock().await;
+    let Some(pattern) = config.target.patterns.iter_mut().find(|p| p.name == name) else {
+        return Err(format!("Pattern '{name}' not found"));
+    };
+    pattern.action = action;
+    let patterns = config.target.patterns.clone();
+    config::save_config(&config).map_err(|e| e.to_string())?;
+    drop(config);
+
+    #[cfg(windows)]
+    {
+        if let Ok(mut analyzer) = state.analyzer.lock() {
+            *analyzer = PacketAnalyzer::new(patterns);
+        }
+    }
+
+    Ok(format!("Pattern '{name}' action updated"))
+}
+
+#[tauri::command]
 async fn remove_pattern(state: State<'_, AppState>, name: String) -> Result<String, String> {
     info!("Removing pattern: {}", name);
 
@@ -1617,6 +1679,8 @@ pub fn run() {
             clear_packet_log,
             add_pattern,
             set_pattern_notify_enabled,
+            set_pattern_action_enabled,
+            set_pattern_action,
             remove_pattern,
             reset_patterns_to_defaults,
             export_patterns,
