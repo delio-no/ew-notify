@@ -1,3 +1,4 @@
+pub mod clicker;
 pub mod config;
 pub mod crypto;
 pub mod input_sender;
@@ -93,6 +94,7 @@ pub struct AppState {
     pub log_buffer: logging::LogBuffer,
     pub packet_log: Arc<packet_log::PacketLog>,
     pub window_filter: window_filter::WindowFilterState,
+    pub clicker: Arc<clicker::ClickerState>,
     #[cfg(windows)]
     pub analyzer: Arc<std::sync::Mutex<PacketAnalyzer>>,
 }
@@ -207,6 +209,7 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
     let discovered_endpoints = state.discovered_endpoints.clone();
     let packet_log = state.packet_log.clone();
     let window_filter = state.window_filter.clone();
+    let clicker = state.clicker.clone();
     let rt = tokio::runtime::Handle::current();
 
     #[cfg(windows)]
@@ -460,6 +463,9 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                 let Some(pattern) = matched else {
                     continue;
                 };
+
+                // Automatically stop auto-clicker if configured for this pattern
+                clicker.trigger_pattern_stop(&pattern.name, &app_notify, &config, &rt);
 
                 let cooldown_key = match &conn {
                     Some(c) => c.cooldown_id(&pattern.name),
@@ -1477,6 +1483,38 @@ async fn get_target_windows(
     Ok(screen_capture::find_target_windows(&process_name))
 }
 
+#[tauri::command]
+fn start_clicker(state: State<'_, AppState>, app: AppHandle) -> Result<String, String> {
+    state.clicker.start(&app, &state.config, &state.window_filter);
+    Ok("Кликер запущен".to_string())
+}
+
+#[tauri::command]
+fn stop_clicker(state: State<'_, AppState>, app: AppHandle) -> Result<String, String> {
+    state.clicker.stop(&app, Some("Остановлен пользователем".to_string()), &state.config);
+    Ok("Кликер остановлен".to_string())
+}
+
+#[tauri::command]
+async fn get_clicker_status(state: State<'_, AppState>) -> Result<clicker::ClickerStatus, String> {
+    let config = state.config.lock().await;
+    Ok(state.clicker.get_status(&config))
+}
+
+#[tauri::command]
+async fn save_clicker_config(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    clicker_config: config::ClickerConfig,
+) -> Result<String, String> {
+    let mut cfg = state.config.lock().await;
+    cfg.clicker = clicker_config;
+    config::save_config(&cfg).map_err(|e| e.to_string())?;
+    let status = state.clicker.get_status(&cfg);
+    let _ = app.emit("clicker-status-changed", status);
+    Ok("Настройки кликера сохранены".to_string())
+}
+
 pub fn run() {
     if let Err(e) = platform::ensure_single_instance() {
         eprintln!("{e}");
@@ -1524,6 +1562,7 @@ pub fn run() {
         log_buffer,
         packet_log: packet_log::PacketLog::new(),
         window_filter: window_filter::WindowFilterState::new(),
+        clicker: Arc::new(clicker::ClickerState::new()),
         #[cfg(windows)]
         analyzer: Arc::new(std::sync::Mutex::new(PacketAnalyzer::new(
             config.target.patterns.clone(),
@@ -1630,7 +1669,8 @@ pub fn run() {
             let state = app.state::<AppState>();
             let filter_state = state.window_filter.clone();
             let cfg_state = state.config.clone();
-            hotkeys::start_hotkey_listener(app.handle().clone(), filter_state, cfg_state);
+            let clicker_state = state.clicker.clone();
+            hotkeys::start_hotkey_listener(app.handle().clone(), filter_state, cfg_state, clicker_state);
 
             if let Some(token) = auto_start_token.clone() {
                 info!("Auto-starting Telegram bot...");
@@ -1704,6 +1744,10 @@ pub fn run() {
             set_window_filter,
             reset_window_filter,
             get_target_windows,
+            start_clicker,
+            stop_clicker,
+            get_clicker_status,
+            save_clicker_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

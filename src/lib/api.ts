@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  ClickerConfig,
+  ClickerStatus,
   Config,
   MonitoringStatus,
   PacketLogEntry,
@@ -85,4 +87,11 @@ export const api = {
     invoke<WindowFilterMode>('reset_window_filter'),
   getTargetWindows: () =>
     invoke<TargetWindow[]>('get_target_windows'),
+
+  // Auto-clicker
+  startClicker: () => invoke<string>('start_clicker'),
+  stopClicker: () => invoke<string>('stop_clicker'),
+  getClickerStatus: () => invoke<ClickerStatus>('get_clicker_status'),
+  saveClickerConfig: (clickerConfig: ClickerConfig) =>
+    invoke<string>('save_clicker_config', { clickerConfig }),
 };

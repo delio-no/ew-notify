@@ -1,4 +1,5 @@
-//! Global Hotkey listener for switching tracked game windows (Ctrl+1..6, Ctrl+0, Numpad).
+//! Global Hotkey listener for switching tracked game windows (Ctrl+1..6, Ctrl+0, Numpad)
+//! and controlling background auto-clicker (Ctrl+O, Ctrl+P).
 
 #[cfg(windows)]
 pub use win::*;
@@ -8,10 +9,12 @@ pub fn start_hotkey_listener(
     _app: tauri::AppHandle,
     _filter: crate::window_filter::WindowFilterState,
     _config: std::sync::Arc<tokio::sync::Mutex<crate::config::AppConfig>>,
+    _clicker: std::sync::Arc<crate::clicker::ClickerState>,
 ) {}
 
 #[cfg(windows)]
 mod win {
+    use crate::clicker::ClickerState;
     use crate::config::AppConfig;
     use crate::overlay;
     use crate::screen_capture;
@@ -35,11 +38,12 @@ mod win {
         app: AppHandle,
         filter: WindowFilterState,
         config: Arc<Mutex<AppConfig>>,
+        clicker: Arc<ClickerState>,
     ) {
         std::thread::Builder::new()
             .name("ew-hotkeys-thread".into())
             .spawn(move || {
-                run_hotkey_loop(app, filter, config);
+                run_hotkey_loop(app, filter, config, clicker);
             })
             .expect("Failed to spawn hotkey listener thread");
     }
@@ -48,6 +52,7 @@ mod win {
         app: AppHandle,
         filter: WindowFilterState,
         config: Arc<Mutex<AppConfig>>,
+        clicker: Arc<ClickerState>,
     ) {
         const WM_HOTKEY: u32 = 0x0312;
 
@@ -90,8 +95,22 @@ mod win {
                 let _ = reg_hotkey((20 + slot) as i32, vk_num);
             }
 
+            // Register Ctrl + O (ID 100: Start Clicker)
+            if reg_hotkey(100, 0x4F) {
+                registered_count += 1;
+            } else {
+                tracing::warn!("Failed to register hotkey Ctrl+O (Clicker Start)");
+            }
+
+            // Register Ctrl + P (ID 101: Stop Clicker)
+            if reg_hotkey(101, 0x50) {
+                registered_count += 1;
+            } else {
+                tracing::warn!("Failed to register hotkey Ctrl+P (Clicker Stop)");
+            }
+
             tracing::info!(
-                "Global window hotkeys registered ({} main slots active): Ctrl+1..6, Ctrl+0 (and Numpad)",
+                "Global window hotkeys registered ({} main slots active): Ctrl+1..6, Ctrl+0 (and Numpad), Ctrl+O, Ctrl+P",
                 registered_count
             );
 
@@ -108,7 +127,7 @@ mod win {
                     };
 
                     tracing::info!("WM_HOTKEY received: raw_id={}, mapped_id={}", raw_id, hotkey_id);
-                    handle_hotkey(hotkey_id, &app, &filter, &config);
+                    handle_hotkey(hotkey_id, &app, &filter, &config, &clicker);
                 }
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
@@ -121,6 +140,8 @@ mod win {
             }
             let _ = UnregisterHotKey(HWND(0), 10);
             let _ = UnregisterHotKey(HWND(0), 20);
+            let _ = UnregisterHotKey(HWND(0), 100);
+            let _ = UnregisterHotKey(HWND(0), 101);
         }
     }
 
@@ -129,7 +150,22 @@ mod win {
         app: &AppHandle,
         filter: &WindowFilterState,
         config: &Arc<Mutex<AppConfig>>,
+        clicker: &Arc<ClickerState>,
     ) {
+        if hotkey_id == 100 {
+            // Ctrl + O: Start Clicker
+            tracing::info!("Hotkey Ctrl+O triggered: starting clicker");
+            clicker.start(app, config, filter);
+            return;
+        }
+
+        if hotkey_id == 101 {
+            // Ctrl + P: Stop Clicker
+            tracing::info!("Hotkey Ctrl+P triggered: stopping clicker");
+            clicker.stop(app, Some("Остановлен горячей клавишей Ctrl+P".to_string()), config);
+            return;
+        }
+
         if hotkey_id == 10 {
             // Ctrl + 0: Reset to All Windows
             filter.reset_to_all();

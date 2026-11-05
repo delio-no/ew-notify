@@ -4,6 +4,8 @@
   import { api } from './lib/api';
   import {
     defaultConfig,
+    type ClickerConfig,
+    type ClickerStatus,
     type Config,
     type MonitoringStatus,
     type PageId,
@@ -21,6 +23,7 @@
   import NotificationsPage from './components/pages/NotificationsPage.svelte';
   import UsersPage from './components/pages/UsersPage.svelte';
   import ConsolePage from './components/pages/ConsolePage.svelte';
+  import ClickerPage from './components/pages/ClickerPage.svelte';
 
   let currentPage = $state<PageId>('dashboard');
   let config = $state<Config>(defaultConfig());
@@ -83,6 +86,18 @@
   let notifications = $state<StoredNotification[]>([]);
   let windowFilterMode = $state<WindowFilterMode>({ mode: 'All' });
   let targetWindows = $state<TargetWindow[]>([]);
+  let clickerStatus = $state<ClickerStatus>({
+    running: false,
+    count: 0,
+    last_stop_reason: null,
+    config: {
+      key: '1',
+      interval_ms: 1000,
+      stop_on_pattern: true,
+      stop_patterns: [],
+      notify_on_stop: true,
+    },
+  });
 
   function patternNameError(value: string): string | null {
     const name = value.trim();
@@ -417,6 +432,45 @@
     }
   }
 
+  async function refreshClickerStatus() {
+    try {
+      clickerStatus = await api.getClickerStatus();
+    } catch (e) {
+      console.error('Failed to get clicker status:', e);
+    }
+  }
+
+  async function startClicker() {
+    try {
+      await api.startClicker();
+      showStatus('Автокликер запущен');
+      await refreshClickerStatus();
+    } catch (e) {
+      showStatus(`Ошибка запуска кликера: ${e}`);
+    }
+  }
+
+  async function stopClicker() {
+    try {
+      await api.stopClicker();
+      showStatus('Автокликер остановлен');
+      await refreshClickerStatus();
+    } catch (e) {
+      showStatus(`Ошибка остановки кликера: ${e}`);
+    }
+  }
+
+  async function saveClickerConfig(cfg: ClickerConfig) {
+    try {
+      await api.saveClickerConfig(cfg);
+      config.clicker = { ...cfg };
+      clickerStatus.config = { ...cfg };
+      showStatus('Настройки кликера сохранены');
+    } catch (e) {
+      showStatus(`Ошибка сохранения настроек кликера: ${e}`);
+    }
+  }
+
   async function removePattern(name: string) {
     try {
       await api.removePattern(name);
@@ -710,6 +764,7 @@
     if (page === 'users') void refreshUsers();
     if (page === 'dashboard') void refreshMonitorStatus();
     if (page === 'console') void refreshLogs();
+    if (page === 'clicker') void refreshClickerStatus();
   }
 
   onMount(() => {
@@ -801,6 +856,17 @@
             }
           }),
         );
+        unlisteners.push(
+          await listen<ClickerStatus>('clicker-status-changed', (event) => {
+            clickerStatus = event.payload;
+          }),
+        );
+        unlisteners.push(
+          await listen<number>('clicker-tick', (event) => {
+            clickerStatus.count = event.payload;
+          }),
+        );
+        void refreshClickerStatus();
       } catch (e) {
         console.error('listen setup failed', e);
       }
@@ -893,6 +959,15 @@
         onExport={exportPatterns}
         onImport={importPatterns}
         onTestHex={runHexTest}
+      />
+    {:else if currentPage === 'clicker'}
+      <ClickerPage
+        {clickerStatus}
+        patterns={config.target.patterns}
+        onStart={startClicker}
+        onStop={stopClicker}
+        onSave={saveClickerConfig}
+        onTestKey={testSendKey}
       />
     {:else if currentPage === 'notifications'}
       <NotificationsPage {notifications} />

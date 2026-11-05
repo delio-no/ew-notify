@@ -20,6 +20,21 @@ export interface RegisteredUser {
   allow_screenshot?: boolean;
 }
 
+export interface ClickerConfig {
+  key: string;
+  interval_ms: number;
+  stop_on_pattern: boolean;
+  stop_patterns: string[];
+  notify_on_stop: boolean;
+}
+
+export interface ClickerStatus {
+  running: boolean;
+  count: number;
+  last_stop_reason?: string | null;
+  config: ClickerConfig;
+}
+
 export interface Config {
   telegram: {
     bot_token: string;
@@ -50,6 +65,7 @@ export interface Config {
     start_minimized_to_tray: boolean;
     close_to_tray: boolean;
   };
+  clicker?: ClickerConfig;
 }
 
 export interface MonitoringStatus {
@@ -122,7 +138,8 @@ export type PageId =
   | 'patterns'
   | 'notifications'
   | 'users'
-  | 'console';
+  | 'console'
+  | 'clicker';
 
 export const defaultConfig = (): Config => ({
   telegram: {
@@ -169,5 +186,12 @@ export const defaultConfig = (): Config => ({
     auto_start_monitoring: false,
     start_minimized_to_tray: false,
     close_to_tray: true,
+  },
+  clicker: {
+    key: '1',
+    interval_ms: 1000,
+    stop_on_pattern: true,
+    stop_patterns: [],
+    notify_on_stop: true,
   },
 });

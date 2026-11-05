@@ -10,6 +10,8 @@ pub struct AppConfig {
     pub notifications: NotificationsConfig,
     #[serde(default)]
     pub startup: StartupConfig,
+    #[serde(default)]
+    pub clicker: ClickerConfig,
 }
 
 impl Default for AppConfig {
@@ -40,6 +42,7 @@ impl Default for AppConfig {
                 actions_enabled: true,
             },
             startup: StartupConfig::default(),
+            clicker: ClickerConfig::default(),
         }
     }
 }
@@ -84,6 +87,40 @@ fn default_true() -> bool {
 
 fn default_burst_dedup_ms() -> u64 {
     2000
+}
+
+fn default_clicker_key() -> String {
+    "1".to_string()
+}
+
+fn default_clicker_interval_ms() -> u64 {
+    1000
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClickerConfig {
+    #[serde(default = "default_clicker_key")]
+    pub key: String,
+    #[serde(default = "default_clicker_interval_ms")]
+    pub interval_ms: u64,
+    #[serde(default = "default_true")]
+    pub stop_on_pattern: bool,
+    #[serde(default)]
+    pub stop_patterns: Vec<String>,
+    #[serde(default = "default_true")]
+    pub notify_on_stop: bool,
+}
+
+impl Default for ClickerConfig {
+    fn default() -> Self {
+        Self {
+            key: default_clicker_key(),
+            interval_ms: default_clicker_interval_ms(),
+            stop_on_pattern: true,
+            stop_patterns: Vec::new(),
+            notify_on_stop: true,
+        }
+    }
 }
 
 pub fn validate_pattern_name(name: &str) -> Result<()> {

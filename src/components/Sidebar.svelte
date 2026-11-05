@@ -16,6 +16,7 @@
     { id: 'dashboard', label: 'Дашборд' },
     { id: 'settings', label: 'Настройки' },
     { id: 'patterns', label: 'Паттерны' },
+    { id: 'clicker', label: 'Кликер' },
     { id: 'notifications', label: 'Уведомления' },
     { id: 'users', label: 'Пользователи' },
     { id: 'console', label: 'Консоль' },
