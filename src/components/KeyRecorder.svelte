@@ -2,10 +2,12 @@
   let {
     value = $bindable('Z'),
     disabled = false,
+    size = 'normal',
     onChange,
   }: {
     value?: string;
     disabled?: boolean;
+    size?: 'normal' | 'large';
     onChange?: (key: string) => void;
   } = $props();
 
@@ -114,6 +116,7 @@
   bind:this={buttonEl}
   class="key-recorder-btn"
   class:recording={isRecording}
+  class:large={size === 'large'}
   {disabled}
   onclick={isRecording ? stopRecording : startRecording}
   onkeydown={handleKeyDown}
@@ -152,6 +155,36 @@
     transition: all 0.15s ease;
     user-select: none;
     min-height: 34px;
+  }
+
+  .key-recorder-btn.large {
+    min-height: 46px;
+    padding: 6px 16px;
+    gap: 12px;
+    border-radius: 10px;
+  }
+
+  .key-recorder-btn.large .keycap {
+    min-width: 44px;
+    padding: 5px 14px;
+    font-size: 17px;
+    font-weight: 800;
+    border-radius: 7px;
+    border-bottom: 3px solid #111827;
+  }
+
+  .key-recorder-btn.large .recording-label {
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .key-recorder-btn.large .recording-pulse {
+    font-size: 14px;
+  }
+
+  .key-recorder-btn.large .key-edit-hint svg {
+    width: 15px;
+    height: 15px;
   }
 
   .key-recorder-btn:hover:not(:disabled) {

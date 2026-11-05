@@ -100,11 +100,14 @@
           key: '1',
           interval_ms: 1000,
           target: { type: 'Captured' },
-          stop_on_pattern: true,
+          stop_on_pattern: false,
           stop_patterns: [],
+          start_on_pattern: false,
+          start_patterns: [],
         },
       ],
       notify_on_stop: true,
+      notify_on_start: true,
     },
   });
 

@@ -464,8 +464,8 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     continue;
                 };
 
-                // Automatically stop auto-clicker if configured for this pattern
-                clicker.trigger_pattern_stop(&pattern.name, &app_notify, &config, &rt);
+                // Automatically process pattern triggers (start / stop) for auto-clicker
+                clicker.trigger_pattern_event(&pattern.name, &app_notify, &config, &window_filter, &rt);
 
                 let cooldown_key = match &conn {
                     Some(c) => c.cooldown_id(&pattern.name),

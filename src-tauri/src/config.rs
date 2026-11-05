@@ -124,10 +124,14 @@ pub struct ClickerRule {
     pub interval_ms: u64,
     #[serde(default)]
     pub target: ClickerTarget,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub stop_on_pattern: bool,
     #[serde(default)]
     pub stop_patterns: Vec<String>,
+    #[serde(default)]
+    pub start_on_pattern: bool,
+    #[serde(default)]
+    pub start_patterns: Vec<String>,
 }
 
 impl Default for ClickerRule {
@@ -139,8 +143,10 @@ impl Default for ClickerRule {
             key: "1".to_string(),
             interval_ms: 1000,
             target: ClickerTarget::Captured,
-            stop_on_pattern: true,
+            stop_on_pattern: false,
             stop_patterns: Vec::new(),
+            start_on_pattern: false,
+            start_patterns: Vec::new(),
         }
     }
 }
@@ -155,6 +161,8 @@ pub struct ClickerConfig {
     pub rules: Vec<ClickerRule>,
     #[serde(default = "default_true")]
     pub notify_on_stop: bool,
+    #[serde(default = "default_true")]
+    pub notify_on_start: bool,
     // Legacy fields for backward compatibility
     #[serde(default, skip_serializing)]
     pub keys: Vec<String>,
@@ -199,6 +207,8 @@ impl ClickerConfig {
                 target: target.clone(),
                 stop_on_pattern: self.stop_on_pattern,
                 stop_patterns: self.stop_patterns.clone(),
+                start_on_pattern: false,
+                start_patterns: Vec::new(),
             })
             .collect()
     }
@@ -209,11 +219,12 @@ impl Default for ClickerConfig {
         Self {
             rules: default_clicker_rules(),
             notify_on_stop: true,
+            notify_on_start: true,
             keys: Vec::new(),
             key: "1".to_string(),
             interval_ms: 1000,
             send_to_all_windows: false,
-            stop_on_pattern: true,
+            stop_on_pattern: false,
             stop_patterns: Vec::new(),
         }
     }

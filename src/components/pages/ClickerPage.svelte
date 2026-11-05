@@ -39,8 +39,10 @@
         key: r.key || '1',
         interval_ms: Number(r.interval_ms) || 1000,
         target: r.target || { type: 'Captured' },
-        stop_on_pattern: r.stop_on_pattern !== false,
+        stop_on_pattern: r.stop_on_pattern ?? false,
         stop_patterns: [...(r.stop_patterns || [])],
+        start_on_pattern: r.start_on_pattern ?? false,
+        start_patterns: [...(r.start_patterns || [])],
       }));
     }
     return [
@@ -51,26 +53,135 @@
         key: '1',
         interval_ms: 1000,
         target: { type: 'Captured' },
-        stop_on_pattern: true,
+        stop_on_pattern: false,
         stop_patterns: [],
+        start_on_pattern: false,
+        start_patterns: [],
       },
     ];
   }
 
   let rules = $state<ClickerRule[]>([]);
   let notifyOnStop = $state(true);
+  let notifyOnStart = $state(true);
 
   // Sync safely when clickerStatus config changes externally without reactive feedback loops
   $effect(() => {
     const externalRules = clickerStatus?.config?.rules;
-    const externalNotify = clickerStatus?.config?.notify_on_stop;
+    const externalNotifyStop = clickerStatus?.config?.notify_on_stop;
+    const externalNotifyStart = clickerStatus?.config?.notify_on_start;
     untrack(() => {
       rules = parseInitialRules(externalRules);
-      if (externalNotify !== undefined) {
-        notifyOnStop = externalNotify;
+      if (externalNotifyStop !== undefined) {
+        notifyOnStop = externalNotifyStop;
+      }
+      if (externalNotifyStart !== undefined) {
+        notifyOnStart = externalNotifyStart;
       }
     });
   });
+
+  type WindowTabId = 'all' | 'captured' | 'slot-1' | 'slot-2' | 'slot-3' | 'slot-4' | 'slot-5' | 'slot-6' | 'all-windows';
+  let activeWindowTab = $state<WindowTabId>('captured');
+
+  interface WindowTabOption {
+    id: WindowTabId;
+    label: string;
+    icon: string;
+    targetMatch: (t: ClickerTarget) => boolean;
+    defaultTarget: ClickerTarget;
+    description: string;
+  }
+
+  const windowTabs: WindowTabOption[] = [
+    {
+      id: 'captured',
+      label: 'Захваченное',
+      icon: '🎯',
+      targetMatch: (t) => !t || t.type === 'Captured',
+      defaultTarget: { type: 'Captured' },
+      description: 'Отправка в окно, выбранное комбинацией Ctrl+1..6 (или единичный захват)',
+    },
+    {
+      id: 'slot-1',
+      label: 'Слот #1',
+      icon: '🟢',
+      targetMatch: (t) => t?.type === 'Slot' && t.data === 1,
+      defaultTarget: { type: 'Slot', data: 1 },
+      description: 'Привязано строго к окну Слот #1',
+    },
+    {
+      id: 'slot-2',
+      label: 'Слот #2',
+      icon: '🟢',
+      targetMatch: (t) => t?.type === 'Slot' && t.data === 2,
+      defaultTarget: { type: 'Slot', data: 2 },
+      description: 'Привязано строго к окну Слот #2',
+    },
+    {
+      id: 'slot-3',
+      label: 'Слот #3',
+      icon: '🟢',
+      targetMatch: (t) => t?.type === 'Slot' && t.data === 3,
+      defaultTarget: { type: 'Slot', data: 3 },
+      description: 'Привязано строго к окну Слот #3',
+    },
+    {
+      id: 'slot-4',
+      label: 'Слот #4',
+      icon: '🟢',
+      targetMatch: (t) => t?.type === 'Slot' && t.data === 4,
+      defaultTarget: { type: 'Slot', data: 4 },
+      description: 'Привязано строго к окну Слот #4',
+    },
+    {
+      id: 'slot-5',
+      label: 'Слот #5',
+      icon: '🟢',
+      targetMatch: (t) => t?.type === 'Slot' && t.data === 5,
+      defaultTarget: { type: 'Slot', data: 5 },
+      description: 'Привязано строго к окну Слот #5',
+    },
+    {
+      id: 'slot-6',
+      label: 'Слот #6',
+      icon: '🟢',
+      targetMatch: (t) => t?.type === 'Slot' && t.data === 6,
+      defaultTarget: { type: 'Slot', data: 6 },
+      description: 'Привязано строго к окну Слот #6',
+    },
+    {
+      id: 'all-windows',
+      label: 'Все окна',
+      icon: '🌐',
+      targetMatch: (t) => t?.type === 'All',
+      defaultTarget: { type: 'All' },
+      description: 'Рассылка во все запущенные окна игры EndlessWar.exe',
+    },
+    {
+      id: 'all',
+      label: 'Все правила',
+      icon: '📑',
+      targetMatch: () => true,
+      defaultTarget: { type: 'Captured' },
+      description: 'Список правил для всех окон сразу',
+    },
+  ];
+
+  function getTabRuleCount(tab: WindowTabOption): number {
+    return (rules || []).filter((r) => tab.targetMatch(r.target)).length;
+  }
+
+  let activeTabOption = $derived(
+    windowTabs.find((t) => t.id === activeWindowTab) || windowTabs[0]
+  );
+
+  let visibleRules = $derived(
+    (rules || []).filter((r) => {
+      const tab = windowTabs.find((t) => t.id === activeWindowTab);
+      return tab ? tab.targetMatch(r.target) : true;
+    })
+  );
 
   const quickKeys = ['1', '2', '3', '4', 'F1', 'F2', 'F3', 'F4', 'Z', 'Space'];
   const quickIntervals = [200, 500, 1000, 2000, 3000, 5000];
@@ -96,15 +207,19 @@
 
   function addRule() {
     const nextNum = rules.length + 1;
+    const currentTab = windowTabs.find((t) => t.id === activeWindowTab);
+    const target = currentTab ? { ...currentTab.defaultTarget } : { type: 'Captured' as const };
     const newRule: ClickerRule = {
       id: `rule-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       name: `Клавиша ${nextNum}`,
       enabled: true,
       key: nextNum <= 9 ? `${nextNum}` : '1',
       interval_ms: 1000,
-      target: { type: 'Captured' },
-      stop_on_pattern: true,
+      target,
+      stop_on_pattern: false,
       stop_patterns: [],
+      start_on_pattern: false,
+      start_patterns: [],
     };
     rules = [...rules, newRule];
   }
@@ -119,8 +234,10 @@
           key: '1',
           interval_ms: 1000,
           target: { type: 'Captured' },
-          stop_on_pattern: true,
+          stop_on_pattern: false,
           stop_patterns: [],
+          start_on_pattern: false,
+          start_patterns: [],
         },
       ];
       return;
@@ -128,7 +245,7 @@
     rules = rules.filter((r) => r.id !== id);
   }
 
-  function toggleRulePattern(rule: ClickerRule, patName: string) {
+  function toggleRuleStopPattern(rule: ClickerRule, patName: string) {
     if (!rule.stop_patterns) rule.stop_patterns = [];
     if (rule.stop_patterns.includes(patName)) {
       rule.stop_patterns = rule.stop_patterns.filter((p) => p !== patName);
@@ -137,17 +254,28 @@
     }
   }
 
+  function toggleRuleStartPattern(rule: ClickerRule, patName: string) {
+    if (!rule.start_patterns) rule.start_patterns = [];
+    if (rule.start_patterns.includes(patName)) {
+      rule.start_patterns = rule.start_patterns.filter((p) => p !== patName);
+    } else {
+      rule.start_patterns = [...rule.start_patterns, patName];
+    }
+  }
+
   function handleSave() {
     const cleanedRules = rules.map((r) => ({
       ...r,
       key: r.key.trim().toUpperCase() || '1',
       interval_ms: Math.max(50, Number(r.interval_ms) || 1000),
-      stop_patterns: [...r.stop_patterns],
+      stop_patterns: [...(r.stop_patterns || [])],
+      start_patterns: [...(r.start_patterns || [])],
     }));
 
     onSave({
       rules: cleanedRules,
       notify_on_stop: notifyOnStop,
+      notify_on_start: notifyOnStart,
     });
   }
 </script>
@@ -233,11 +361,44 @@
     </div>
   </div>
 
+  <!-- Window Navigation Tabs -->
+  <div class="window-tabs-container">
+    <div class="window-tabs-scroll">
+      {#each windowTabs as tab (tab.id)}
+        {@const count = getTabRuleCount(tab)}
+        <button
+          type="button"
+          class="window-tab-btn"
+          class:active={activeWindowTab === tab.id}
+          onclick={() => (activeWindowTab = tab.id)}
+        >
+          <span class="tab-icon">{tab.icon}</span>
+          <span class="tab-label">{tab.label}</span>
+          {#if count > 0}
+            <span class="tab-badge">{count}</span>
+          {/if}
+        </button>
+      {/each}
+    </div>
+
+    <div class="tab-context-banner">
+      <div class="tab-context-left">
+        <span class="tab-info-icon">{activeTabOption.icon}</span>
+        <span class="tab-info-desc">{activeTabOption.description}</span>
+      </div>
+      <span class="tab-rule-stat">
+        {visibleRules.length === rules.length
+          ? `Всего правил: ${rules.length}`
+          : `Показано ${visibleRules.length} из ${rules.length} правил`}
+      </span>
+    </div>
+  </div>
+
   <!-- Rules List Header -->
   <div class="rules-section-header">
     <div class="rules-header-title">
-      <h2>Настроенные клавиши ({rules.length})</h2>
-      <p class="section-desc">У каждой клавиши свой независимый интервал, целевое окно и автоостановка по паттернам</p>
+      <h2>Клавиши: «{activeTabOption.label}» ({visibleRules.length})</h2>
+      <p class="section-desc">Независимый интервал, привязка к окну и триггеры запуска/остановки по паттернам</p>
     </div>
     <div class="rules-header-actions">
       <button type="button" class="btn btn-secondary" onclick={addRule}>
@@ -249,180 +410,254 @@
     </div>
   </div>
 
-  <!-- Rules Cards List -->
-  <div class="rules-list">
-    {#each rules as rule, idx (rule.id)}
-      <div class="card rule-card" class:disabled={!rule.enabled}>
-        <div class="rule-card-header">
-          <div class="rule-header-left">
-            <label class="switch-container" title="Включить / выключить эту клавишу">
-              <input type="checkbox" bind:checked={rule.enabled} />
-              <span class="switch-slider"></span>
-            </label>
-
-            <span class="rule-index">#{idx + 1}</span>
-
-            <input
-              type="text"
-              class="rule-name-input"
-              bind:value={rule.name}
-              placeholder="Название действия (например: Скилл 1)"
-            />
-          </div>
-
-          <div class="rule-header-right">
-            <span class="rule-key-preview">{rule.key || '?'}</span>
-            <span class="rule-interval-preview">{rule.interval_ms} мс</span>
-
-            {#if onTestKey}
-              <button
-                type="button"
-                class="btn btn-secondary btn-sm"
-                onclick={() => onTestKey(rule.key, rule.target)}
-                title="Отправить эту клавишу прямо сейчас в её целевое окно"
-              >
-                Тест
-              </button>
-            {/if}
-
-            <button
-              type="button"
-              class="btn-delete-rule"
-              onclick={() => removeRule(rule.id)}
-              title="Удалить это правило"
-            >
-              🗑
-            </button>
-          </div>
-        </div>
-
-        <div class="rule-card-body">
-          <div class="rule-fields-grid">
-            <!-- Key Field -->
-            <div class="form-group">
-              <span class="field-title">
-                Клавиша
-                <span class="hint-text">(нажмите кнопку и клавишу F1-F12, 1-9...)</span>
-              </span>
-              <div class="key-recorder-box">
-                <KeyRecorder bind:value={rule.key} />
-              </div>
-              <div class="quick-chips">
-                {#each quickKeys as qk}
-                  <button
-                    type="button"
-                    class="chip-btn"
-                    class:active={rule.key.toUpperCase() === qk.toUpperCase()}
-                    onclick={() => (rule.key = qk)}
-                  >
-                    {qk}
-                  </button>
-                {/each}
-              </div>
-            </div>
-
-            <!-- Interval Field -->
-            <div class="form-group">
-              <label for="rule-interval-{rule.id}">
-                Интервал (мс)
-                <span class="hint-text">({rule.interval_ms} мс = {(rule.interval_ms / 1000).toFixed(1)} с)</span>
+  <!-- Rules Cards List / Empty State -->
+  {#if visibleRules.length === 0}
+    <div class="empty-rules-card card">
+      <div class="empty-icon">{activeTabOption.icon}</div>
+      <div class="empty-title">Нет клавиш для вкладки «{activeTabOption.label}»</div>
+      <p class="empty-desc">
+        Нажмите кнопку ниже, чтобы создать новое действие. Оно сразу получит привязку <strong>{activeTabOption.label}</strong>.
+      </p>
+      <button type="button" class="btn btn-primary" onclick={addRule}>
+        + Добавить клавишу для «{activeTabOption.label}»
+      </button>
+    </div>
+  {:else}
+    <div class="rules-list">
+      {#each visibleRules as rule (rule.id)}
+        {@const globalIdx = rules.findIndex((r) => r.id === rule.id) + 1}
+        <div class="card rule-card" class:disabled={!rule.enabled}>
+          <div class="rule-card-header">
+            <div class="rule-header-left">
+              <label class="switch-container" title="Включить / выключить эту клавишу">
+                <input type="checkbox" bind:checked={rule.enabled} />
+                <span class="switch-slider"></span>
               </label>
+
+              <span class="rule-index">#{globalIdx > 0 ? globalIdx : 1}</span>
+
               <input
-                id="rule-interval-{rule.id}"
-                type="number"
-                min="50"
-                max="600000"
-                step="50"
-                bind:value={rule.interval_ms}
+                type="text"
+                class="rule-name-input"
+                bind:value={rule.name}
+                placeholder="Название действия (например: Скилл 1)"
               />
-              <div class="quick-chips">
-                {#each quickIntervals as qi}
-                  <button
-                    type="button"
-                    class="chip-btn"
-                    class:active={Number(rule.interval_ms) === qi}
-                    onclick={() => (rule.interval_ms = qi)}
-                  >
-                    {qi} мс
-                  </button>
-                {/each}
-              </div>
             </div>
 
-            <!-- Target Window Field -->
-            <div class="form-group">
-              <label for="rule-target-{rule.id}">Целевое окно игры</label>
-              <select
-                id="rule-target-{rule.id}"
-                class="rule-target-select"
-                value={getTargetValue(rule.target)}
-                onchange={(e) => setTargetValue(rule, e.currentTarget.value)}
-              >
-                <option value="Captured">🎯 Захваченное окно (Ctrl+1..6)</option>
-                <option value="Slot-1">🟢 Окно Слот #1</option>
-                <option value="Slot-2">🟢 Окно Слот #2</option>
-                <option value="Slot-3">🟢 Окно Слот #3</option>
-                <option value="Slot-4">🟢 Окно Слот #4</option>
-                <option value="Slot-5">🟢 Окно Слот #5</option>
-                <option value="Slot-6">🟢 Окно Слот #6</option>
-                <option value="All">🌐 Все окна игры</option>
-              </select>
-              <p class="field-hint">
-                {#if rule.target.type === 'Captured'}
-                  Отправляет только в окно, захваченное через Ctrl+1..6.
-                {:else if rule.target.type === 'Slot'}
-                  Привязано строго к окну слота #{rule.target.data}.
-                {:else}
-                  Рассылает клавишу во все запущенные окна игры.
-                {/if}
-              </p>
-            </div>
-          </div>
+            <div class="rule-header-right">
+              <span class="rule-key-preview">{rule.key || '?'}</span>
+              <span class="rule-interval-preview">{rule.interval_ms} мс</span>
 
-          <!-- Pattern Stop Configuration for this Rule -->
-          <div class="rule-pattern-section">
-            <label class="checkbox-label">
-              <input type="checkbox" bind:checked={rule.stop_on_pattern} />
-              <span>Останавливать эту клавишу при обнаружении сетевого паттерна</span>
-            </label>
-
-            {#if rule.stop_on_pattern}
-              <div class="rule-pattern-chips">
-                <span class="chips-label">Паттерны:</span>
+              {#if onTestKey}
                 <button
                   type="button"
-                  class="pattern-chip"
-                  class:active={!rule.stop_patterns || rule.stop_patterns.length === 0}
-                  onclick={() => (rule.stop_patterns = [])}
+                  class="btn btn-secondary btn-sm"
+                  onclick={() => onTestKey(rule.key, rule.target)}
+                  title="Отправить эту клавишу прямо сейчас в её целевое окно"
                 >
-                  ⚡ Любой паттерн
+                  Тест
                 </button>
-                {#each patterns as pat}
+              {/if}
+
+              <button
+                type="button"
+                class="btn-delete-rule"
+                onclick={() => removeRule(rule.id)}
+                title="Удалить это правило"
+              >
+                🗑
+              </button>
+            </div>
+          </div>
+
+          <div class="rule-card-body">
+            <div class="rule-fields-grid">
+              <!-- Key Field (Large prominent input) -->
+              <div class="form-group key-form-group">
+                <span class="field-title">
+                  Клавиша
+                  <span class="hint-text">(нажмите и задайте любую клавишу F1-F12, 1-9...)</span>
+                </span>
+                <div class="key-recorder-box">
+                  <KeyRecorder bind:value={rule.key} size="large" />
+                </div>
+                <div class="quick-chips">
+                  {#each quickKeys as qk}
+                    <button
+                      type="button"
+                      class="chip-btn"
+                      class:active={rule.key.toUpperCase() === qk.toUpperCase()}
+                      onclick={() => (rule.key = qk)}
+                    >
+                      {qk}
+                    </button>
+                  {/each}
+                </div>
+              </div>
+
+              <!-- Interval Field -->
+              <div class="form-group">
+                <label for="rule-interval-{rule.id}">
+                  Интервал (мс)
+                  <span class="hint-text">({rule.interval_ms} мс = {(rule.interval_ms / 1000).toFixed(1)} с)</span>
+                </label>
+                <input
+                  id="rule-interval-{rule.id}"
+                  type="number"
+                  min="50"
+                  max="600000"
+                  step="50"
+                  bind:value={rule.interval_ms}
+                />
+                <div class="quick-chips">
+                  {#each quickIntervals as qi}
+                    <button
+                      type="button"
+                      class="chip-btn"
+                      class:active={Number(rule.interval_ms) === qi}
+                      onclick={() => (rule.interval_ms = qi)}
+                    >
+                      {qi} мс
+                    </button>
+                  {/each}
+                </div>
+              </div>
+
+              <!-- Target Window Field -->
+              <div class="form-group">
+                <label for="rule-target-{rule.id}">Целевое окно игры</label>
+                <select
+                  id="rule-target-{rule.id}"
+                  class="rule-target-select"
+                  value={getTargetValue(rule.target)}
+                  onchange={(e) => setTargetValue(rule, e.currentTarget.value)}
+                >
+                  <option value="Captured">🎯 Захваченное окно (Ctrl+1..6)</option>
+                  <option value="Slot-1">🟢 Окно Слот #1</option>
+                  <option value="Slot-2">🟢 Окно Слот #2</option>
+                  <option value="Slot-3">🟢 Окно Слот #3</option>
+                  <option value="Slot-4">🟢 Окно Слот #4</option>
+                  <option value="Slot-5">🟢 Окно Слот #5</option>
+                  <option value="Slot-6">🟢 Окно Слот #6</option>
+                  <option value="All">🌐 Все окна игры</option>
+                </select>
+                <p class="field-hint">
+                  {#if rule.target.type === 'Captured'}
+                    Отправляет в окно, активное по Ctrl+1..6.
+                  {:else if rule.target.type === 'Slot'}
+                    Привязано строго к окну слота #{rule.target.data}.
+                  {:else}
+                    Рассылает клавишу во все запущенные окна игры.
+                  {/if}
+                </p>
+              </div>
+            </div>
+
+            <!-- Start on Pattern Trigger -->
+            <div class="rule-pattern-section start-section">
+              <label class="checkbox-label">
+                <input type="checkbox" bind:checked={rule.start_on_pattern} />
+                <span class="pattern-checkbox-text">
+                  <span class="pattern-action-icon">▶</span>
+                  <strong>Включать</strong> эту клавишу при обнаружении сетевого паттерна
+                </span>
+              </label>
+
+              {#if rule.start_on_pattern}
+                <div class="rule-pattern-chips">
+                  <span class="chips-label">Запускать при:</span>
                   <button
                     type="button"
                     class="pattern-chip"
-                    class:active={(rule.stop_patterns || []).includes(pat.name)}
-                    onclick={() => toggleRulePattern(rule, pat.name)}
+                    class:active-start={!rule.start_patterns || rule.start_patterns.length === 0}
+                    onclick={() => (rule.start_patterns = [])}
                   >
-                    {pat.name}
+                    ⚡ Любой паттерн
                   </button>
-                {/each}
-              </div>
-            {/if}
+                  {#each patterns as pat}
+                    <button
+                      type="button"
+                      class="pattern-chip"
+                      class:active-start={(rule.start_patterns || []).includes(pat.name)}
+                      onclick={() => toggleRuleStartPattern(rule, pat.name)}
+                    >
+                      {pat.name}
+                    </button>
+                  {/each}
+                </div>
+                <p class="pattern-hint">
+                  {#if !rule.start_patterns || rule.start_patterns.length === 0}
+                    Клавиша автоматически начнет нажиматься при срабатывании <em>любого</em> сетевого паттерна.
+                  {:else}
+                    Клавиша запустится только при срабатывании: <strong>{rule.start_patterns.join(', ')}</strong>.
+                  {/if}
+                </p>
+              {/if}
+            </div>
+
+            <!-- Stop on Pattern Trigger -->
+            <div class="rule-pattern-section stop-section">
+              <label class="checkbox-label">
+                <input type="checkbox" bind:checked={rule.stop_on_pattern} />
+                <span class="pattern-checkbox-text">
+                  <span class="pattern-action-icon">⏹</span>
+                  <strong>Останавливать</strong> эту клавишу при обнаружении сетевого паттерна
+                </span>
+              </label>
+
+              {#if rule.stop_on_pattern}
+                <div class="rule-pattern-chips">
+                  <span class="chips-label">Останавливать при:</span>
+                  <button
+                    type="button"
+                    class="pattern-chip"
+                    class:active-stop={!rule.stop_patterns || rule.stop_patterns.length === 0}
+                    onclick={() => (rule.stop_patterns = [])}
+                  >
+                    ⚡ Любой паттерн
+                  </button>
+                  {#each patterns as pat}
+                    <button
+                      type="button"
+                      class="pattern-chip"
+                      class:active-stop={(rule.stop_patterns || []).includes(pat.name)}
+                      onclick={() => toggleRuleStopPattern(rule, pat.name)}
+                    >
+                      {pat.name}
+                    </button>
+                  {/each}
+                </div>
+                <p class="pattern-hint">
+                  {#if !rule.stop_patterns || rule.stop_patterns.length === 0}
+                    Клавиша автоматически остановится при срабатывании <em>любого</em> сетевого паттерна.
+                  {:else}
+                    Клавиша остановится только при срабатывании: <strong>{rule.stop_patterns.join(', ')}</strong>.
+                  {/if}
+                </p>
+              {/if}
+            </div>
           </div>
         </div>
-      </div>
-    {/each}
-  </div>
+      {/each}
+    </div>
+  {/if}
 
   <!-- General Settings / Notification Card -->
   <div class="card footer-settings-card">
-    <div class="footer-settings-row">
+    <div class="footer-settings-title">Общие настройки автокликера</div>
+    <div class="footer-settings-grid">
+      <label class="checkbox-label">
+        <input type="checkbox" bind:checked={notifyOnStart} />
+        <span>Показывать системное уведомление при автозапуске клавиш по паттерну</span>
+      </label>
+
       <label class="checkbox-label">
         <input type="checkbox" bind:checked={notifyOnStop} />
         <span>Показывать системное уведомление при автоостановке клавиш по паттерну</span>
       </label>
+    </div>
 
+    <div class="footer-save-row">
       <button type="button" class="btn btn-primary" onclick={handleSave}>
         Сохранить настройки
       </button>
@@ -761,14 +996,196 @@
     font-size: 0.88rem;
   }
 
-  .rule-pattern-section {
-    background: rgba(0, 0, 0, 0.15);
+  .window-tabs-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--color-surface, #1e1e2e);
     border: 1px solid var(--color-border, #313244);
+    border-radius: 12px;
+    padding: 10px 12px;
+  }
+
+  .window-tabs-scroll {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+  }
+
+  .window-tab-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 14px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--color-border, #313244);
+    border-radius: 8px;
+    color: #a6adc8;
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+  }
+
+  .window-tab-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #cdd6f4;
+    border-color: rgba(137, 180, 250, 0.4);
+  }
+
+  .window-tab-btn.active {
+    background: rgba(137, 180, 250, 0.18);
+    border-color: #89b4fa;
+    color: #89b4fa;
+    box-shadow: 0 0 12px rgba(137, 180, 250, 0.2);
+  }
+
+  .tab-icon {
+    font-size: 1rem;
+  }
+
+  .tab-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.12);
+    color: #cdd6f4;
+    font-size: 0.72rem;
+    font-weight: 700;
+  }
+
+  .window-tab-btn.active .tab-badge {
+    background: #89b4fa;
+    color: #11111b;
+  }
+
+  .tab-context-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 6px;
+    font-size: 0.83rem;
+  }
+
+  .tab-context-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 200px;
+  }
+
+  .tab-info-icon {
+    font-size: 1rem;
+  }
+
+  .tab-info-desc {
+    color: #bac2de;
+  }
+
+  .tab-rule-stat {
+    color: #a6adc8;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+
+  .empty-rules-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem 1.5rem;
+    text-align: center;
+    gap: 12px;
+    background: var(--color-surface, #1e1e2e);
+    border: 1px dashed var(--color-border, #313244);
+    border-radius: 12px;
+  }
+
+  .empty-icon {
+    font-size: 2.5rem;
+    opacity: 0.7;
+  }
+
+  .empty-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #cdd6f4;
+  }
+
+  .empty-desc {
+    font-size: 0.88rem;
+    color: #a6adc8;
+    max-width: 480px;
+    margin: 0;
+  }
+
+  .rule-pattern-section {
     border-radius: 8px;
     padding: 10px 14px;
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+
+  .rule-pattern-section.start-section {
+    background: rgba(166, 227, 161, 0.05);
+    border: 1px solid rgba(166, 227, 161, 0.2);
+  }
+
+  .rule-pattern-section.stop-section {
+    background: rgba(243, 139, 168, 0.05);
+    border: 1px solid rgba(243, 139, 168, 0.2);
+  }
+
+  .pattern-checkbox-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #cdd6f4;
+  }
+
+  .pattern-action-icon {
+    font-size: 0.85rem;
+  }
+
+  .start-section .pattern-action-icon {
+    color: #a6e3a1;
+  }
+
+  .stop-section .pattern-action-icon {
+    color: #f38ba8;
+  }
+
+  .pattern-chip.active-start {
+    background: rgba(166, 227, 161, 0.2);
+    border-color: #a6e3a1;
+    color: #a6e3a1;
+    font-weight: 700;
+  }
+
+  .pattern-chip.active-stop {
+    background: rgba(243, 139, 168, 0.2);
+    border-color: #f38ba8;
+    color: #f38ba8;
+    font-weight: 700;
+  }
+
+  .pattern-hint {
+    font-size: 0.8rem;
+    color: #a6adc8;
+    margin: 2px 0 0 0;
   }
 
   .rule-pattern-chips {
@@ -793,13 +1210,6 @@
   .pattern-chip:hover {
     background: rgba(255, 255, 255, 0.1);
     color: #cdd6f4;
-  }
-
-  .pattern-chip.active {
-    background: rgba(249, 226, 175, 0.18);
-    border-color: #f9e2af;
-    color: #f9e2af;
-    font-weight: 700;
   }
 
   .quick-chips {
@@ -902,14 +1312,28 @@
     background: var(--color-surface, #1e1e2e);
     border: 1px solid var(--color-border, #313244);
     border-radius: 10px;
-    padding: 14px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
   }
 
-  .footer-settings-row {
+  .footer-settings-title {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: #cdd6f4;
+  }
+
+  .footer-settings-grid {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 12px;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .footer-save-row {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
   }
 </style>

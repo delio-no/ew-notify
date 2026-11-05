@@ -34,11 +34,14 @@ export interface ClickerRule {
   target: ClickerTarget;
   stop_on_pattern: boolean;
   stop_patterns: string[];
+  start_on_pattern: boolean;
+  start_patterns: string[];
 }
 
 export interface ClickerConfig {
   rules: ClickerRule[];
   notify_on_stop: boolean;
+  notify_on_start?: boolean;
 }
 
 export interface ClickerStatus {
@@ -209,10 +212,13 @@ export const defaultConfig = (): Config => ({
         key: '1',
         interval_ms: 1000,
         target: { type: 'Captured' },
-        stop_on_pattern: true,
+        stop_on_pattern: false,
         stop_patterns: [],
+        start_on_pattern: false,
+        start_patterns: [],
       },
     ],
     notify_on_stop: true,
+    notify_on_start: true,
   },
 });
