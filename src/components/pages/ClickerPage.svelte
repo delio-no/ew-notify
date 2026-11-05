@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import PageHeader from '../PageHeader.svelte';
+  import KeyRecorder from '../KeyRecorder.svelte';
   import type {
     ClickerConfig,
     ClickerRule,
@@ -133,6 +134,90 @@
       rule.stop_patterns = rule.stop_patterns.filter((p) => p !== patName);
     } else {
       rule.stop_patterns = [...rule.stop_patterns, patName];
+    }
+  }
+
+  function handleKeyInput(e: KeyboardEvent, rule: ClickerRule) {
+    // Ignore standalone modifier presses
+    if (
+      ['Shift', 'Control', 'Alt', 'Meta'].includes(e.key) ||
+      ['ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight'].includes(e.code)
+    ) {
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const code = e.code;
+    let keyName: string | null = null;
+
+    if (/^F([1-9]|1[0-9]|2[0-4])$/i.test(code)) {
+      keyName = code.toUpperCase();
+    } else if (code.startsWith('Key')) {
+      keyName = code.slice(3).toUpperCase();
+    } else if (code.startsWith('Digit')) {
+      keyName = code.slice(5);
+    } else if (code.startsWith('Numpad') && code.length === 7 && !isNaN(Number(code[6]))) {
+      keyName = `Numpad${code[6]}`;
+    } else {
+      switch (code) {
+        case 'Space':
+          keyName = 'Space';
+          break;
+        case 'Enter':
+        case 'NumpadEnter':
+          keyName = 'Enter';
+          break;
+        case 'Escape':
+          keyName = 'Escape';
+          break;
+        case 'Tab':
+          keyName = 'Tab';
+          break;
+        case 'Backspace':
+          keyName = 'Backspace';
+          break;
+        case 'Delete':
+          keyName = 'Delete';
+          break;
+        case 'Insert':
+          keyName = 'Insert';
+          break;
+        case 'Home':
+          keyName = 'Home';
+          break;
+        case 'End':
+          keyName = 'End';
+          break;
+        case 'PageUp':
+          keyName = 'PageUp';
+          break;
+        case 'PageDown':
+          keyName = 'PageDown';
+          break;
+        case 'ArrowUp':
+          keyName = 'Up';
+          break;
+        case 'ArrowDown':
+          keyName = 'Down';
+          break;
+        case 'ArrowLeft':
+          keyName = 'Left';
+          break;
+        case 'ArrowRight':
+          keyName = 'Right';
+          break;
+        default:
+          if (e.key && e.key.length === 1 && e.key.trim()) {
+            keyName = e.key.toUpperCase();
+          }
+          break;
+      }
+    }
+
+    if (keyName) {
+      rule.key = keyName;
     }
   }
 
@@ -299,15 +384,23 @@
           <div class="rule-fields-grid">
             <!-- Key Field -->
             <div class="form-group">
-              <label for="rule-key-{rule.id}">Клавиша</label>
-              <input
-                id="rule-key-{rule.id}"
-                type="text"
-                class="rule-key-input"
-                bind:value={rule.key}
-                placeholder="1, F1, Z, Space"
-                maxlength="10"
-              />
+              <label for="rule-key-{rule.id}">
+                Клавиша
+                <span class="hint-text">(нажмите кнопку или поле и клавишу F1-F12, 1-9...)</span>
+              </label>
+              <div class="key-input-row">
+                <KeyRecorder bind:value={rule.key} />
+                <input
+                  id="rule-key-{rule.id}"
+                  type="text"
+                  class="rule-key-input"
+                  bind:value={rule.key}
+                  placeholder="F1..."
+                  maxlength="10"
+                  onkeydown={(e) => handleKeyInput(e, rule)}
+                  title="Кликните сюда и нажмите любую клавишу на клавиатуре (F1-F12, Space, буквы, цифры)"
+                />
+              </div>
               <div class="quick-chips">
                 {#each quickKeys as qk}
                   <button
@@ -737,8 +830,15 @@
     gap: 14px;
   }
 
+  .key-input-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
   .rule-key-input {
-    width: 120px;
+    width: 80px;
     font-weight: 700;
     font-family: monospace;
     font-size: 1rem;
