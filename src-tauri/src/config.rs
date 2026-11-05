@@ -107,7 +107,7 @@ pub enum ClickerTarget {
 
 impl Default for ClickerTarget {
     fn default() -> Self {
-        Self::Captured
+        Self::Slot(1)
     }
 }
 
@@ -142,7 +142,7 @@ impl Default for ClickerRule {
             enabled: true,
             key: "1".to_string(),
             interval_ms: 1000,
-            target: ClickerTarget::Captured,
+            target: ClickerTarget::Slot(1),
             stop_on_pattern: false,
             stop_patterns: Vec::new(),
             start_on_pattern: false,
@@ -194,7 +194,7 @@ impl ClickerConfig {
         let target = if self.send_to_all_windows {
             ClickerTarget::All
         } else {
-            ClickerTarget::Captured
+            ClickerTarget::Slot(1)
         };
         keys.into_iter()
             .enumerate()

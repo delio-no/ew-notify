@@ -81,8 +81,26 @@
     });
   });
 
-  type WindowTabId = 'all' | 'captured' | 'slot-1' | 'slot-2' | 'slot-3' | 'slot-4' | 'slot-5' | 'slot-6' | 'all-windows';
-  let activeWindowTab = $state<WindowTabId>('captured');
+  type WindowTabId = 'slot-1' | 'slot-2' | 'slot-3' | 'slot-4' | 'slot-5' | 'slot-6' | 'all-windows' | 'all';
+  let activeWindowTab = $state<WindowTabId>('slot-1');
+
+  function isSlotCaptured(slot: number): boolean {
+    if (!windowFilterMode) return false;
+    if (windowFilterMode.mode === 'Single') return windowFilterMode.data.slot === slot;
+    if (windowFilterMode.mode === 'Multi') return windowFilterMode.data.some((d) => d.slot === slot);
+    return false;
+  }
+
+  function getSlotWindowInfo(slot: number) {
+    if (!windowFilterMode) return null;
+    if (windowFilterMode.mode === 'Single') {
+      return windowFilterMode.data.slot === slot ? windowFilterMode.data : null;
+    }
+    if (windowFilterMode.mode === 'Multi') {
+      return windowFilterMode.data.find((d) => d.slot === slot) || null;
+    }
+    return null;
+  }
 
   interface WindowTabOption {
     id: WindowTabId;
@@ -95,70 +113,64 @@
 
   let windowTabs = $derived<WindowTabOption[]>([
     {
-      id: 'captured',
-      label:
-        windowFilterMode?.mode === 'Single'
-          ? `Захваченное (Слот #${windowFilterMode.data.slot})`
-          : windowFilterMode?.mode === 'Multi'
-            ? `Захваченные (${windowFilterMode.data.map((d) => `#${d.slot}`).join(', ')})`
-            : 'Захваченное (Ctrl+1..6)',
-      icon: '🎯',
-      targetMatch: (t) => !t || t.type === 'Captured',
-      defaultTarget: { type: 'Captured' },
-      description:
-        windowFilterMode?.mode === 'Single'
-          ? `Динамическое окно: клавиши отправляются в активное окно по Ctrl+1..6 (сейчас Слот #${windowFilterMode.data.slot} [PID ${windowFilterMode.data.pid}]). При переключении захвата правила автоматически переходят на новое окно.`
-          : windowFilterMode?.mode === 'Multi'
-            ? `Захваченные окна: правила для «Захваченное» отправляются в активный/первый слот (${windowFilterMode.data.map((d) => `Слот #${d.slot}`).join(', ')}). Либо выберите конкретную вкладку «Слот #1», «Слот #2» для раздельной настройки клавиш для каждого окна.`
-            : 'Динамическое окно: клавиши следуют за окном, которое активно по Ctrl+1..6. Сейчас окно игры не выбрано (режим «Все окна»).',
-    },
-    {
       id: 'slot-1',
-      label: 'Слот #1',
-      icon: '🟢',
-      targetMatch: (t) => t?.type === 'Slot' && t.data === 1,
+      label: isSlotCaptured(1) ? 'Слот #1 (Захвачено)' : 'Слот #1',
+      icon: isSlotCaptured(1) ? '🟢' : '⚪',
+      targetMatch: (t) => (t?.type === 'Slot' && t.data === 1) || (!t || t.type === 'Captured'),
       defaultTarget: { type: 'Slot', data: 1 },
-      description: 'Фиксированная отправка строго в окно Слот #1 (независимо от того, какое окно активно)',
+      description: isSlotCaptured(1)
+        ? `Окно привязано (PID ${getSlotWindowInfo(1)?.pid}): клавиши отправляются строго в окно Слота #1`
+        : 'Клавиши для окна Слота #1. Нажмите Ctrl+1 в окне игры, чтобы привязать его к этому слоту.',
     },
     {
       id: 'slot-2',
-      label: 'Слот #2',
-      icon: '🟢',
+      label: isSlotCaptured(2) ? 'Слот #2 (Захвачено)' : 'Слот #2',
+      icon: isSlotCaptured(2) ? '🟢' : '⚪',
       targetMatch: (t) => t?.type === 'Slot' && t.data === 2,
       defaultTarget: { type: 'Slot', data: 2 },
-      description: 'Фиксированная отправка строго в окно Слот #2',
+      description: isSlotCaptured(2)
+        ? `Окно привязано (PID ${getSlotWindowInfo(2)?.pid}): клавиши отправляются строго в окно Слота #2`
+        : 'Клавиши для окна Слота #2. Нажмите Ctrl+2 во втором окне игры, чтобы привязать его к этому слоту.',
     },
     {
       id: 'slot-3',
-      label: 'Слот #3',
-      icon: '🟢',
+      label: isSlotCaptured(3) ? 'Слот #3 (Захвачено)' : 'Слот #3',
+      icon: isSlotCaptured(3) ? '🟢' : '⚪',
       targetMatch: (t) => t?.type === 'Slot' && t.data === 3,
       defaultTarget: { type: 'Slot', data: 3 },
-      description: 'Фиксированная отправка строго в окно Слот #3',
+      description: isSlotCaptured(3)
+        ? `Окно привязано (PID ${getSlotWindowInfo(3)?.pid}): клавиши отправляются строго в окно Слота #3`
+        : 'Клавиши для окна Слота #3 (Ctrl+3 в окне игры)',
     },
     {
       id: 'slot-4',
-      label: 'Слот #4',
-      icon: '🟢',
+      label: isSlotCaptured(4) ? 'Слот #4 (Захвачено)' : 'Слот #4',
+      icon: isSlotCaptured(4) ? '🟢' : '⚪',
       targetMatch: (t) => t?.type === 'Slot' && t.data === 4,
       defaultTarget: { type: 'Slot', data: 4 },
-      description: 'Фиксированная отправка строго в окно Слот #4',
+      description: isSlotCaptured(4)
+        ? `Окно привязано (PID ${getSlotWindowInfo(4)?.pid}): клавиши отправляются строго в окно Слота #4`
+        : 'Клавиши для окна Слота #4 (Ctrl+4 в окне игры)',
     },
     {
       id: 'slot-5',
-      label: 'Слот #5',
-      icon: '🟢',
+      label: isSlotCaptured(5) ? 'Слот #5 (Захвачено)' : 'Слот #5',
+      icon: isSlotCaptured(5) ? '🟢' : '⚪',
       targetMatch: (t) => t?.type === 'Slot' && t.data === 5,
       defaultTarget: { type: 'Slot', data: 5 },
-      description: 'Фиксированная отправка строго в окно Слот #5',
+      description: isSlotCaptured(5)
+        ? `Окно привязано (PID ${getSlotWindowInfo(5)?.pid}): клавиши отправляются строго в окно Слота #5`
+        : 'Клавиши для окна Слота #5 (Ctrl+5 в окне игры)',
     },
     {
       id: 'slot-6',
-      label: 'Слот #6',
-      icon: '🟢',
+      label: isSlotCaptured(6) ? 'Слот #6 (Захвачено)' : 'Слот #6',
+      icon: isSlotCaptured(6) ? '🟢' : '⚪',
       targetMatch: (t) => t?.type === 'Slot' && t.data === 6,
       defaultTarget: { type: 'Slot', data: 6 },
-      description: 'Фиксированная отправка строго в окно Слот #6',
+      description: isSlotCaptured(6)
+        ? `Окно привязано (PID ${getSlotWindowInfo(6)?.pid}): клавиши отправляются строго в окно Слота #6`
+        : 'Клавиши для окна Слота #6 (Ctrl+6 в окне игры)',
     },
     {
       id: 'all-windows',
@@ -173,8 +185,8 @@
       label: 'Все правила',
       icon: '📑',
       targetMatch: () => true,
-      defaultTarget: { type: 'Captured' },
-      description: 'Общий сводный список всех настроенных правил для любых окон',
+      defaultTarget: { type: 'Slot', data: 1 },
+      description: 'Общий сводный список всех настроенных правил для всех окон',
     },
   ]);
 
@@ -196,29 +208,10 @@
   const quickKeys = ['1', '2', '3', '4', 'F1', 'F2', 'F3', 'F4', 'Z', 'Space'];
   const quickIntervals = [200, 500, 1000, 2000, 3000, 5000];
 
-  function getTargetValue(target?: ClickerTarget): string {
-    if (!target) return 'Captured';
-    if (target.type === 'Slot') {
-      return `Slot-${target.data ?? 1}`;
-    }
-    return target.type || 'Captured';
-  }
-
-  function setTargetValue(rule: ClickerRule, val: string) {
-    if (val === 'Captured') {
-      rule.target = { type: 'Captured' };
-    } else if (val === 'All') {
-      rule.target = { type: 'All' };
-    } else if (val.startsWith('Slot-')) {
-      const slotNum = parseInt(val.replace('Slot-', ''), 10) || 1;
-      rule.target = { type: 'Slot', data: slotNum };
-    }
-  }
-
   function addRule() {
     const nextNum = rules.length + 1;
     const currentTab = windowTabs.find((t) => t.id === activeWindowTab);
-    const target = currentTab ? { ...currentTab.defaultTarget } : { type: 'Captured' as const };
+    const target = currentTab ? { ...currentTab.defaultTarget } : { type: 'Slot' as const, data: 1 };
     const newRule: ClickerRule = {
       id: `rule-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       name: `Клавиша ${nextNum}`,
@@ -243,7 +236,7 @@
           enabled: true,
           key: '1',
           interval_ms: 1000,
-          target: { type: 'Captured' },
+          target: { type: 'Slot', data: 1 },
           stop_on_pattern: false,
           stop_patterns: [],
           start_on_pattern: false,
@@ -274,13 +267,20 @@
   }
 
   function handleSave() {
-    const cleanedRules = rules.map((r) => ({
-      ...r,
-      key: r.key.trim().toUpperCase() || '1',
-      interval_ms: Math.max(50, Number(r.interval_ms) || 1000),
-      stop_patterns: [...(r.stop_patterns || [])],
-      start_patterns: [...(r.start_patterns || [])],
-    }));
+    const cleanedRules = rules.map((r) => {
+      let target = r.target;
+      if (!target || target.type === 'Captured') {
+        target = { type: 'Slot', data: 1 };
+      }
+      return {
+        ...r,
+        target,
+        key: r.key.trim().toUpperCase() || '1',
+        interval_ms: Math.max(50, Number(r.interval_ms) || 1000),
+        stop_patterns: [...(r.stop_patterns || [])],
+        start_patterns: [...(r.start_patterns || [])],
+      };
+    });
 
     onSave({
       rules: cleanedRules,
@@ -349,23 +349,23 @@
     <!-- Captured Window info -->
     {#if windowFilterMode?.mode === 'Single'}
       <div class="target-window-banner captured">
-        <span class="banner-icon">🎯</span>
+        <span class="banner-icon">🎮</span>
         <span>
-          Текущее захваченное окно: <strong>Слот #{windowFilterMode.data.slot} [PID {windowFilterMode.data.pid}]</strong> — {windowFilterMode.data.title}
+          Привязано окно: <strong>Слот #{windowFilterMode.data.slot} [PID {windowFilterMode.data.pid}]</strong> — {windowFilterMode.data.title || 'EndlessWar'}
         </span>
       </div>
     {:else if windowFilterMode?.mode === 'Multi'}
       <div class="target-window-banner captured">
-        <span class="banner-icon">🎯</span>
+        <span class="banner-icon">🎮</span>
         <span>
-          Захвачено окон: <strong>{windowFilterMode.data.length}</strong> ({windowFilterMode.data.map((d) => `Слот #${d.slot} [PID ${d.pid}]`).join(', ')}) — на каждом окне отображается оверлей
+          Привязано окон: <strong>{windowFilterMode.data.length}</strong> ({windowFilterMode.data.map((d) => `Слот #${d.slot} [PID ${d.pid}]`).join(', ')}) — клавиши настраиваются независимо по вкладкам слотов
         </span>
       </div>
     {:else}
       <div class="target-window-banner warning">
-        <span class="banner-icon">⚠️</span>
+        <span class="banner-icon">ℹ️</span>
         <span>
-          Окно игры не захвачено (режим «Все окна»). Для правил с целью <em>«Захваченное окно»</em> нажмите <strong>Ctrl + 1..6</strong> в окне игры, либо выберите конкретный слот в правиле.
+          Окна игры не захвачены. Нажмите <strong>Ctrl + 1</strong> в первом окне игры и <strong>Ctrl + 2</strong> во втором окне, чтобы привязать их к слотам.
         </span>
       </div>
     {/if}
@@ -462,6 +462,14 @@
             </div>
 
             <div class="rule-header-right">
+              {#if rule.target?.type === 'Slot'}
+                <span class="rule-slot-badge">Слот #{rule.target.data}</span>
+              {:else if rule.target?.type === 'All'}
+                <span class="rule-slot-badge all">Все окна</span>
+              {:else}
+                <span class="rule-slot-badge">Слот #1</span>
+              {/if}
+
               <span class="rule-key-preview">{rule.key || '?'}</span>
               <span class="rule-interval-preview">{rule.interval_ms} мс</span>
 
@@ -470,7 +478,7 @@
                   type="button"
                   class="btn btn-secondary btn-sm"
                   onclick={() => onTestKey(rule.key, rule.target)}
-                  title="Отправить эту клавишу прямо сейчас в её целевое окно"
+                  title="Отправить эту клавишу прямо сейчас в окно этого слота"
                 >
                   Тест
                 </button>
@@ -538,37 +546,6 @@
                     </button>
                   {/each}
                 </div>
-              </div>
-
-              <!-- Target Window Field -->
-              <div class="form-group">
-                <label for="rule-target-{rule.id}">Целевое окно игры</label>
-                <select
-                  id="rule-target-{rule.id}"
-                  class="rule-target-select"
-                  value={getTargetValue(rule.target)}
-                  onchange={(e) => setTargetValue(rule, e.currentTarget.value)}
-                >
-                  <option value="Captured">
-                    🎯 Захваченное окно {windowFilterMode?.mode === 'Single' ? `(сейчас Слот #${windowFilterMode.data.slot})` : windowFilterMode?.mode === 'Multi' ? '(активный/первый слот)' : '(следует за Ctrl+1..6)'}
-                  </option>
-                  <option value="Slot-1">🟢 Окно Слот #1 (фиксированное)</option>
-                  <option value="Slot-2">🟢 Окно Слот #2 (фиксированное)</option>
-                  <option value="Slot-3">🟢 Окно Слот #3 (фиксированное)</option>
-                  <option value="Slot-4">🟢 Окно Слот #4 (фиксированное)</option>
-                  <option value="Slot-5">🟢 Окно Слот #5 (фиксированное)</option>
-                  <option value="Slot-6">🟢 Окно Слот #6 (фиксированное)</option>
-                  <option value="All">🌐 Все окна игры (рассылка во все)</option>
-                </select>
-                <p class="field-hint">
-                  {#if rule.target.type === 'Captured'}
-                    Динамическая отправка: следует за окном, выбранным через Ctrl+1..6.
-                  {:else if rule.target.type === 'Slot'}
-                    Фиксированная отправка: привязано строго к окну слота #{rule.target.data}, независимо от активного окна.
-                  {:else}
-                    Массовая отправка: рассылает клавишу во все запущенные окна игры.
-                  {/if}
-                </p>
               </div>
             </div>
 
@@ -986,8 +963,31 @@
 
   .rule-fields-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 14px;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  @media (max-width: 768px) {
+    .rule-fields-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .rule-slot-badge {
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: rgba(34, 197, 94, 0.15);
+    border: 1px solid rgba(34, 197, 94, 0.35);
+    color: #4ade80;
+    white-space: nowrap;
+  }
+
+  .rule-slot-badge.all {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: rgba(59, 130, 246, 0.35);
+    color: #60a5fa;
   }
 
   .field-title {
@@ -1003,16 +1003,6 @@
   .key-recorder-box {
     display: flex;
     align-items: center;
-  }
-
-  .rule-target-select {
-    width: 100%;
-    background: #181825;
-    border: 1px solid var(--color-border, #313244);
-    color: #cdd6f4;
-    border-radius: 6px;
-    padding: 8px;
-    font-size: 0.88rem;
   }
 
   .window-tabs-container {
@@ -1272,12 +1262,6 @@
     color: #a6adc8;
     font-weight: normal;
     margin-left: 6px;
-  }
-
-  .field-hint {
-    font-size: 0.8rem;
-    color: #a6adc8;
-    margin-top: 4px;
   }
 
   /* Custom toggle switch */

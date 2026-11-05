@@ -494,7 +494,7 @@ mod tests {
         let rules = cfg.get_rules();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].key, "1");
-        assert_eq!(rules[0].target, ClickerTarget::Captured);
+        assert_eq!(rules[0].target, ClickerTarget::Slot(1));
         // By default both stop_on_pattern and start_on_pattern must be false
         assert!(!rules[0].stop_on_pattern);
         assert!(!rules[0].start_on_pattern);

@@ -212,7 +212,7 @@ export const defaultConfig = (): Config => ({
         enabled: true,
         key: '1',
         interval_ms: 1000,
-        target: { type: 'Captured' },
+        target: { type: 'Slot', data: 1 },
         stop_on_pattern: false,
         stop_patterns: [],
         start_on_pattern: false,
