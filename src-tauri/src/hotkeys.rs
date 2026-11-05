@@ -10,6 +10,7 @@ pub fn start_hotkey_listener(
     _filter: crate::window_filter::WindowFilterState,
     _config: std::sync::Arc<tokio::sync::Mutex<crate::config::AppConfig>>,
     _clicker: std::sync::Arc<crate::clicker::ClickerState>,
+    _monitoring: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {}
 
 #[cfg(windows)]
@@ -19,6 +20,7 @@ mod win {
     use crate::overlay;
     use crate::screen_capture;
     use crate::window_filter::{WindowFilterMode, WindowFilterState};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use tauri::{AppHandle, Emitter};
     use tokio::sync::Mutex;
@@ -39,11 +41,12 @@ mod win {
         filter: WindowFilterState,
         config: Arc<Mutex<AppConfig>>,
         clicker: Arc<ClickerState>,
+        monitoring: Arc<AtomicBool>,
     ) {
         std::thread::Builder::new()
             .name("ew-hotkeys-thread".into())
             .spawn(move || {
-                run_hotkey_loop(app, filter, config, clicker);
+                run_hotkey_loop(app, filter, config, clicker, monitoring);
             })
             .expect("Failed to spawn hotkey listener thread");
     }
@@ -53,6 +56,7 @@ mod win {
         filter: WindowFilterState,
         config: Arc<Mutex<AppConfig>>,
         clicker: Arc<ClickerState>,
+        monitoring: Arc<AtomicBool>,
     ) {
         const WM_HOTKEY: u32 = 0x0312;
 
@@ -127,7 +131,7 @@ mod win {
                     };
 
                     tracing::info!("WM_HOTKEY received: raw_id={}, mapped_id={}", raw_id, hotkey_id);
-                    handle_hotkey(hotkey_id, &app, &filter, &config, &clicker);
+                    handle_hotkey(hotkey_id, &app, &filter, &config, &clicker, &monitoring);
                 }
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
@@ -151,11 +155,13 @@ mod win {
         filter: &WindowFilterState,
         config: &Arc<Mutex<AppConfig>>,
         clicker: &Arc<ClickerState>,
+        monitoring: &Arc<AtomicBool>,
     ) {
         if hotkey_id == 100 {
             // Ctrl + O: Start Clicker
             tracing::info!("Hotkey Ctrl+O triggered: starting clicker");
             clicker.start(app, config, filter);
+            overlay::update_overlay_from_state(filter, monitoring.load(Ordering::SeqCst), true);
             return;
         }
 
@@ -163,6 +169,7 @@ mod win {
             // Ctrl + P: Stop Clicker
             tracing::info!("Hotkey Ctrl+P triggered: stopping clicker");
             clicker.stop(app, Some("Остановлен горячей клавишей Ctrl+P".to_string()), config);
+            overlay::update_overlay_from_state(filter, monitoring.load(Ordering::SeqCst), false);
             return;
         }
 
@@ -252,10 +259,13 @@ mod win {
         }
 
         if let Some(target) = chosen_window {
-            let label = format!("🟢 EW #{} [PID {}]", slot, target.pid);
             filter.set_single(slot, target.pid, target.hwnd, target.title.clone());
 
-            overlay::show_overlay(target.hwnd, &label, false);
+            overlay::update_overlay_from_state(
+                filter,
+                monitoring.load(Ordering::SeqCst),
+                clicker.is_running(),
+            );
 
             let new_mode = filter.get_mode();
             let _ = app.emit("window-filter-changed", new_mode);

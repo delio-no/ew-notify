@@ -385,6 +385,7 @@ impl ClickerState {
         }
 
         if !stopped_rule_labels.is_empty() || !started_rule_labels.is_empty() {
+            crate::overlay::update_overlay_from_state(filter, true, self.is_running());
             let app_h = app.clone();
             let cfg_arc = config_arc.clone();
             let self_clone = self.clone();

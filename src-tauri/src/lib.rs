@@ -101,6 +101,11 @@ pub struct AppState {
 
 fn stop_capture(state: &AppState) {
     state.monitoring.store(false, Ordering::SeqCst);
+    overlay::update_overlay_from_state(
+        &state.window_filter,
+        false,
+        state.clicker.is_running(),
+    );
     // Take the slot so a dying thread cannot shutdown a newly opened capture.
     if let Ok(mut guard) = state.capture.lock() {
         if let Some(capture) = guard.take() {
@@ -184,6 +189,11 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
     state.matches_seen.store(0, Ordering::SeqCst);
     state.dedup_suppressed.store(0, Ordering::SeqCst);
     state.monitoring.store(true, Ordering::SeqCst);
+    overlay::update_overlay_from_state(
+        &state.window_filter,
+        true,
+        state.clicker.is_running(),
+    );
     if let Ok(mut e) = state.last_error.lock() {
         *e = match capture_mode {
             CaptureMode::Auto => format!("waiting for process {process_name}…"),
@@ -1511,11 +1521,14 @@ async fn set_window_filter(
         .find(|w| w.pid == pid)
         .ok_or_else(|| format!("Окно с PID {} не найдено", pid))?;
 
-    let label = format!("🟢 EW #{} [PID {}]", slot, win.pid);
     state
         .window_filter
         .set_single(slot, win.pid, win.hwnd, win.title.clone());
-    overlay::show_overlay(win.hwnd, &label, false);
+    overlay::update_overlay_from_state(
+        &state.window_filter,
+        state.monitoring.load(Ordering::SeqCst),
+        state.clicker.is_running(),
+    );
     Ok(state.window_filter.get_mode())
 }
 
@@ -1542,12 +1555,22 @@ async fn get_target_windows(
 #[tauri::command]
 fn start_clicker(state: State<'_, AppState>, app: AppHandle) -> Result<String, String> {
     state.clicker.start(&app, &state.config, &state.window_filter);
+    overlay::update_overlay_from_state(
+        &state.window_filter,
+        state.monitoring.load(Ordering::SeqCst),
+        true,
+    );
     Ok("Кликер запущен".to_string())
 }
 
 #[tauri::command]
 fn stop_clicker(state: State<'_, AppState>, app: AppHandle) -> Result<String, String> {
     state.clicker.stop(&app, Some("Остановлен пользователем".to_string()), &state.config);
+    overlay::update_overlay_from_state(
+        &state.window_filter,
+        state.monitoring.load(Ordering::SeqCst),
+        false,
+    );
     Ok("Кликер остановлен".to_string())
 }
 
@@ -1726,7 +1749,14 @@ pub fn run() {
             let filter_state = state.window_filter.clone();
             let cfg_state = state.config.clone();
             let clicker_state = state.clicker.clone();
-            hotkeys::start_hotkey_listener(app.handle().clone(), filter_state, cfg_state, clicker_state);
+            let monitoring_state = state.monitoring.clone();
+            hotkeys::start_hotkey_listener(
+                app.handle().clone(),
+                filter_state,
+                cfg_state,
+                clicker_state,
+                monitoring_state,
+            );
 
             if let Some(token) = auto_start_token.clone() {
                 info!("Auto-starting Telegram bot...");

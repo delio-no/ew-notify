@@ -93,14 +93,20 @@
     description: string;
   }
 
-  const windowTabs: WindowTabOption[] = [
+  let windowTabs = $derived<WindowTabOption[]>([
     {
       id: 'captured',
-      label: 'Захваченное',
+      label:
+        windowFilterMode?.mode === 'Single'
+          ? `Захваченное (Слот #${windowFilterMode.data.slot})`
+          : 'Захваченное (Ctrl+1..6)',
       icon: '🎯',
       targetMatch: (t) => !t || t.type === 'Captured',
       defaultTarget: { type: 'Captured' },
-      description: 'Отправка в окно, выбранное комбинацией Ctrl+1..6 (или единичный захват)',
+      description:
+        windowFilterMode?.mode === 'Single'
+          ? `Динамическое окно: клавиши отправляются в активное окно по Ctrl+1..6 (сейчас Слот #${windowFilterMode.data.slot} [PID ${windowFilterMode.data.pid}]). При переключении захвата правила автоматически переходят на новое окно.`
+          : 'Динамическое окно: клавиши следуют за окном, которое активно по Ctrl+1..6. Сейчас окно игры не выбрано (режим «Все окна»).',
     },
     {
       id: 'slot-1',
@@ -108,7 +114,7 @@
       icon: '🟢',
       targetMatch: (t) => t?.type === 'Slot' && t.data === 1,
       defaultTarget: { type: 'Slot', data: 1 },
-      description: 'Привязано строго к окну Слот #1',
+      description: 'Фиксированная отправка строго в окно Слот #1 (независимо от того, какое окно активно)',
     },
     {
       id: 'slot-2',
@@ -116,7 +122,7 @@
       icon: '🟢',
       targetMatch: (t) => t?.type === 'Slot' && t.data === 2,
       defaultTarget: { type: 'Slot', data: 2 },
-      description: 'Привязано строго к окну Слот #2',
+      description: 'Фиксированная отправка строго в окно Слот #2',
     },
     {
       id: 'slot-3',
@@ -124,7 +130,7 @@
       icon: '🟢',
       targetMatch: (t) => t?.type === 'Slot' && t.data === 3,
       defaultTarget: { type: 'Slot', data: 3 },
-      description: 'Привязано строго к окну Слот #3',
+      description: 'Фиксированная отправка строго в окно Слот #3',
     },
     {
       id: 'slot-4',
@@ -132,7 +138,7 @@
       icon: '🟢',
       targetMatch: (t) => t?.type === 'Slot' && t.data === 4,
       defaultTarget: { type: 'Slot', data: 4 },
-      description: 'Привязано строго к окну Слот #4',
+      description: 'Фиксированная отправка строго в окно Слот #4',
     },
     {
       id: 'slot-5',
@@ -140,7 +146,7 @@
       icon: '🟢',
       targetMatch: (t) => t?.type === 'Slot' && t.data === 5,
       defaultTarget: { type: 'Slot', data: 5 },
-      description: 'Привязано строго к окну Слот #5',
+      description: 'Фиксированная отправка строго в окно Слот #5',
     },
     {
       id: 'slot-6',
@@ -148,7 +154,7 @@
       icon: '🟢',
       targetMatch: (t) => t?.type === 'Slot' && t.data === 6,
       defaultTarget: { type: 'Slot', data: 6 },
-      description: 'Привязано строго к окну Слот #6',
+      description: 'Фиксированная отправка строго в окно Слот #6',
     },
     {
       id: 'all-windows',
@@ -156,7 +162,7 @@
       icon: '🌐',
       targetMatch: (t) => t?.type === 'All',
       defaultTarget: { type: 'All' },
-      description: 'Рассылка во все запущенные окна игры EndlessWar.exe',
+      description: 'Рассылка клавиши параллельно во все запущенные окна игры EndlessWar.exe',
     },
     {
       id: 'all',
@@ -164,9 +170,9 @@
       icon: '📑',
       targetMatch: () => true,
       defaultTarget: { type: 'Captured' },
-      description: 'Список правил для всех окон сразу',
+      description: 'Общий сводный список всех настроенных правил для любых окон',
     },
-  ];
+  ]);
 
   function getTabRuleCount(tab: WindowTabOption): number {
     return (rules || []).filter((r) => tab.targetMatch(r.target)).length;
@@ -532,22 +538,24 @@
                   value={getTargetValue(rule.target)}
                   onchange={(e) => setTargetValue(rule, e.currentTarget.value)}
                 >
-                  <option value="Captured">🎯 Захваченное окно (Ctrl+1..6)</option>
-                  <option value="Slot-1">🟢 Окно Слот #1</option>
-                  <option value="Slot-2">🟢 Окно Слот #2</option>
-                  <option value="Slot-3">🟢 Окно Слот #3</option>
-                  <option value="Slot-4">🟢 Окно Слот #4</option>
-                  <option value="Slot-5">🟢 Окно Слот #5</option>
-                  <option value="Slot-6">🟢 Окно Слот #6</option>
-                  <option value="All">🌐 Все окна игры</option>
+                  <option value="Captured">
+                    🎯 Захваченное окно {windowFilterMode?.mode === 'Single' ? `(сейчас Слот #${windowFilterMode.data.slot})` : '(следует за Ctrl+1..6)'}
+                  </option>
+                  <option value="Slot-1">🟢 Окно Слот #1 (фиксированное)</option>
+                  <option value="Slot-2">🟢 Окно Слот #2 (фиксированное)</option>
+                  <option value="Slot-3">🟢 Окно Слот #3 (фиксированное)</option>
+                  <option value="Slot-4">🟢 Окно Слот #4 (фиксированное)</option>
+                  <option value="Slot-5">🟢 Окно Слот #5 (фиксированное)</option>
+                  <option value="Slot-6">🟢 Окно Слот #6 (фиксированное)</option>
+                  <option value="All">🌐 Все окна игры (рассылка во все)</option>
                 </select>
                 <p class="field-hint">
                   {#if rule.target.type === 'Captured'}
-                    Отправляет в окно, активное по Ctrl+1..6.
+                    Динамическая отправка: следует за окном, выбранным через Ctrl+1..6.
                   {:else if rule.target.type === 'Slot'}
-                    Привязано строго к окну слота #{rule.target.data}.
+                    Фиксированная отправка: привязано строго к окну слота #{rule.target.data}, независимо от активного окна.
                   {:else}
-                    Рассылает клавишу во все запущенные окна игры.
+                    Массовая отправка: рассылает клавишу во все запущенные окна игры.
                   {/if}
                 </p>
               </div>
