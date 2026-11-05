@@ -11,6 +11,7 @@
     onSave,
     onReset,
     onTestTelegram,
+    onTestSystemNotification,
     onStartBot,
     onStopBot,
     onRestartBot,
@@ -24,6 +25,7 @@
     onSave: () => void;
     onReset: () => void;
     onTestTelegram: () => void;
+    onTestSystemNotification?: () => void;
     onStartBot: () => void;
     onStopBot: () => void;
     onRestartBot: () => void;
@@ -193,6 +195,13 @@
           <input type="checkbox" bind:checked={config.notifications.tray_enabled} />
           <span>Системные уведомления Windows</span>
         </label>
+        {#if onTestSystemNotification}
+          <div style="margin-top: 8px;">
+            <button type="button" class="btn btn-secondary btn-xs" onclick={onTestSystemNotification}>
+              Проверить уведомление Windows
+            </button>
+          </div>
+        {/if}
       </div>
       <div class="form-group">
         <label class="checkbox-label">

@@ -75,6 +75,7 @@ export const api = {
     invoke<string>('test_send_key', { key, target }),
 
   testTelegram: (token: string) => invoke<string>('test_telegram', { token }),
+  testSystemNotification: () => invoke<string>('test_system_notification'),
   startTelegramBot: (token: string) =>
     invoke<string>('start_telegram_bot', { token }),
   stopTelegramBot: () => invoke('stop_telegram_bot'),

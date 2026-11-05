@@ -155,14 +155,24 @@ fn default_clicker_rules() -> Vec<ClickerRule> {
     vec![ClickerRule::default()]
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SlotNotificationConfig {
+    #[serde(default)]
+    pub notify_on_stop: bool,
+    #[serde(default)]
+    pub notify_on_start: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClickerConfig {
     #[serde(default = "default_clicker_rules")]
     pub rules: Vec<ClickerRule>,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub notify_on_stop: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub notify_on_start: bool,
+    #[serde(default)]
+    pub slot_notifications: std::collections::HashMap<String, SlotNotificationConfig>,
     // Legacy fields for backward compatibility
     #[serde(default, skip_serializing)]
     pub keys: Vec<String>,
@@ -179,6 +189,30 @@ pub struct ClickerConfig {
 }
 
 impl ClickerConfig {
+    pub fn is_notify_on_stop_for_slot(&self, slot: Option<u32>) -> bool {
+        if let Some(s) = slot {
+            let key = format!("slot-{}", s);
+            if let Some(slot_cfg) = self.slot_notifications.get(&key) {
+                return slot_cfg.notify_on_stop;
+            }
+        } else if let Some(all_cfg) = self.slot_notifications.get("all-windows") {
+            return all_cfg.notify_on_stop;
+        }
+        self.notify_on_stop
+    }
+
+    pub fn is_notify_on_start_for_slot(&self, slot: Option<u32>) -> bool {
+        if let Some(s) = slot {
+            let key = format!("slot-{}", s);
+            if let Some(slot_cfg) = self.slot_notifications.get(&key) {
+                return slot_cfg.notify_on_start;
+            }
+        } else if let Some(all_cfg) = self.slot_notifications.get("all-windows") {
+            return all_cfg.notify_on_start;
+        }
+        self.notify_on_start
+    }
+
     pub fn get_rules(&self) -> Vec<ClickerRule> {
         if !self.rules.is_empty() {
             return self.rules.clone();
@@ -218,8 +252,9 @@ impl Default for ClickerConfig {
     fn default() -> Self {
         Self {
             rules: default_clicker_rules(),
-            notify_on_stop: true,
-            notify_on_start: true,
+            notify_on_stop: false,
+            notify_on_start: false,
+            slot_notifications: std::collections::HashMap::new(),
             keys: Vec::new(),
             key: "1".to_string(),
             interval_ms: 1000,

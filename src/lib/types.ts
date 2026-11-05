@@ -38,10 +38,16 @@ export interface ClickerRule {
   start_patterns: string[];
 }
 
+export interface SlotNotificationConfig {
+  notify_on_stop: boolean;
+  notify_on_start: boolean;
+}
+
 export interface ClickerConfig {
   rules: ClickerRule[];
   notify_on_stop: boolean;
   notify_on_start?: boolean;
+  slot_notifications?: Record<string, SlotNotificationConfig>;
 }
 
 export interface ClickerStatus {
@@ -219,7 +225,8 @@ export const defaultConfig = (): Config => ({
         start_patterns: [],
       },
     ],
-    notify_on_stop: true,
-    notify_on_start: true,
+    notify_on_stop: false,
+    notify_on_start: false,
+    slot_notifications: {},
   },
 });

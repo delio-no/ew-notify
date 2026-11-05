@@ -62,24 +62,45 @@
   }
 
   let rules = $state<ClickerRule[]>([]);
-  let notifyOnStop = $state(true);
-  let notifyOnStart = $state(true);
+  let notifyOnStop = $state(false);
+  let notifyOnStart = $state(false);
+  let slotNotifications = $state<Record<string, { notify_on_stop: boolean; notify_on_start: boolean }>>({});
 
   // Sync safely when clickerStatus config changes externally without reactive feedback loops
   $effect(() => {
     const externalRules = clickerStatus?.config?.rules;
     const externalNotifyStop = clickerStatus?.config?.notify_on_stop;
     const externalNotifyStart = clickerStatus?.config?.notify_on_start;
+    const externalSlotNotifications = clickerStatus?.config?.slot_notifications;
     untrack(() => {
       rules = parseInitialRules(externalRules);
-      if (externalNotifyStop !== undefined) {
-        notifyOnStop = externalNotifyStop;
-      }
-      if (externalNotifyStart !== undefined) {
-        notifyOnStart = externalNotifyStart;
-      }
+      notifyOnStop = externalNotifyStop ?? false;
+      notifyOnStart = externalNotifyStart ?? false;
+      slotNotifications = externalSlotNotifications ? { ...externalSlotNotifications } : {};
     });
   });
+
+  function getSlotNotifyOnStop(tabId: string): boolean {
+    return slotNotifications[tabId]?.notify_on_stop ?? false;
+  }
+
+  function setSlotNotifyOnStop(tabId: string, val: boolean) {
+    if (!slotNotifications[tabId]) {
+      slotNotifications[tabId] = { notify_on_stop: false, notify_on_start: false };
+    }
+    slotNotifications[tabId].notify_on_stop = val;
+  }
+
+  function getSlotNotifyOnStart(tabId: string): boolean {
+    return slotNotifications[tabId]?.notify_on_start ?? false;
+  }
+
+  function setSlotNotifyOnStart(tabId: string, val: boolean) {
+    if (!slotNotifications[tabId]) {
+      slotNotifications[tabId] = { notify_on_stop: false, notify_on_start: false };
+    }
+    slotNotifications[tabId].notify_on_start = val;
+  }
 
   type WindowTabId = 'slot-1' | 'slot-2' | 'slot-3' | 'slot-4' | 'slot-5' | 'slot-6' | 'all-windows' | 'all';
   let activeWindowTab = $state<WindowTabId>('slot-1');
@@ -286,6 +307,7 @@
       rules: cleanedRules,
       notify_on_stop: notifyOnStop,
       notify_on_start: notifyOnStart,
+      slot_notifications: { ...slotNotifications },
     });
   }
 </script>
@@ -409,6 +431,30 @@
           : `Показано ${visibleRules.length} из ${rules.length} правил`}
       </span>
     </div>
+
+    {#if activeWindowTab !== 'all'}
+      <div class="slot-notification-row">
+        <span class="slot-notify-heading">Системные уведомления Windows для «{activeTabOption.label}»:</span>
+        <div class="slot-notify-toggles">
+          <label class="checkbox-label" title="Показывать всплывающее уведомление Windows при автоостановке клавиш этого окна">
+            <input
+              type="checkbox"
+              checked={getSlotNotifyOnStop(activeWindowTab)}
+              onchange={(e) => setSlotNotifyOnStop(activeWindowTab, e.currentTarget.checked)}
+            />
+            <span>При автоостановке по паттерну</span>
+          </label>
+          <label class="checkbox-label" title="Показывать всплывающее уведомление Windows при автозапуске клавиш этого окна">
+            <input
+              type="checkbox"
+              checked={getSlotNotifyOnStart(activeWindowTab)}
+              onchange={(e) => setSlotNotifyOnStart(activeWindowTab, e.currentTarget.checked)}
+            />
+            <span>При автозапуске по паттерну</span>
+          </label>
+        </div>
+      </div>
+    {/if}
   </div>
 
   <!-- Rules List Header -->
@@ -1013,6 +1059,32 @@
     border: 1px solid var(--color-border, #313244);
     border-radius: 12px;
     padding: 10px 12px;
+  }
+
+  .slot-notification-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    background: rgba(17, 17, 27, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    margin-top: 2px;
+  }
+
+  .slot-notify-heading {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-muted, #a6adc8);
+  }
+
+  .slot-notify-toggles {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
   }
 
   .window-tabs-scroll {

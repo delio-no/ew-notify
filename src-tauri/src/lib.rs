@@ -13,6 +13,7 @@ pub mod hotkeys;
 pub mod overlay;
 pub mod screen_capture;
 pub mod window_filter;
+pub mod notifications;
 
 use config::{AppConfig, CaptureMode, Pattern, PatternAction};
 use packet::{
@@ -629,22 +630,12 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     }
 
                     if tray_enabled {
-                        // Single toast via Tauri (avoid duplicate notify_rust).
-                        use tauri_plugin_notification::NotificationExt;
                         let tray_body = if let Some(lbl) = &window_label {
                             format!("{}\n{}", pattern.name, lbl)
                         } else {
                             pattern.name.clone()
                         };
-                        if let Err(e) = app_notify
-                            .notification()
-                            .builder()
-                            .title(&notify_title)
-                            .body(&tray_body)
-                            .show()
-                        {
-                            tracing::warn!("system notification failed: {}", e);
-                        }
+                        notifications::show_system_notification(&notify_title, &tray_body);
                     }
 
                     if telegram_enabled {
@@ -1610,6 +1601,15 @@ async fn save_clicker_config(
     Ok("Настройки кликера сохранены".to_string())
 }
 
+#[tauri::command]
+fn test_system_notification() -> Result<String, String> {
+    notifications::show_system_notification(
+        "EW Notify — Тест",
+        "Системные уведомления Windows работают штатно!",
+    );
+    Ok("Уведомление отправлено в систему Windows".to_string())
+}
+
 pub fn run() {
     if let Err(e) = platform::ensure_single_instance() {
         eprintln!("{e}");
@@ -1678,6 +1678,8 @@ pub fn run() {
         .manage(app_state)
         .setup(move |app| {
             info!("Setup started");
+            #[cfg(windows)]
+            notifications::register_app_user_model_id();
             let start = MenuItem::with_id(app, "start", "Старт мониторинга", true, None::<&str>)?;
             let stop = MenuItem::with_id(app, "stop", "Стоп мониторинга", true, None::<&str>)?;
             let show = MenuItem::with_id(app, "show", "Показать окно", true, None::<&str>)?;
@@ -1851,6 +1853,7 @@ pub fn run() {
             stop_clicker,
             get_clicker_status,
             save_clicker_config,
+            test_system_notification,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

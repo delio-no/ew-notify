@@ -418,14 +418,8 @@ impl ClickerState {
                 *reason_guard = Some(reason.clone());
             }
 
-            if cfg.clicker.notify_on_stop {
-                use tauri_plugin_notification::NotificationExt;
-                let _ = app
-                    .notification()
-                    .builder()
-                    .title("EW Notify — Кликер")
-                    .body(&reason)
-                    .show();
+            if cfg.clicker.is_notify_on_stop_for_slot(target_slot) {
+                crate::notifications::show_system_notification("EW Notify — Кликер", &reason);
             }
         }
 
@@ -441,14 +435,8 @@ impl ClickerState {
             );
             info!("{}", msg);
 
-            if cfg.clicker.notify_on_start {
-                use tauri_plugin_notification::NotificationExt;
-                let _ = app
-                    .notification()
-                    .builder()
-                    .title("EW Notify — Кликер")
-                    .body(&msg)
-                    .show();
+            if cfg.clicker.is_notify_on_start_for_slot(target_slot) {
+                crate::notifications::show_system_notification("EW Notify — Кликер", &msg);
             }
         }
 
@@ -500,8 +488,8 @@ mod tests {
         assert!(!rules[0].start_on_pattern);
         assert!(rules[0].stop_patterns.is_empty());
         assert!(rules[0].start_patterns.is_empty());
-        assert!(cfg.notify_on_stop);
-        assert!(cfg.notify_on_start);
+        assert!(!cfg.notify_on_stop);
+        assert!(!cfg.notify_on_start);
     }
 
     #[test]

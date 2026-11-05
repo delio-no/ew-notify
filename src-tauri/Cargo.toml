@@ -42,10 +42,12 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 dirs = { workspace = true }
 image = { workspace = true }
+notify-rust = "4"
 
 [target.'cfg(windows)'.dependencies]
 windivert = { version = "0.6", features = ["vendored"] }
 windivert-sys = "0.10"
+winreg = "0.52"
 windows = { version = "0.48", features = [
   "Win32_Foundation",
   "Win32_Security",

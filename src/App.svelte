@@ -418,6 +418,15 @@
     }
   }
 
+  async function testSystemNotification() {
+    try {
+      const res = await api.testSystemNotification();
+      showStatus(res);
+    } catch (e) {
+      showStatus(`Ошибка теста уведомлений: ${e}`);
+    }
+  }
+
   async function togglePatternActionEnabled(pattern: Pattern, enabled: boolean) {
     if (!pattern.action) {
       pattern.action = { enabled, key: 'Z', delay_ms: 1000 };
@@ -948,6 +957,7 @@
         onSave={saveConfig}
         onReset={resetConfig}
         onTestTelegram={testTelegram}
+        onTestSystemNotification={testSystemNotification}
         onStartBot={startBot}
         onStopBot={stopBot}
         onRestartBot={restartBot}
