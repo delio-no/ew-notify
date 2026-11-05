@@ -105,48 +105,64 @@ impl ClickerState {
                     break;
                 }
 
-                let (key, interval_ms, proc_name) = {
+                let (keys, interval_ms, proc_name, send_to_all) = {
                     let cfg = config_arc_clone.lock().await;
                     (
-                        cfg.clicker.key.clone(),
+                        cfg.clicker.get_keys(),
                         cfg.clicker.interval_ms.max(50),
                         cfg.target.process_name.clone(),
+                        cfg.clicker.send_to_all_windows,
                     )
                 };
 
-                let target_hwnd = match filter_clone.get_mode() {
-                    WindowFilterMode::Single(info) => {
-                        #[cfg(windows)]
-                        {
-                            use windows::Win32::Foundation::HWND;
-                            use windows::Win32::UI::WindowsAndMessaging::IsWindow;
-                            if unsafe { IsWindow(HWND(info.hwnd as _)).as_bool() } {
-                                Some(info.hwnd)
-                            } else {
-                                None
+                let target_hwnds: Vec<isize> = if send_to_all {
+                    let windows = screen_capture::find_target_windows(&proc_name);
+                    windows.into_iter().map(|w| w.hwnd).collect()
+                } else {
+                    match filter_clone.get_mode() {
+                        WindowFilterMode::Single(info) => {
+                            #[cfg(windows)]
+                            {
+                                use windows::Win32::Foundation::HWND;
+                                use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+                                if unsafe { IsWindow(HWND(info.hwnd as _)).as_bool() } {
+                                    vec![info.hwnd]
+                                } else {
+                                    Vec::new()
+                                }
                             }
+                            #[cfg(not(windows))]
+                            vec![info.hwnd]
                         }
-                        #[cfg(not(windows))]
-                        Some(info.hwnd)
-                    }
-                    WindowFilterMode::All => {
-                        let windows = screen_capture::find_target_windows(&proc_name);
-                        windows.first().map(|w| w.hwnd)
+                        WindowFilterMode::All => {
+                            // By default, only send to captured window. Do not send to all!
+                            Vec::new()
+                        }
                     }
                 };
 
-                if let Some(hwnd) = target_hwnd {
-                    match input_sender::send_key_background(hwnd, &key, 75).await {
-                        Ok(()) => {
-                            let new_count = count_clone.fetch_add(1, Ordering::SeqCst) + 1;
-                            let _ = app_clone.emit("clicker-tick", new_count);
-                        }
-                        Err(e) => {
-                            warn!("Clicker failed to send key '{}': {}", key, e);
+                if !target_hwnds.is_empty() {
+                    for &hwnd in &target_hwnds {
+                        for key in &keys {
+                            if !running_clone.load(Ordering::SeqCst) {
+                                break;
+                            }
+                            match input_sender::send_key_background(hwnd, key, 75).await {
+                                Ok(()) => {
+                                    let new_count = count_clone.fetch_add(1, Ordering::SeqCst) + 1;
+                                    let _ = app_clone.emit("clicker-tick", new_count);
+                                }
+                                Err(e) => {
+                                    warn!("Clicker failed to send key '{}' to HWND {}: {}", key, hwnd, e);
+                                }
+                            }
+                            if keys.len() > 1 {
+                                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                            }
                         }
                     }
                 } else {
-                    debug!("Clicker: target window for '{}' not found", proc_name);
+                    debug!("Clicker: no target window (capture window via Ctrl+1..6 or enable 'send_to_all_windows')");
                 }
 
                 tokio::select! {
@@ -248,5 +264,18 @@ mod tests {
         let state = ClickerState::new();
         assert!(!state.is_running());
         assert_eq!(state.count.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn test_clicker_config_keys() {
+        let mut cfg = ClickerConfig::default();
+        assert_eq!(cfg.get_keys(), vec!["1".to_string()]);
+        assert!(!cfg.send_to_all_windows);
+
+        cfg.keys = vec!["1".to_string(), "2".to_string(), "f1".to_string()];
+        assert_eq!(
+            cfg.get_keys(),
+            vec!["1".to_string(), "2".to_string(), "F1".to_string()]
+        );
     }
 }

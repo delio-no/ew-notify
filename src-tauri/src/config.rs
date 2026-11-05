@@ -89,8 +89,16 @@ fn default_burst_dedup_ms() -> u64 {
     2000
 }
 
+fn default_clicker_keys() -> Vec<String> {
+    vec!["1".to_string()]
+}
+
 fn default_clicker_key() -> String {
     "1".to_string()
+}
+
+fn default_false() -> bool {
+    false
 }
 
 fn default_clicker_interval_ms() -> u64 {
@@ -99,10 +107,14 @@ fn default_clicker_interval_ms() -> u64 {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClickerConfig {
+    #[serde(default = "default_clicker_keys")]
+    pub keys: Vec<String>,
     #[serde(default = "default_clicker_key")]
     pub key: String,
     #[serde(default = "default_clicker_interval_ms")]
     pub interval_ms: u64,
+    #[serde(default = "default_false")]
+    pub send_to_all_windows: bool,
     #[serde(default = "default_true")]
     pub stop_on_pattern: bool,
     #[serde(default)]
@@ -111,11 +123,31 @@ pub struct ClickerConfig {
     pub notify_on_stop: bool,
 }
 
+impl ClickerConfig {
+    pub fn get_keys(&self) -> Vec<String> {
+        let list: Vec<String> = self
+            .keys
+            .iter()
+            .map(|k| k.trim().to_uppercase())
+            .filter(|k| !k.is_empty())
+            .collect();
+        if !list.is_empty() {
+            list
+        } else if !self.key.trim().is_empty() {
+            vec![self.key.trim().to_uppercase()]
+        } else {
+            vec!["1".to_string()]
+        }
+    }
+}
+
 impl Default for ClickerConfig {
     fn default() -> Self {
         Self {
+            keys: default_clicker_keys(),
             key: default_clicker_key(),
             interval_ms: default_clicker_interval_ms(),
+            send_to_all_windows: false,
             stop_on_pattern: true,
             stop_patterns: Vec::new(),
             notify_on_stop: true,

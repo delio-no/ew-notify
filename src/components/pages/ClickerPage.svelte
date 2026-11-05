@@ -1,10 +1,11 @@
 <script lang="ts">
   import PageHeader from '../PageHeader.svelte';
-  import type { ClickerConfig, ClickerStatus, Pattern } from '../../lib/types';
+  import type { ClickerConfig, ClickerStatus, Pattern, WindowFilterMode } from '../../lib/types';
 
   let {
     clickerStatus,
     patterns = [],
+    windowFilterMode,
     onStart,
     onStop,
     onSave,
@@ -12,14 +13,17 @@
   }: {
     clickerStatus: ClickerStatus;
     patterns?: Pattern[];
+    windowFilterMode?: WindowFilterMode;
     onStart: () => void;
     onStop: () => void;
     onSave: (cfg: ClickerConfig) => void;
     onTestKey?: (key: string) => void;
   } = $props();
 
-  let key = $state('1');
+  let keys = $state<string[]>(['1']);
+  let keysInput = $state('1');
   let intervalMs = $state(1000);
+  let sendToAllWindows = $state(false);
   let stopOnPattern = $state(true);
   let stopPatterns = $state<string[]>([]);
   let notifyOnStop = $state(true);
@@ -27,16 +31,54 @@
   // Sync if status config changed externally
   $effect(() => {
     if (clickerStatus?.config) {
-      key = clickerStatus.config.key;
+      const cfgKeys =
+        clickerStatus.config.keys && clickerStatus.config.keys.length > 0
+          ? clickerStatus.config.keys
+          : clickerStatus.config.key
+            ? [clickerStatus.config.key]
+            : ['1'];
+      keys = [...cfgKeys];
+      keysInput = keys.join(', ');
       intervalMs = clickerStatus.config.interval_ms;
-      stopOnPattern = clickerStatus.config.stop_on_pattern;
+      sendToAllWindows = clickerStatus.config.send_to_all_windows ?? false;
+      stopOnPattern = clickerStatus.config.stop_on_pattern ?? true;
       stopPatterns = [...(clickerStatus.config.stop_patterns || [])];
-      notifyOnStop = clickerStatus.config.notify_on_stop;
+      notifyOnStop = clickerStatus.config.notify_on_stop ?? true;
     }
   });
 
   const quickKeys = ['1', '2', '3', '4', 'F1', 'F2', 'F3', 'F4', 'Z', 'Space'];
   const quickIntervals = [200, 500, 1000, 2000, 3000, 5000];
+
+  function parseKeysString(str: string): string[] {
+    return str
+      .split(/[,\s]+/)
+      .map((k) => k.trim().toUpperCase())
+      .filter((k) => k.length > 0);
+  }
+
+  function handleKeysInput(e: Event & { currentTarget: HTMLInputElement }) {
+    keysInput = e.currentTarget.value;
+    const parsed = parseKeysString(keysInput);
+    if (parsed.length > 0) {
+      keys = parsed;
+    }
+  }
+
+  function toggleQuickKey(qk: string) {
+    const cleanKey = qk.toUpperCase();
+    if (keys.includes(cleanKey)) {
+      keys = keys.filter((k) => k !== cleanKey);
+    } else {
+      keys = [...keys, cleanKey];
+    }
+    keysInput = keys.join(', ');
+  }
+
+  function removeKey(k: string) {
+    keys = keys.filter((item) => item !== k);
+    keysInput = keys.join(', ');
+  }
 
   function togglePattern(patName: string) {
     if (stopPatterns.includes(patName)) {
@@ -47,9 +89,13 @@
   }
 
   function handleSave() {
+    const parsed = parseKeysString(keysInput);
+    const finalKeys = parsed.length > 0 ? parsed : ['1'];
     onSave({
-      key: key.trim().toUpperCase() || '1',
+      keys: finalKeys,
+      key: finalKeys[0] || '1',
       interval_ms: Math.max(50, Number(intervalMs) || 1000),
+      send_to_all_windows: sendToAllWindows,
       stop_on_pattern: stopOnPattern,
       stop_patterns: stopPatterns,
       notify_on_stop: notifyOnStop,
@@ -76,13 +122,26 @@
             <span class="stat-label">Отправлено кликов:</span>
             <span class="stat-value">{clickerStatus.count}</span>
           </div>
+
           <div class="stat-pill">
-            <span class="stat-label">Текущая клавиша:</span>
-            <span class="stat-value key-badge">{clickerStatus.config.key}</span>
+            <span class="stat-label">Клавиши:</span>
+            <div class="keys-pill-list">
+              {#each (clickerStatus.config.keys && clickerStatus.config.keys.length > 0 ? clickerStatus.config.keys : [clickerStatus.config.key || '1']) as k}
+                <span class="key-badge">{k}</span>
+              {/each}
+            </div>
           </div>
+
           <div class="stat-pill">
             <span class="stat-label">Интервал:</span>
             <span class="stat-value">{clickerStatus.config.interval_ms} мс</span>
+          </div>
+
+          <div class="stat-pill">
+            <span class="stat-label">Цель:</span>
+            <span class="stat-value">
+              {clickerStatus.config.send_to_all_windows ? 'Все окна' : 'Захваченное окно'}
+            </span>
           </div>
         </div>
 
@@ -107,11 +166,37 @@
       </div>
     </div>
 
+    <!-- Target Window Status Banner -->
+    {#if !sendToAllWindows}
+      {#if windowFilterMode?.mode === 'Single'}
+        <div class="target-window-banner captured">
+          <span class="banner-icon">🎯</span>
+          <span>
+            Кликер отправляет в захваченное окно: <strong>Слот #{windowFilterMode.data.slot} [PID {windowFilterMode.data.pid}]</strong> — {windowFilterMode.data.title}
+          </span>
+        </div>
+      {:else}
+        <div class="target-window-banner warning">
+          <span class="banner-icon">⚠️</span>
+          <span>
+            <strong>Окно игры не захвачено.</strong> По умолчанию кликер работает только в захваченных окнах. Нажмите <strong>Ctrl + 1..6</strong> в окне игры, либо включите чекбокс <em>«Отправка во все окна»</em> ниже.
+          </span>
+        </div>
+      {/if}
+    {:else}
+      <div class="target-window-banner all-windows">
+        <span class="banner-icon">🌐</span>
+        <span>
+          Включена рассылка во все запущенные окна игры (процесс EndlessWar.exe).
+        </span>
+      </div>
+    {/if}
+
     <div class="hotkey-banner">
       <span class="hotkey-icon">⌨</span>
       <span>
-        Глобальные горячие клавиши: <strong>Ctrl + O</strong> — запуск, <strong>Ctrl + P</strong> — выключение.
-        Кликер отправляет нажатия в фоновом режиме без перехвата фокуса.
+        Глобальные горячие клавиши: <strong>Ctrl + O</strong> — запуск кликера, <strong>Ctrl + P</strong> — выключение.
+        Работает в фоне без перехвата фокуса.
       </span>
     </div>
   </div>
@@ -123,43 +208,81 @@
         <h2>Параметры клика</h2>
       </div>
       <div class="card-body">
-        <!-- Key selection -->
+        <!-- Multiple Keys Selection -->
         <div class="form-group">
-          <label for="clicker-key">Клавиша для нажатия</label>
+          <label for="clicker-keys">
+            Клавиши для нажатия (последовательность)
+            <span class="hint-text">(через запятую или пробел)</span>
+          </label>
           <div class="key-input-row">
             <input
-              id="clicker-key"
+              id="clicker-keys"
               type="text"
-              class="input-key"
-              bind:value={key}
-              placeholder="1, 2, F1, Z, Space"
-              maxlength="10"
+              class="input-keys"
+              value={keysInput}
+              oninput={handleKeysInput}
+              placeholder="1, 2, 3, F1, Space"
             />
             {#if onTestKey}
               <button
                 type="button"
                 class="btn btn-secondary btn-sm"
-                onclick={() => onTestKey(key)}
-                title="Отправить клавишу в окно прямо сейчас"
+                onclick={() => onTestKey(keys.join(', '))}
+                title="Отправить последовательность клавиш в окно прямо сейчас"
               >
                 Тест
               </button>
             {/if}
           </div>
 
+          <!-- Active Key Badges with delete button -->
+          {#if keys.length > 0}
+            <div class="active-keys-chips">
+              {#each keys as k}
+                <span class="active-key-chip">
+                  <span class="chip-name">{k}</span>
+                  <button
+                    type="button"
+                    class="remove-key-btn"
+                    onclick={() => removeKey(k)}
+                    title="Удалить клавишу"
+                  >
+                    ×
+                  </button>
+                </span>
+              {/each}
+            </div>
+          {/if}
+
+          <!-- Quick chips to toggle/append keys -->
           <div class="quick-chips">
-            <span class="chips-label">Быстрый выбор:</span>
+            <span class="chips-label">Быстрое добавление:</span>
             {#each quickKeys as qk}
               <button
                 type="button"
                 class="chip-btn"
-                class:active={key.toUpperCase() === qk.toUpperCase()}
-                onclick={() => (key = qk)}
+                class:active={keys.includes(qk.toUpperCase())}
+                onclick={() => toggleQuickKey(qk)}
               >
                 {qk}
               </button>
             {/each}
           </div>
+        </div>
+
+        <!-- Target Window Mode Checkbox -->
+        <div class="form-group target-mode-box">
+          <label class="checkbox-label">
+            <input type="checkbox" bind:checked={sendToAllWindows} />
+            <span><strong>Отправка во все окна игры</strong> (по умолчанию выкл)</span>
+          </label>
+          <p class="field-hint">
+            {#if sendToAllWindows}
+              🌐 Нажатия будут отправляться во <strong>все окна</strong> процесса игры одновременно.
+            {:else}
+              🎯 Нажатия отправляются <strong>только в захваченное окно</strong> (выбранное комбинацией Ctrl + 1..6).
+            {/if}
+          </p>
         </div>
 
         <!-- Interval selection -->
@@ -368,12 +491,53 @@
     color: #cdd6f4;
   }
 
+  .keys-pill-list {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
   .key-badge {
     background: #45475a;
-    padding: 2px 8px;
+    padding: 2px 7px;
     border-radius: 4px;
     font-family: monospace;
-    font-size: 0.95rem;
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: #89b4fa;
+  }
+
+  .target-window-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    line-height: 1.4;
+  }
+
+  .target-window-banner.captured {
+    background: rgba(166, 227, 161, 0.1);
+    border: 1px solid rgba(166, 227, 161, 0.3);
+    color: #a6e3a1;
+  }
+
+  .target-window-banner.warning {
+    background: rgba(249, 226, 175, 0.1);
+    border: 1px solid rgba(249, 226, 175, 0.35);
+    color: #f9e2af;
+  }
+
+  .target-window-banner.all-windows {
+    background: rgba(137, 180, 250, 0.1);
+    border: 1px solid rgba(137, 180, 250, 0.3);
+    color: #89b4fa;
+  }
+
+  .banner-icon {
+    font-size: 1.15rem;
   }
 
   .stop-reason-alert {
@@ -420,13 +584,47 @@
     align-items: center;
   }
 
-  .input-key {
-    width: 140px;
-    text-transform: uppercase;
+  .input-keys {
+    flex: 1;
     font-weight: 700;
     font-family: monospace;
-    font-size: 1.1rem;
-    text-align: center;
+    font-size: 1rem;
+    text-transform: uppercase;
+  }
+
+  .active-keys-chips {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+
+  .active-key-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(137, 180, 250, 0.15);
+    border: 1px solid rgba(137, 180, 250, 0.4);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-family: monospace;
+    font-size: 0.85rem;
+    color: #89b4fa;
+    font-weight: 700;
+  }
+
+  .remove-key-btn {
+    background: transparent;
+    border: none;
+    color: #f38ba8;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0 2px;
+  }
+
+  .remove-key-btn:hover {
+    color: #ff5555;
   }
 
   .quick-chips {
@@ -463,6 +661,14 @@
     color: #11111b;
     border-color: #89b4fa;
     font-weight: 700;
+  }
+
+  .target-mode-box {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--color-border, #313244);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-top: 10px;
   }
 
   .hint-text {

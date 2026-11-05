@@ -21,8 +21,10 @@ export interface RegisteredUser {
 }
 
 export interface ClickerConfig {
-  key: string;
+  keys?: string[];
+  key?: string;
   interval_ms: number;
+  send_to_all_windows: boolean;
   stop_on_pattern: boolean;
   stop_patterns: string[];
   notify_on_stop: boolean;
@@ -188,8 +190,10 @@ export const defaultConfig = (): Config => ({
     close_to_tray: true,
   },
   clicker: {
+    keys: ['1'],
     key: '1',
     interval_ms: 1000,
+    send_to_all_windows: false,
     stop_on_pattern: true,
     stop_patterns: [],
     notify_on_stop: true,

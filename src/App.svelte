@@ -963,6 +963,7 @@
     {:else if currentPage === 'clicker'}
       <ClickerPage
         {clickerStatus}
+        {windowFilterMode}
         patterns={config.target.patterns}
         onStart={startClicker}
         onStop={stopClicker}

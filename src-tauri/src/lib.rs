@@ -1414,22 +1414,56 @@ async fn test_send_key(
     state: State<'_, AppState>,
     key: String,
 ) -> Result<String, String> {
-    let process_name = {
+    let (process_name, send_to_all) = {
         let config = state.config.lock().await;
-        config.target.process_name.clone()
+        (config.target.process_name.clone(), config.clicker.send_to_all_windows)
     };
 
-    let windows = screen_capture::find_target_windows(&process_name);
-    if windows.is_empty() {
+    let target_hwnds: Vec<(isize, u32)> = if send_to_all {
+        let windows = screen_capture::find_target_windows(&process_name);
+        windows.into_iter().map(|w| (w.hwnd, w.pid)).collect()
+    } else {
+        match state.window_filter.get_mode() {
+            window_filter::WindowFilterMode::Single(info) => vec![(info.hwnd, info.pid)],
+            window_filter::WindowFilterMode::All => {
+                let windows = screen_capture::find_target_windows(&process_name);
+                if let Some(w) = windows.first() {
+                    vec![(w.hwnd, w.pid)]
+                } else {
+                    Vec::new()
+                }
+            }
+        }
+    };
+
+    if target_hwnds.is_empty() {
         return Err(format!("Окно процесса '{}' не найдено. Игра запущена?", process_name));
     }
 
-    let win = &windows[0];
-    input_sender::send_key_background(win.hwnd, &key, 75)
-        .await
-        .map_err(|e| format!("Ошибка отправки клавиши: {}", e))?;
+    let keys: Vec<String> = key
+        .split(|c: char| c == ',' || c == ' ')
+        .map(|s| s.trim().to_uppercase())
+        .filter(|s| !s.is_empty())
+        .collect();
 
-    Ok(format!("Клавиша '{}' отправлена в окно [PID {}]", key, win.pid))
+    let keys_to_send = if keys.is_empty() { vec![key.to_uppercase()] } else { keys };
+
+    for &(hwnd, _) in &target_hwnds {
+        for k in &keys_to_send {
+            input_sender::send_key_background(hwnd, k, 75)
+                .await
+                .map_err(|e| format!("Ошибка отправки клавиши '{}': {}", k, e))?;
+            if keys_to_send.len() > 1 {
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            }
+        }
+    }
+
+    Ok(format!(
+        "Отправлено: [{}] в {} окн(а/о)",
+        keys_to_send.join(", "),
+        target_hwnds.len()
+    ))
 }
 
 #[tauri::command]
