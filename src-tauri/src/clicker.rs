@@ -1,13 +1,14 @@
 //! Background auto-clicker for target game windows.
 //!
-//! Sends periodic keystrokes to target windows and automatically stops
-//! upon detecting specific packet patterns or hotkeys.
+//! Supports multiple independent rules/keys, each with its own interval,
+//! target window (captured, specific slot, or all), and pattern stop triggers.
 
-use crate::config::{AppConfig, ClickerConfig};
+use crate::config::{AppConfig, ClickerConfig, ClickerRule, ClickerTarget};
 use crate::input_sender;
 use crate::screen_capture;
 use crate::window_filter::{WindowFilterMode, WindowFilterState};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
@@ -27,7 +28,7 @@ pub struct ClickerState {
     pub running: Arc<AtomicBool>,
     pub count: Arc<AtomicU64>,
     pub last_stop_reason: Arc<std::sync::Mutex<Option<String>>>,
-    stop_tx: Arc<std::sync::Mutex<Option<tokio::sync::watch::Sender<bool>>>>,
+    active_rules: Arc<std::sync::Mutex<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
 }
 
 impl Default for ClickerState {
@@ -42,7 +43,7 @@ impl ClickerState {
             running: Arc::new(AtomicBool::new(false)),
             count: Arc::new(AtomicU64::new(0)),
             last_stop_reason: Arc::new(std::sync::Mutex::new(None)),
-            stop_tx: Arc::new(std::sync::Mutex::new(None)),
+            active_rules: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -52,11 +53,16 @@ impl ClickerState {
     }
 
     pub fn get_status(&self, config: &AppConfig) -> ClickerStatus {
+        let mut cfg = config.clicker.clone();
+        // Ensure rules list is populated even if loaded from older config format
+        if cfg.rules.is_empty() {
+            cfg.rules = cfg.get_rules();
+        }
         ClickerStatus {
             running: self.running.load(Ordering::SeqCst),
             count: self.count.load(Ordering::SeqCst),
             last_stop_reason: self.last_stop_reason.lock().unwrap().clone(),
-            config: config.clicker.clone(),
+            config: cfg,
         }
     }
 
@@ -66,116 +72,157 @@ impl ClickerState {
         config_arc: &Arc<Mutex<AppConfig>>,
         filter: &WindowFilterState,
     ) {
-        if self.running.swap(true, Ordering::SeqCst) {
-            info!("Clicker start requested, but it is already running");
-            return;
-        }
+        self.running.store(true, Ordering::SeqCst);
 
         if let Ok(mut reason_guard) = self.last_stop_reason.lock() {
             *reason_guard = None;
         }
 
-        let (tx, mut rx) = tokio::sync::watch::channel(false);
-        if let Ok(mut stop_guard) = self.stop_tx.lock() {
-            *stop_guard = Some(tx);
+        // Stop any previously running rule loops
+        if let Ok(mut map) = self.active_rules.lock() {
+            for (_, tx) in map.drain() {
+                let _ = tx.send(true);
+            }
         }
 
-        let running_clone = self.running.clone();
-        let count_clone = self.count.clone();
         let app_clone = app.clone();
         let config_arc_clone = config_arc.clone();
         let filter_clone = filter.clone();
-
-        {
-            let app_h = app.clone();
-            let cfg_arc = config_arc.clone();
-            let self_clone = self.clone();
-            tauri::async_runtime::spawn(async move {
-                let cfg = cfg_arc.lock().await;
-                let status = self_clone.get_status(&cfg);
-                let _ = app_h.emit("clicker-status-changed", status);
-            });
-        }
+        let self_clone = self.clone();
 
         tauri::async_runtime::spawn(async move {
-            info!("Clicker background loop started");
+            let (rules, proc_name) = {
+                let cfg = config_arc_clone.lock().await;
+                (cfg.clicker.get_rules(), cfg.target.process_name.clone())
+            };
 
-            loop {
-                if !running_clone.load(Ordering::SeqCst) {
-                    break;
-                }
-
-                let (keys, interval_ms, proc_name, send_to_all) = {
-                    let cfg = config_arc_clone.lock().await;
-                    (
-                        cfg.clicker.get_keys(),
-                        cfg.clicker.interval_ms.max(50),
-                        cfg.target.process_name.clone(),
-                        cfg.clicker.send_to_all_windows,
-                    )
-                };
-
-                let target_hwnds: Vec<isize> = if send_to_all {
-                    let windows = screen_capture::find_target_windows(&proc_name);
-                    windows.into_iter().map(|w| w.hwnd).collect()
-                } else {
-                    match filter_clone.get_mode() {
-                        WindowFilterMode::Single(info) => {
-                            #[cfg(windows)]
-                            {
-                                use windows::Win32::Foundation::HWND;
-                                use windows::Win32::UI::WindowsAndMessaging::IsWindow;
-                                if unsafe { IsWindow(HWND(info.hwnd as _)).as_bool() } {
-                                    vec![info.hwnd]
-                                } else {
-                                    Vec::new()
-                                }
-                            }
-                            #[cfg(not(windows))]
-                            vec![info.hwnd]
-                        }
-                        WindowFilterMode::All => {
-                            // By default, only send to captured window. Do not send to all!
-                            Vec::new()
-                        }
-                    }
-                };
-
-                if !target_hwnds.is_empty() {
-                    for &hwnd in &target_hwnds {
-                        for key in &keys {
-                            if !running_clone.load(Ordering::SeqCst) {
-                                break;
-                            }
-                            match input_sender::send_key_background(hwnd, key, 75).await {
-                                Ok(()) => {
-                                    let new_count = count_clone.fetch_add(1, Ordering::SeqCst) + 1;
-                                    let _ = app_clone.emit("clicker-tick", new_count);
-                                }
-                                Err(e) => {
-                                    warn!("Clicker failed to send key '{}' to HWND {}: {}", key, hwnd, e);
-                                }
-                            }
-                            if keys.len() > 1 {
-                                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-                            }
-                        }
-                    }
-                } else {
-                    debug!("Clicker: no target window (capture window via Ctrl+1..6 or enable 'send_to_all_windows')");
-                }
-
-                tokio::select! {
-                    _ = rx.changed() => {
-                        debug!("Clicker sleep aborted by stop signal");
-                        break;
-                    }
-                    _ = tokio::time::sleep(tokio::time::Duration::from_millis(interval_ms)) => {}
-                }
+            let enabled_rules: Vec<ClickerRule> = rules.into_iter().filter(|r| r.enabled).collect();
+            if enabled_rules.is_empty() {
+                warn!("Clicker start requested, but no rules are enabled");
+                self_clone.running.store(false, Ordering::SeqCst);
+                let cfg = config_arc_clone.lock().await;
+                let status = self_clone.get_status(&cfg);
+                let _ = app_clone.emit("clicker-status-changed", status);
+                return;
             }
 
-            running_clone.store(false, Ordering::SeqCst);
-            info!("Clicker background loop finished");
+            info!(
+                "Starting clicker with {} active rule(s) for process '{}'",
+                enabled_rules.len(),
+                proc_name
+            );
+
+            for rule in enabled_rules {
+                let (tx, mut rx) = tokio::sync::watch::channel(false);
+                if let Ok(mut map) = self_clone.active_rules.lock() {
+                    map.insert(rule.id.clone(), tx);
+                }
+
+                let rule_id = rule.id.clone();
+                let rule_name = if rule.name.is_empty() {
+                    format!("Клавиша {}", rule.key)
+                } else {
+                    rule.name.clone()
+                };
+                let key = rule.key.trim().to_uppercase();
+                let interval_ms = rule.interval_ms.max(50);
+                let target = rule.target.clone();
+
+                let running_ref = self_clone.running.clone();
+                let count_ref = self_clone.count.clone();
+                let app_ref = app_clone.clone();
+                let filter_ref = filter_clone.clone();
+                let proc_ref = proc_name.clone();
+
+                tauri::async_runtime::spawn(async move {
+                    info!(
+                        "Clicker rule '{}' started (Key: '{}', Interval: {}ms, Target: {:?})",
+                        rule_name, key, interval_ms, target
+                    );
+
+                    loop {
+                        if !running_ref.load(Ordering::SeqCst) || *rx.borrow() {
+                            break;
+                        }
+
+                        // Resolve target HWND(s) according to this rule's independent setting
+                        let target_hwnds: Vec<isize> = match &target {
+                            ClickerTarget::Captured => {
+                                match filter_ref.get_mode() {
+                                    WindowFilterMode::Single(info) => {
+                                        #[cfg(windows)]
+                                        {
+                                            use windows::Win32::Foundation::HWND;
+                                            use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+                                            if unsafe { IsWindow(HWND(info.hwnd as _)).as_bool() } {
+                                                vec![info.hwnd]
+                                            } else {
+                                                Vec::new()
+                                            }
+                                        }
+                                        #[cfg(not(windows))]
+                                        vec![info.hwnd]
+                                    }
+                                    WindowFilterMode::All => Vec::new(),
+                                }
+                            }
+                            ClickerTarget::Slot(slot) => {
+                                let current_mode = filter_ref.get_mode();
+                                if let WindowFilterMode::Single(ref info) = current_mode {
+                                    if info.slot == *slot {
+                                        vec![info.hwnd]
+                                    } else {
+                                        let windows = screen_capture::find_target_windows(&proc_ref);
+                                        let idx = (*slot as usize).saturating_sub(1);
+                                        windows.get(idx).map(|w| vec![w.hwnd]).unwrap_or_default()
+                                    }
+                                } else {
+                                    let windows = screen_capture::find_target_windows(&proc_ref);
+                                    let idx = (*slot as usize).saturating_sub(1);
+                                    windows.get(idx).map(|w| vec![w.hwnd]).unwrap_or_default()
+                                }
+                            }
+                            ClickerTarget::All => {
+                                let windows = screen_capture::find_target_windows(&proc_ref);
+                                windows.into_iter().map(|w| w.hwnd).collect()
+                            }
+                        };
+
+                        if !target_hwnds.is_empty() {
+                            for &hwnd in &target_hwnds {
+                                if !running_ref.load(Ordering::SeqCst) || *rx.borrow() {
+                                    break;
+                                }
+                                match input_sender::send_key_background(hwnd, &key, 75).await {
+                                    Ok(()) => {
+                                        let new_count = count_ref.fetch_add(1, Ordering::SeqCst) + 1;
+                                        let _ = app_ref.emit("clicker-tick", new_count);
+                                    }
+                                    Err(e) => {
+                                        warn!("Rule '{}' failed to send key '{}': {}", rule_name, key, e);
+                                    }
+                                }
+                            }
+                        } else {
+                            debug!("Rule '{}': no target window available", rule_name);
+                        }
+
+                        tokio::select! {
+                            _ = rx.changed() => {
+                                debug!("Rule '{}' loop received stop signal", rule_name);
+                                break;
+                            }
+                            _ = tokio::time::sleep(tokio::time::Duration::from_millis(interval_ms)) => {}
+                        }
+                    }
+
+                    info!("Rule '{}' (ID: {}) stopped", rule_name, rule_id);
+                });
+            }
+
+            let cfg = config_arc_clone.lock().await;
+            let status = self_clone.get_status(&cfg);
+            let _ = app_clone.emit("clicker-status-changed", status);
         });
     }
 
@@ -193,8 +240,8 @@ impl ClickerState {
             *reason_guard = reason.clone();
         }
 
-        if let Ok(mut stop_guard) = self.stop_tx.lock() {
-            if let Some(tx) = stop_guard.take() {
+        if let Ok(mut map) = self.active_rules.lock() {
+            for (_, tx) in map.drain() {
                 let _ = tx.send(true);
             }
         }
@@ -223,34 +270,62 @@ impl ClickerState {
         }
 
         let cfg = rt.block_on(async { config_arc.lock().await.clone() });
+        let rules = cfg.clicker.get_rules();
+        let pattern_lower = pattern_name.to_lowercase();
 
-        if !cfg.clicker.stop_on_pattern {
-            return;
-        }
+        let mut stopped_rule_labels = Vec::new();
 
-        if !cfg.clicker.stop_patterns.is_empty() {
-            let pattern_lower = pattern_name.to_lowercase();
-            let matches = cfg
-                .clicker
-                .stop_patterns
-                .iter()
-                .any(|p| p.to_lowercase() == pattern_lower);
-            if !matches {
-                return;
+        if let Ok(mut map) = self.active_rules.lock() {
+            for rule in &rules {
+                if !rule.enabled || !rule.stop_on_pattern {
+                    continue;
+                }
+                let matches = rule.stop_patterns.is_empty()
+                    || rule.stop_patterns.iter().any(|p| p.to_lowercase() == pattern_lower);
+
+                if matches {
+                    if let Some(tx) = map.remove(&rule.id) {
+                        let _ = tx.send(true);
+                        stopped_rule_labels.push(format!("'{}' ({})", rule.name, rule.key));
+                    }
+                }
+            }
+
+            if map.is_empty() {
+                self.running.store(false, Ordering::SeqCst);
             }
         }
 
-        let reason = format!("Сработал паттерн '{}'", pattern_name);
-        self.stop(app, Some(reason.clone()), config_arc);
+        if !stopped_rule_labels.is_empty() {
+            let reason = format!(
+                "Остановлены [{}]: сработал паттерн '{}'",
+                stopped_rule_labels.join(", "),
+                pattern_name
+            );
+            info!("{}", reason);
 
-        if cfg.clicker.notify_on_stop {
-            use tauri_plugin_notification::NotificationExt;
-            let _ = app
-                .notification()
-                .builder()
-                .title("EW Notify — Кликер остановлен")
-                .body(&reason)
-                .show();
+            if let Ok(mut reason_guard) = self.last_stop_reason.lock() {
+                *reason_guard = Some(reason.clone());
+            }
+
+            if cfg.clicker.notify_on_stop {
+                use tauri_plugin_notification::NotificationExt;
+                let _ = app
+                    .notification()
+                    .builder()
+                    .title("EW Notify — Кликер")
+                    .body(&reason)
+                    .show();
+            }
+
+            let app_h = app.clone();
+            let cfg_arc = config_arc.clone();
+            let self_clone = self.clone();
+            tauri::async_runtime::spawn(async move {
+                let cfg = cfg_arc.lock().await;
+                let status = self_clone.get_status(&cfg);
+                let _ = app_h.emit("clicker-status-changed", status);
+            });
         }
     }
 }
@@ -267,15 +342,11 @@ mod tests {
     }
 
     #[test]
-    fn test_clicker_config_keys() {
-        let mut cfg = ClickerConfig::default();
-        assert_eq!(cfg.get_keys(), vec!["1".to_string()]);
-        assert!(!cfg.send_to_all_windows);
-
-        cfg.keys = vec!["1".to_string(), "2".to_string(), "f1".to_string()];
-        assert_eq!(
-            cfg.get_keys(),
-            vec!["1".to_string(), "2".to_string(), "F1".to_string()]
-        );
+    fn test_clicker_config_rules() {
+        let cfg = ClickerConfig::default();
+        let rules = cfg.get_rules();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].key, "1");
+        assert_eq!(rules[0].target, ClickerTarget::Captured);
     }
 }

@@ -1,6 +1,13 @@
 <script lang="ts">
   import PageHeader from '../PageHeader.svelte';
-  import type { ClickerConfig, ClickerStatus, Pattern, WindowFilterMode } from '../../lib/types';
+  import type {
+    ClickerConfig,
+    ClickerRule,
+    ClickerStatus,
+    ClickerTarget,
+    Pattern,
+    WindowFilterMode,
+  } from '../../lib/types';
 
   let {
     clickerStatus,
@@ -17,32 +24,35 @@
     onStart: () => void;
     onStop: () => void;
     onSave: (cfg: ClickerConfig) => void;
-    onTestKey?: (key: string) => void;
+    onTestKey?: (key: string, target?: ClickerTarget) => void;
   } = $props();
 
-  let keys = $state<string[]>(['1']);
-  let keysInput = $state('1');
-  let intervalMs = $state(1000);
-  let sendToAllWindows = $state(false);
-  let stopOnPattern = $state(true);
-  let stopPatterns = $state<string[]>([]);
+  let rules = $state<ClickerRule[]>([]);
   let notifyOnStop = $state(true);
 
-  // Sync if status config changed externally
+  // Sync when clickerStatus config changes
   $effect(() => {
     if (clickerStatus?.config) {
-      const cfgKeys =
-        clickerStatus.config.keys && clickerStatus.config.keys.length > 0
-          ? clickerStatus.config.keys
-          : clickerStatus.config.key
-            ? [clickerStatus.config.key]
-            : ['1'];
-      keys = [...cfgKeys];
-      keysInput = keys.join(', ');
-      intervalMs = clickerStatus.config.interval_ms;
-      sendToAllWindows = clickerStatus.config.send_to_all_windows ?? false;
-      stopOnPattern = clickerStatus.config.stop_on_pattern ?? true;
-      stopPatterns = [...(clickerStatus.config.stop_patterns || [])];
+      if (clickerStatus.config.rules && clickerStatus.config.rules.length > 0) {
+        rules = clickerStatus.config.rules.map((r) => ({
+          ...r,
+          stop_patterns: [...(r.stop_patterns || [])],
+        }));
+      } else {
+        // Fallback default rule
+        rules = [
+          {
+            id: 'rule-1',
+            name: 'Клавиша 1',
+            enabled: true,
+            key: '1',
+            interval_ms: 1000,
+            target: { type: 'Captured' },
+            stop_on_pattern: true,
+            stop_patterns: [],
+          },
+        ];
+      }
       notifyOnStop = clickerStatus.config.notify_on_stop ?? true;
     }
   });
@@ -50,60 +60,89 @@
   const quickKeys = ['1', '2', '3', '4', 'F1', 'F2', 'F3', 'F4', 'Z', 'Space'];
   const quickIntervals = [200, 500, 1000, 2000, 3000, 5000];
 
-  function parseKeysString(str: string): string[] {
-    return str
-      .split(/[,\s]+/)
-      .map((k) => k.trim().toUpperCase())
-      .filter((k) => k.length > 0);
+  function getTargetValue(target: ClickerTarget): string {
+    if (target.type === 'Slot') {
+      return `Slot-${target.data}`;
+    }
+    return target.type;
   }
 
-  function handleKeysInput(e: Event & { currentTarget: HTMLInputElement }) {
-    keysInput = e.currentTarget.value;
-    const parsed = parseKeysString(keysInput);
-    if (parsed.length > 0) {
-      keys = parsed;
+  function setTargetValue(rule: ClickerRule, val: string) {
+    if (val === 'Captured') {
+      rule.target = { type: 'Captured' };
+    } else if (val === 'All') {
+      rule.target = { type: 'All' };
+    } else if (val.startsWith('Slot-')) {
+      const slotNum = parseInt(val.replace('Slot-', ''), 10) || 1;
+      rule.target = { type: 'Slot', data: slotNum };
     }
   }
 
-  function toggleQuickKey(qk: string) {
-    const cleanKey = qk.toUpperCase();
-    if (keys.includes(cleanKey)) {
-      keys = keys.filter((k) => k !== cleanKey);
-    } else {
-      keys = [...keys, cleanKey];
+  function addRule() {
+    const nextNum = rules.length + 1;
+    const newRule: ClickerRule = {
+      id: `rule-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: `Клавиша ${nextNum}`,
+      enabled: true,
+      key: nextNum <= 9 ? `${nextNum}` : '1',
+      interval_ms: 1000,
+      target: { type: 'Captured' },
+      stop_on_pattern: true,
+      stop_patterns: [],
+    };
+    rules = [...rules, newRule];
+  }
+
+  function removeRule(id: string) {
+    if (rules.length <= 1) {
+      rules = [
+        {
+          id: `rule-${Date.now()}`,
+          name: 'Клавиша 1',
+          enabled: true,
+          key: '1',
+          interval_ms: 1000,
+          target: { type: 'Captured' },
+          stop_on_pattern: true,
+          stop_patterns: [],
+        },
+      ];
+      return;
     }
-    keysInput = keys.join(', ');
+    rules = rules.filter((r) => r.id !== id);
   }
 
-  function removeKey(k: string) {
-    keys = keys.filter((item) => item !== k);
-    keysInput = keys.join(', ');
-  }
-
-  function togglePattern(patName: string) {
-    if (stopPatterns.includes(patName)) {
-      stopPatterns = stopPatterns.filter((p) => p !== patName);
+  function toggleRulePattern(rule: ClickerRule, patName: string) {
+    if (rule.stop_patterns.includes(patName)) {
+      rule.stop_patterns = rule.stop_patterns.filter((p) => p !== patName);
     } else {
-      stopPatterns = [...stopPatterns, patName];
+      rule.stop_patterns = [...rule.stop_patterns, patName];
     }
   }
 
   function handleSave() {
-    const parsed = parseKeysString(keysInput);
-    const finalKeys = parsed.length > 0 ? parsed : ['1'];
+    const cleanedRules = rules.map((r) => ({
+      ...r,
+      key: r.key.trim().toUpperCase() || '1',
+      interval_ms: Math.max(50, Number(r.interval_ms) || 1000),
+      stop_patterns: [...r.stop_patterns],
+    }));
+
     onSave({
-      keys: finalKeys,
-      key: finalKeys[0] || '1',
-      interval_ms: Math.max(50, Number(intervalMs) || 1000),
-      send_to_all_windows: sendToAllWindows,
-      stop_on_pattern: stopOnPattern,
-      stop_patterns: stopPatterns,
+      rules: cleanedRules,
       notify_on_stop: notifyOnStop,
     });
   }
 </script>
 
-<PageHeader title="Автокликер" />
+<PageHeader title="Автокликер">
+  <button type="button" class="btn btn-secondary btn-sm" onclick={addRule}>
+    + Добавить клавишу
+  </button>
+  <button type="button" class="btn btn-primary btn-sm" onclick={handleSave}>
+    Сохранить настройки
+  </button>
+</PageHeader>
 
 <div class="clicker-page">
   <!-- Status & Controls Hero Card -->
@@ -119,28 +158,14 @@
 
         <div class="stats-row">
           <div class="stat-pill">
-            <span class="stat-label">Отправлено кликов:</span>
+            <span class="stat-label">Всего кликов:</span>
             <span class="stat-value">{clickerStatus.count}</span>
           </div>
 
           <div class="stat-pill">
-            <span class="stat-label">Клавиши:</span>
-            <div class="keys-pill-list">
-              {#each (clickerStatus.config.keys && clickerStatus.config.keys.length > 0 ? clickerStatus.config.keys : [clickerStatus.config.key || '1']) as k}
-                <span class="key-badge">{k}</span>
-              {/each}
-            </div>
-          </div>
-
-          <div class="stat-pill">
-            <span class="stat-label">Интервал:</span>
-            <span class="stat-value">{clickerStatus.config.interval_ms} мс</span>
-          </div>
-
-          <div class="stat-pill">
-            <span class="stat-label">Цель:</span>
+            <span class="stat-label">Активных правил:</span>
             <span class="stat-value">
-              {clickerStatus.config.send_to_all_windows ? 'Все окна' : 'Захваченное окно'}
+              {rules.filter((r) => r.enabled).length} из {rules.length}
             </span>
           </div>
         </div>
@@ -148,7 +173,7 @@
         {#if clickerStatus.last_stop_reason}
           <div class="stop-reason-alert">
             <span class="reason-icon">⏹</span>
-            <span>Последняя остановка: <strong>{clickerStatus.last_stop_reason}</strong></span>
+            <span>{clickerStatus.last_stop_reason}</span>
           </div>
         {/if}
       </div>
@@ -156,38 +181,29 @@
       <div class="status-actions">
         {#if !clickerStatus.running}
           <button type="button" class="btn btn-primary btn-hero" onclick={onStart}>
-            ▶ Запустить (Ctrl + O)
+            ▶ Запустить все (Ctrl + O)
           </button>
         {:else}
           <button type="button" class="btn btn-danger btn-hero" onclick={onStop}>
-            ⏹ Остановить (Ctrl + P)
+            ⏹ Остановить все (Ctrl + P)
           </button>
         {/if}
       </div>
     </div>
 
-    <!-- Target Window Status Banner -->
-    {#if !sendToAllWindows}
-      {#if windowFilterMode?.mode === 'Single'}
-        <div class="target-window-banner captured">
-          <span class="banner-icon">🎯</span>
-          <span>
-            Кликер отправляет в захваченное окно: <strong>Слот #{windowFilterMode.data.slot} [PID {windowFilterMode.data.pid}]</strong> — {windowFilterMode.data.title}
-          </span>
-        </div>
-      {:else}
-        <div class="target-window-banner warning">
-          <span class="banner-icon">⚠️</span>
-          <span>
-            <strong>Окно игры не захвачено.</strong> По умолчанию кликер работает только в захваченных окнах. Нажмите <strong>Ctrl + 1..6</strong> в окне игры, либо включите чекбокс <em>«Отправка во все окна»</em> ниже.
-          </span>
-        </div>
-      {/if}
-    {:else}
-      <div class="target-window-banner all-windows">
-        <span class="banner-icon">🌐</span>
+    <!-- Captured Window info -->
+    {#if windowFilterMode?.mode === 'Single'}
+      <div class="target-window-banner captured">
+        <span class="banner-icon">🎯</span>
         <span>
-          Включена рассылка во все запущенные окна игры (процесс EndlessWar.exe).
+          Текущее захваченное окно: <strong>Слот #{windowFilterMode.data.slot} [PID {windowFilterMode.data.pid}]</strong> — {windowFilterMode.data.title}
+        </span>
+      </div>
+    {:else}
+      <div class="target-window-banner warning">
+        <span class="banner-icon">⚠️</span>
+        <span>
+          Окно игры не захвачено (режим «Все окна»). Для правил с целью <em>«Захваченное окно»</em> нажмите <strong>Ctrl + 1..6</strong> в окне игры, либо выберите конкретный слот в правиле.
         </span>
       </div>
     {/if}
@@ -195,192 +211,206 @@
     <div class="hotkey-banner">
       <span class="hotkey-icon">⌨</span>
       <span>
-        Глобальные горячие клавиши: <strong>Ctrl + O</strong> — запуск кликера, <strong>Ctrl + P</strong> — выключение.
-        Работает в фоне без перехвата фокуса.
+        Горячие клавиши: <strong>Ctrl + O</strong> — запуск всех включенных клавиш, <strong>Ctrl + P</strong> — остановка. Каждая клавиша работает независимо в фоновом режиме.
       </span>
     </div>
   </div>
 
-  <div class="clicker-grid">
-    <!-- Clicker Parameters Card -->
-    <div class="card">
-      <div class="card-header">
-        <h2>Параметры клика</h2>
-      </div>
-      <div class="card-body">
-        <!-- Multiple Keys Selection -->
-        <div class="form-group">
-          <label for="clicker-keys">
-            Клавиши для нажатия (последовательность)
-            <span class="hint-text">(через запятую или пробел)</span>
-          </label>
-          <div class="key-input-row">
+  <!-- Rules List Header -->
+  <div class="rules-section-header">
+    <div class="rules-header-title">
+      <h2>Настроенные клавиши ({rules.length})</h2>
+      <p class="section-desc">У каждой клавиши свой независимый интервал, целевое окно и автоостановка по паттернам</p>
+    </div>
+    <div class="rules-header-actions">
+      <button type="button" class="btn btn-secondary" onclick={addRule}>
+        + Добавить клавишу
+      </button>
+      <button type="button" class="btn btn-primary" onclick={handleSave}>
+        Сохранить все
+      </button>
+    </div>
+  </div>
+
+  <!-- Rules Cards List -->
+  <div class="rules-list">
+    {#each rules as rule, idx (rule.id)}
+      <div class="card rule-card" class:disabled={!rule.enabled}>
+        <div class="rule-card-header">
+          <div class="rule-header-left">
+            <label class="switch-container" title="Включить / выключить эту клавишу">
+              <input type="checkbox" bind:checked={rule.enabled} />
+              <span class="switch-slider"></span>
+            </label>
+
+            <span class="rule-index">#{idx + 1}</span>
+
             <input
-              id="clicker-keys"
               type="text"
-              class="input-keys"
-              value={keysInput}
-              oninput={handleKeysInput}
-              placeholder="1, 2, 3, F1, Space"
+              class="rule-name-input"
+              bind:value={rule.name}
+              placeholder="Название действия (например: Скилл 1)"
             />
+          </div>
+
+          <div class="rule-header-right">
+            <span class="rule-key-preview">{rule.key || '?'}</span>
+            <span class="rule-interval-preview">{rule.interval_ms} мс</span>
+
             {#if onTestKey}
               <button
                 type="button"
                 class="btn btn-secondary btn-sm"
-                onclick={() => onTestKey(keys.join(', '))}
-                title="Отправить последовательность клавиш в окно прямо сейчас"
+                onclick={() => onTestKey(rule.key, rule.target)}
+                title="Отправить эту клавишу прямо сейчас в её целевое окно"
               >
                 Тест
               </button>
             {/if}
-          </div>
 
-          <!-- Active Key Badges with delete button -->
-          {#if keys.length > 0}
-            <div class="active-keys-chips">
-              {#each keys as k}
-                <span class="active-key-chip">
-                  <span class="chip-name">{k}</span>
+            <button
+              type="button"
+              class="btn-delete-rule"
+              onclick={() => removeRule(rule.id)}
+              title="Удалить это правило"
+            >
+              🗑
+            </button>
+          </div>
+        </div>
+
+        <div class="rule-card-body">
+          <div class="rule-fields-grid">
+            <!-- Key Field -->
+            <div class="form-group">
+              <label for="rule-key-{rule.id}">Клавиша</label>
+              <input
+                id="rule-key-{rule.id}"
+                type="text"
+                class="rule-key-input"
+                bind:value={rule.key}
+                placeholder="1, F1, Z, Space"
+                maxlength="10"
+              />
+              <div class="quick-chips">
+                {#each quickKeys as qk}
                   <button
                     type="button"
-                    class="remove-key-btn"
-                    onclick={() => removeKey(k)}
-                    title="Удалить клавишу"
+                    class="chip-btn"
+                    class:active={rule.key.toUpperCase() === qk.toUpperCase()}
+                    onclick={() => (rule.key = qk)}
                   >
-                    ×
+                    {qk}
                   </button>
-                </span>
-              {/each}
-            </div>
-          {/if}
-
-          <!-- Quick chips to toggle/append keys -->
-          <div class="quick-chips">
-            <span class="chips-label">Быстрое добавление:</span>
-            {#each quickKeys as qk}
-              <button
-                type="button"
-                class="chip-btn"
-                class:active={keys.includes(qk.toUpperCase())}
-                onclick={() => toggleQuickKey(qk)}
-              >
-                {qk}
-              </button>
-            {/each}
-          </div>
-        </div>
-
-        <!-- Target Window Mode Checkbox -->
-        <div class="form-group target-mode-box">
-          <label class="checkbox-label">
-            <input type="checkbox" bind:checked={sendToAllWindows} />
-            <span><strong>Отправка во все окна игры</strong> (по умолчанию выкл)</span>
-          </label>
-          <p class="field-hint">
-            {#if sendToAllWindows}
-              🌐 Нажатия будут отправляться во <strong>все окна</strong> процесса игры одновременно.
-            {:else}
-              🎯 Нажатия отправляются <strong>только в захваченное окно</strong> (выбранное комбинацией Ctrl + 1..6).
-            {/if}
-          </p>
-        </div>
-
-        <!-- Interval selection -->
-        <div class="form-group">
-          <label for="clicker-interval">
-            Интервал отправки (миллисекунды)
-            <span class="hint-text">({intervalMs} мс = {(intervalMs / 1000).toFixed(1)} сек)</span>
-          </label>
-          <input
-            id="clicker-interval"
-            type="number"
-            min="50"
-            max="600000"
-            step="50"
-            bind:value={intervalMs}
-          />
-
-          <div class="quick-chips">
-            <span class="chips-label">Быстрый выбор:</span>
-            {#each quickIntervals as qi}
-              <button
-                type="button"
-                class="chip-btn"
-                class:active={Number(intervalMs) === qi}
-                onclick={() => (intervalMs = qi)}
-              >
-                {qi} мс
-              </button>
-            {/each}
-          </div>
-        </div>
-
-        <button type="button" class="btn btn-primary" onclick={handleSave}>
-          Сохранить настройки
-        </button>
-      </div>
-    </div>
-
-    <!-- Pattern Integration Card -->
-    <div class="card">
-      <div class="card-header">
-        <h2>Автоостановка по паттернам пакетов</h2>
-      </div>
-      <div class="card-body">
-        <div class="form-group">
-          <label class="checkbox-label">
-            <input type="checkbox" bind:checked={stopOnPattern} />
-            <span><strong>Останавливать кликер при обнаружении паттерна</strong></span>
-          </label>
-          <p class="field-hint">
-            При срабатывании сетевого паттерна (например, смерть, телепорт или снятие баффа)
-            кликер мгновенно выключится.
-          </p>
-        </div>
-
-        {#if stopOnPattern}
-          <div class="pattern-selection-box">
-            <div class="pattern-box-header">
-              <span>Паттерны, вызывающие остановку:</span>
-              <span class="subtext">
-                {stopPatterns.length === 0 ? 'Останавливать при любом паттерне' : `Выбрано: ${stopPatterns.length}`}
-              </span>
+                {/each}
+              </div>
             </div>
 
-            <div class="pattern-chips-list">
-              <button
-                type="button"
-                class="pattern-toggle-chip"
-                class:selected={stopPatterns.length === 0}
-                onclick={() => (stopPatterns = [])}
+            <!-- Interval Field -->
+            <div class="form-group">
+              <label for="rule-interval-{rule.id}">
+                Интервал (мс)
+                <span class="hint-text">({rule.interval_ms} мс = {(rule.interval_ms / 1000).toFixed(1)} с)</span>
+              </label>
+              <input
+                id="rule-interval-{rule.id}"
+                type="number"
+                min="50"
+                max="600000"
+                step="50"
+                bind:value={rule.interval_ms}
+              />
+              <div class="quick-chips">
+                {#each quickIntervals as qi}
+                  <button
+                    type="button"
+                    class="chip-btn"
+                    class:active={Number(rule.interval_ms) === qi}
+                    onclick={() => (rule.interval_ms = qi)}
+                  >
+                    {qi} мс
+                  </button>
+                {/each}
+              </div>
+            </div>
+
+            <!-- Target Window Field -->
+            <div class="form-group">
+              <label for="rule-target-{rule.id}">Целевое окно игры</label>
+              <select
+                id="rule-target-{rule.id}"
+                class="rule-target-select"
+                value={getTargetValue(rule.target)}
+                onchange={(e) => setTargetValue(rule, e.currentTarget.value)}
               >
-                ⚡ Любой паттерн
-              </button>
-              {#each patterns as pat}
+                <option value="Captured">🎯 Захваченное окно (Ctrl+1..6)</option>
+                <option value="Slot-1">🟢 Окно Слот #1</option>
+                <option value="Slot-2">🟢 Окно Слот #2</option>
+                <option value="Slot-3">🟢 Окно Слот #3</option>
+                <option value="Slot-4">🟢 Окно Слот #4</option>
+                <option value="Slot-5">🟢 Окно Слот #5</option>
+                <option value="Slot-6">🟢 Окно Слот #6</option>
+                <option value="All">🌐 Все окна игры</option>
+              </select>
+              <p class="field-hint">
+                {#if rule.target.type === 'Captured'}
+                  Отправляет только в окно, захваченное через Ctrl+1..6.
+                {:else if rule.target.type === 'Slot'}
+                  Привязано строго к окну слота #{rule.target.data}.
+                {:else}
+                  Рассылает клавишу во все запущенные окна игры.
+                {/if}
+              </p>
+            </div>
+          </div>
+
+          <!-- Pattern Stop Configuration for this Rule -->
+          <div class="rule-pattern-section">
+            <label class="checkbox-label">
+              <input type="checkbox" bind:checked={rule.stop_on_pattern} />
+              <span>Останавливать эту клавишу при обнаружении сетевого паттерна</span>
+            </label>
+
+            {#if rule.stop_on_pattern}
+              <div class="rule-pattern-chips">
+                <span class="chips-label">Паттерны:</span>
                 <button
                   type="button"
-                  class="pattern-toggle-chip"
-                  class:selected={stopPatterns.includes(pat.name)}
-                  onclick={() => togglePattern(pat.name)}
+                  class="pattern-chip"
+                  class:active={rule.stop_patterns.length === 0}
+                  onclick={() => (rule.stop_patterns = [])}
                 >
-                  {pat.name}
+                  ⚡ Любой паттерн
                 </button>
-              {/each}
-            </div>
+                {#each patterns as pat}
+                  <button
+                    type="button"
+                    class="pattern-chip"
+                    class:active={rule.stop_patterns.includes(pat.name)}
+                    onclick={() => toggleRulePattern(rule, pat.name)}
+                  >
+                    {pat.name}
+                  </button>
+                {/each}
+              </div>
+            {/if}
           </div>
-
-          <div class="form-group" style="margin-top: 16px;">
-            <label class="checkbox-label">
-              <input type="checkbox" bind:checked={notifyOnStop} />
-              <span>Показывать системное уведомление при автоостановке</span>
-            </label>
-          </div>
-        {/if}
-
-        <button type="button" class="btn btn-primary" onclick={handleSave} style="margin-top: 12px;">
-          Сохранить настройки
-        </button>
+        </div>
       </div>
+    {/each}
+  </div>
+
+  <!-- General Settings / Notification Card -->
+  <div class="card footer-settings-card">
+    <div class="footer-settings-row">
+      <label class="checkbox-label">
+        <input type="checkbox" bind:checked={notifyOnStop} />
+        <span>Показывать системное уведомление при автоостановке клавиш по паттерну</span>
+      </label>
+
+      <button type="button" class="btn btn-primary" onclick={handleSave}>
+        Сохранить настройки
+      </button>
     </div>
   </div>
 </div>
@@ -491,23 +521,6 @@
     color: #cdd6f4;
   }
 
-  .keys-pill-list {
-    display: flex;
-    gap: 4px;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-
-  .key-badge {
-    background: #45475a;
-    padding: 2px 7px;
-    border-radius: 4px;
-    font-family: monospace;
-    font-size: 0.9rem;
-    font-weight: 700;
-    color: #89b4fa;
-  }
-
   .target-window-banner {
     display: flex;
     align-items: center;
@@ -528,12 +541,6 @@
     background: rgba(249, 226, 175, 0.1);
     border: 1px solid rgba(249, 226, 175, 0.35);
     color: #f9e2af;
-  }
-
-  .target-window-banner.all-windows {
-    background: rgba(137, 180, 250, 0.1);
-    border: 1px solid rgba(137, 180, 250, 0.3);
-    color: #89b4fa;
   }
 
   .banner-icon {
@@ -572,82 +579,229 @@
     color: #b4befe;
   }
 
-  .clicker-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-    gap: 1.25rem;
+  .rules-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-top: 0.5rem;
   }
 
-  .key-input-row {
+  .rules-header-title h2 {
+    font-size: 1.2rem;
+    margin: 0;
+    color: #cdd6f4;
+  }
+
+  .section-desc {
+    font-size: 0.85rem;
+    color: #a6adc8;
+    margin: 4px 0 0 0;
+  }
+
+  .rules-header-actions {
     display: flex;
     gap: 8px;
-    align-items: center;
   }
 
-  .input-keys {
+  .rules-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .rule-card {
+    background: var(--color-surface, #1e1e2e);
+    border: 1px solid var(--color-border, #313244);
+    border-radius: 10px;
+    overflow: hidden;
+    transition: opacity 0.2s, border-color 0.2s;
+  }
+
+  .rule-card.disabled {
+    opacity: 0.6;
+    border-style: dashed;
+  }
+
+  .rule-card-header {
+    background: rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid var(--color-border, #313244);
+    padding: 10px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .rule-header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
     flex: 1;
+    min-width: 250px;
+  }
+
+  .rule-index {
+    font-family: monospace;
+    font-weight: 700;
+    color: #89b4fa;
+    font-size: 0.95rem;
+  }
+
+  .rule-name-input {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: #cdd6f4;
+    font-weight: 700;
+    font-size: 1rem;
+    padding: 4px 8px;
+    flex: 1;
+    max-width: 320px;
+  }
+
+  .rule-name-input:focus {
+    background: rgba(0, 0, 0, 0.2);
+    border-color: #89b4fa;
+  }
+
+  .rule-header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .rule-key-preview {
+    background: #45475a;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: #89b4fa;
+  }
+
+  .rule-interval-preview {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--color-border, #313244);
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 0.82rem;
+    color: #a6adc8;
+  }
+
+  .btn-delete-rule {
+    background: transparent;
+    border: none;
+    color: #6c7086;
+    font-size: 1.1rem;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: color 0.15s, background 0.15s;
+  }
+
+  .btn-delete-rule:hover {
+    color: #f38ba8;
+    background: rgba(243, 139, 168, 0.15);
+  }
+
+  .rule-card-body {
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .rule-fields-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+  }
+
+  .rule-key-input {
+    width: 120px;
     font-weight: 700;
     font-family: monospace;
     font-size: 1rem;
     text-transform: uppercase;
+    text-align: center;
   }
 
-  .active-keys-chips {
+  .rule-target-select {
+    width: 100%;
+    background: #181825;
+    border: 1px solid var(--color-border, #313244);
+    color: #cdd6f4;
+    border-radius: 6px;
+    padding: 8px;
+    font-size: 0.88rem;
+  }
+
+  .rule-pattern-section {
+    background: rgba(0, 0, 0, 0.15);
+    border: 1px solid var(--color-border, #313244);
+    border-radius: 8px;
+    padding: 10px 14px;
     display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-    margin-top: 8px;
+    flex-direction: column;
+    gap: 8px;
   }
 
-  .active-key-chip {
-    display: inline-flex;
+  .rule-pattern-chips {
+    display: flex;
     align-items: center;
     gap: 6px;
-    background: rgba(137, 180, 250, 0.15);
-    border: 1px solid rgba(137, 180, 250, 0.4);
+    flex-wrap: wrap;
+    margin-top: 4px;
+  }
+
+  .pattern-chip {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--color-border, #313244);
     border-radius: 6px;
+    color: #a6adc8;
     padding: 3px 8px;
-    font-family: monospace;
-    font-size: 0.85rem;
-    color: #89b4fa;
-    font-weight: 700;
-  }
-
-  .remove-key-btn {
-    background: transparent;
-    border: none;
-    color: #f38ba8;
+    font-size: 0.8rem;
     cursor: pointer;
-    font-size: 1rem;
-    line-height: 1;
-    padding: 0 2px;
+    transition: all 0.15s;
   }
 
-  .remove-key-btn:hover {
-    color: #ff5555;
+  .pattern-chip:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #cdd6f4;
+  }
+
+  .pattern-chip.active {
+    background: rgba(249, 226, 175, 0.18);
+    border-color: #f9e2af;
+    color: #f9e2af;
+    font-weight: 700;
   }
 
   .quick-chips {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
     flex-wrap: wrap;
-    margin-top: 8px;
+    margin-top: 6px;
   }
 
   .chips-label {
     font-size: 0.8rem;
     color: #a6adc8;
-    margin-right: 2px;
+    margin-right: 4px;
   }
 
   .chip-btn {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid var(--color-border, #313244);
-    border-radius: 6px;
+    border-radius: 5px;
     color: #cdd6f4;
-    padding: 3px 8px;
-    font-size: 0.8rem;
+    padding: 2px 7px;
+    font-size: 0.78rem;
     cursor: pointer;
     transition: all 0.15s;
   }
@@ -663,14 +817,6 @@
     font-weight: 700;
   }
 
-  .target-mode-box {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid var(--color-border, #313244);
-    border-radius: 8px;
-    padding: 10px 12px;
-    margin-top: 10px;
-  }
-
   .hint-text {
     font-size: 0.8rem;
     color: #a6adc8;
@@ -684,53 +830,65 @@
     margin-top: 4px;
   }
 
-  .pattern-selection-box {
-    background: rgba(0, 0, 0, 0.2);
-    border: 1px solid var(--color-border, #313244);
-    border-radius: 8px;
-    padding: 10px;
-    margin-top: 10px;
+  /* Custom toggle switch */
+  .switch-container {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+    cursor: pointer;
   }
 
-  .pattern-box-header {
+  .switch-container input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .switch-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #45475a;
+    transition: 0.2s;
+    border-radius: 20px;
+  }
+
+  .switch-slider:before {
+    position: absolute;
+    content: '';
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.2s;
+    border-radius: 50%;
+  }
+
+  .switch-container input:checked + .switch-slider {
+    background-color: #a6e3a1;
+  }
+
+  .switch-container input:checked + .switch-slider:before {
+    transform: translateX(16px);
+  }
+
+  .footer-settings-card {
+    background: var(--color-surface, #1e1e2e);
+    border: 1px solid var(--color-border, #313244);
+    border-radius: 10px;
+    padding: 14px;
+  }
+
+  .footer-settings-row {
     display: flex;
     justify-content: space-between;
-    font-size: 0.85rem;
-    color: #cdd6f4;
-    margin-bottom: 8px;
-  }
-
-  .subtext {
-    color: #a6adc8;
-    font-size: 0.8rem;
-  }
-
-  .pattern-chips-list {
-    display: flex;
-    gap: 6px;
+    align-items: center;
     flex-wrap: wrap;
-  }
-
-  .pattern-toggle-chip {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid var(--color-border, #313244);
-    border-radius: 6px;
-    color: #a6adc8;
-    padding: 4px 10px;
-    font-size: 0.8rem;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .pattern-toggle-chip:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #cdd6f4;
-  }
-
-  .pattern-toggle-chip.selected {
-    background: rgba(249, 226, 175, 0.15);
-    border-color: #f9e2af;
-    color: #f9e2af;
-    font-weight: 700;
+    gap: 12px;
   }
 </style>

@@ -6,6 +6,7 @@
     defaultConfig,
     type ClickerConfig,
     type ClickerStatus,
+    type ClickerTarget,
     type Config,
     type MonitoringStatus,
     type PageId,
@@ -91,10 +92,18 @@
     count: 0,
     last_stop_reason: null,
     config: {
-      key: '1',
-      interval_ms: 1000,
-      stop_on_pattern: true,
-      stop_patterns: [],
+      rules: [
+        {
+          id: 'rule-1',
+          name: 'Клавиша 1',
+          enabled: true,
+          key: '1',
+          interval_ms: 1000,
+          target: { type: 'Captured' },
+          stop_on_pattern: true,
+          stop_patterns: [],
+        },
+      ],
       notify_on_stop: true,
     },
   });
@@ -388,9 +397,9 @@
     }
   }
 
-  async function testSendKey(key: string) {
+  async function testSendKey(key: string, target?: ClickerTarget) {
     try {
-      const res = await api.testSendKey(key);
+      const res = await api.testSendKey(key, target);
       showStatus(res);
     } catch (e) {
       showStatus(`Ошибка теста: ${e}`);

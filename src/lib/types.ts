@@ -20,13 +20,24 @@ export interface RegisteredUser {
   allow_screenshot?: boolean;
 }
 
-export interface ClickerConfig {
-  keys?: string[];
-  key?: string;
+export type ClickerTarget =
+  | { type: 'Captured' }
+  | { type: 'Slot'; data: number }
+  | { type: 'All' };
+
+export interface ClickerRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  key: string;
   interval_ms: number;
-  send_to_all_windows: boolean;
+  target: ClickerTarget;
   stop_on_pattern: boolean;
   stop_patterns: string[];
+}
+
+export interface ClickerConfig {
+  rules: ClickerRule[];
   notify_on_stop: boolean;
 }
 
@@ -190,12 +201,18 @@ export const defaultConfig = (): Config => ({
     close_to_tray: true,
   },
   clicker: {
-    keys: ['1'],
-    key: '1',
-    interval_ms: 1000,
-    send_to_all_windows: false,
-    stop_on_pattern: true,
-    stop_patterns: [],
+    rules: [
+      {
+        id: 'rule-1',
+        name: 'Клавиша 1',
+        enabled: true,
+        key: '1',
+        interval_ms: 1000,
+        target: { type: 'Captured' },
+        stop_on_pattern: true,
+        stop_patterns: [],
+      },
+    ],
     notify_on_stop: true,
   },
 });

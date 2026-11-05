@@ -89,16 +89,8 @@ fn default_burst_dedup_ms() -> u64 {
     2000
 }
 
-fn default_clicker_keys() -> Vec<String> {
-    vec!["1".to_string()]
-}
-
 fn default_clicker_key() -> String {
     "1".to_string()
-}
-
-fn default_false() -> bool {
-    false
 }
 
 fn default_clicker_interval_ms() -> u64 {
@@ -106,51 +98,123 @@ fn default_clicker_interval_ms() -> u64 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ClickerConfig {
-    #[serde(default = "default_clicker_keys")]
-    pub keys: Vec<String>,
+#[serde(tag = "type", content = "data")]
+pub enum ClickerTarget {
+    Captured,
+    Slot(u32),
+    All,
+}
+
+impl Default for ClickerTarget {
+    fn default() -> Self {
+        Self::Captured
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClickerRule {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     #[serde(default = "default_clicker_key")]
     pub key: String,
     #[serde(default = "default_clicker_interval_ms")]
     pub interval_ms: u64,
-    #[serde(default = "default_false")]
-    pub send_to_all_windows: bool,
+    #[serde(default)]
+    pub target: ClickerTarget,
     #[serde(default = "default_true")]
     pub stop_on_pattern: bool,
     #[serde(default)]
     pub stop_patterns: Vec<String>,
+}
+
+impl Default for ClickerRule {
+    fn default() -> Self {
+        Self {
+            id: "rule-1".to_string(),
+            name: "Клавиша 1".to_string(),
+            enabled: true,
+            key: "1".to_string(),
+            interval_ms: 1000,
+            target: ClickerTarget::Captured,
+            stop_on_pattern: true,
+            stop_patterns: Vec::new(),
+        }
+    }
+}
+
+fn default_clicker_rules() -> Vec<ClickerRule> {
+    vec![ClickerRule::default()]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClickerConfig {
+    #[serde(default = "default_clicker_rules")]
+    pub rules: Vec<ClickerRule>,
     #[serde(default = "default_true")]
     pub notify_on_stop: bool,
+    // Legacy fields for backward compatibility
+    #[serde(default, skip_serializing)]
+    pub keys: Vec<String>,
+    #[serde(default, skip_serializing)]
+    pub key: String,
+    #[serde(default, skip_serializing)]
+    pub interval_ms: u64,
+    #[serde(default, skip_serializing)]
+    pub send_to_all_windows: bool,
+    #[serde(default, skip_serializing)]
+    pub stop_on_pattern: bool,
+    #[serde(default, skip_serializing)]
+    pub stop_patterns: Vec<String>,
 }
 
 impl ClickerConfig {
-    pub fn get_keys(&self) -> Vec<String> {
-        let list: Vec<String> = self
-            .keys
-            .iter()
-            .map(|k| k.trim().to_uppercase())
-            .filter(|k| !k.is_empty())
-            .collect();
-        if !list.is_empty() {
-            list
-        } else if !self.key.trim().is_empty() {
-            vec![self.key.trim().to_uppercase()]
+    pub fn get_rules(&self) -> Vec<ClickerRule> {
+        if !self.rules.is_empty() {
+            return self.rules.clone();
+        }
+        let keys = if !self.keys.is_empty() {
+            self.keys.clone()
+        } else if !self.key.is_empty() {
+            vec![self.key.clone()]
         } else {
             vec!["1".to_string()]
-        }
+        };
+        let interval = if self.interval_ms > 0 { self.interval_ms } else { 1000 };
+        let target = if self.send_to_all_windows {
+            ClickerTarget::All
+        } else {
+            ClickerTarget::Captured
+        };
+        keys.into_iter()
+            .enumerate()
+            .map(|(i, k)| ClickerRule {
+                id: format!("rule-{}", i + 1),
+                name: format!("Клавиша {}", k),
+                enabled: true,
+                key: k,
+                interval_ms: interval,
+                target: target.clone(),
+                stop_on_pattern: self.stop_on_pattern,
+                stop_patterns: self.stop_patterns.clone(),
+            })
+            .collect()
     }
 }
 
 impl Default for ClickerConfig {
     fn default() -> Self {
         Self {
-            keys: default_clicker_keys(),
-            key: default_clicker_key(),
-            interval_ms: default_clicker_interval_ms(),
+            rules: default_clicker_rules(),
+            notify_on_stop: true,
+            keys: Vec::new(),
+            key: "1".to_string(),
+            interval_ms: 1000,
             send_to_all_windows: false,
             stop_on_pattern: true,
             stop_patterns: Vec::new(),
-            notify_on_stop: true,
         }
     }
 }

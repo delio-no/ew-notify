@@ -1413,26 +1413,48 @@ async fn open_url(url: String) -> Result<(), String> {
 async fn test_send_key(
     state: State<'_, AppState>,
     key: String,
+    target: Option<config::ClickerTarget>,
 ) -> Result<String, String> {
-    let (process_name, send_to_all) = {
+    let process_name = {
         let config = state.config.lock().await;
-        (config.target.process_name.clone(), config.clicker.send_to_all_windows)
+        config.target.process_name.clone()
     };
 
-    let target_hwnds: Vec<(isize, u32)> = if send_to_all {
-        let windows = screen_capture::find_target_windows(&process_name);
-        windows.into_iter().map(|w| (w.hwnd, w.pid)).collect()
-    } else {
-        match state.window_filter.get_mode() {
-            window_filter::WindowFilterMode::Single(info) => vec![(info.hwnd, info.pid)],
-            window_filter::WindowFilterMode::All => {
-                let windows = screen_capture::find_target_windows(&process_name);
-                if let Some(w) = windows.first() {
-                    vec![(w.hwnd, w.pid)]
-                } else {
-                    Vec::new()
+    let target_mode = target.unwrap_or(config::ClickerTarget::Captured);
+
+    let target_hwnds: Vec<(isize, u32)> = match target_mode {
+        config::ClickerTarget::Captured => {
+            match state.window_filter.get_mode() {
+                window_filter::WindowFilterMode::Single(info) => vec![(info.hwnd, info.pid)],
+                window_filter::WindowFilterMode::All => {
+                    let windows = screen_capture::find_target_windows(&process_name);
+                    if let Some(w) = windows.first() {
+                        vec![(w.hwnd, w.pid)]
+                    } else {
+                        Vec::new()
+                    }
                 }
             }
+        }
+        config::ClickerTarget::Slot(slot) => {
+            let current_mode = state.window_filter.get_mode();
+            if let window_filter::WindowFilterMode::Single(ref info) = current_mode {
+                if info.slot == slot {
+                    vec![(info.hwnd, info.pid)]
+                } else {
+                    let windows = screen_capture::find_target_windows(&process_name);
+                    let idx = (slot as usize).saturating_sub(1);
+                    windows.get(idx).map(|w| vec![(w.hwnd, w.pid)]).unwrap_or_default()
+                }
+            } else {
+                let windows = screen_capture::find_target_windows(&process_name);
+                let idx = (slot as usize).saturating_sub(1);
+                windows.get(idx).map(|w| vec![(w.hwnd, w.pid)]).unwrap_or_default()
+            }
+        }
+        config::ClickerTarget::All => {
+            let windows = screen_capture::find_target_windows(&process_name);
+            windows.into_iter().map(|w| (w.hwnd, w.pid)).collect()
         }
     };
 

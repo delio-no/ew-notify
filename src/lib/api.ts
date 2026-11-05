@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   ClickerConfig,
   ClickerStatus,
+  ClickerTarget,
   Config,
   MonitoringStatus,
   PacketLogEntry,
@@ -70,7 +71,8 @@ export const api = {
     invoke<Pattern[]>('import_patterns', { json, replace }),
   testPatternHex: (hex: string) =>
     invoke<PatternMatchResult>('test_pattern_hex', { hex }),
-  testSendKey: (key: string) => invoke<string>('test_send_key', { key }),
+  testSendKey: (key: string, target?: ClickerTarget) =>
+    invoke<string>('test_send_key', { key, target }),
 
   testTelegram: (token: string) => invoke<string>('test_telegram', { token }),
   startTelegramBot: (token: string) =>
