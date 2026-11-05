@@ -46,6 +46,11 @@
       <span class="dot on"></span>
       EW #{windowFilterMode.data.slot} (PID {windowFilterMode.data.pid})
     </span>
+  {:else if windowFilterMode?.mode === 'Multi'}
+    <span class="status-chip active-filter" title={windowFilterMode.data.map(d => `Слот #${d.slot}: PID ${d.pid}`).join(', ')}>
+      <span class="dot on"></span>
+      EW #{windowFilterMode.data.map(d => d.slot).join(', #')}
+    </span>
   {:else}
     <span class="status-chip" title="Мониторинг всех запущенных окон">
       <span class="dot"></span>

@@ -6,7 +6,7 @@
 use crate::config::{AppConfig, ClickerConfig, ClickerRule, ClickerTarget};
 use crate::input_sender;
 use crate::screen_capture;
-use crate::window_filter::{WindowFilterMode, WindowFilterState};
+use crate::window_filter::WindowFilterState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -34,6 +34,55 @@ pub struct ClickerState {
 impl Default for ClickerState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn rule_matches_window(
+    target: &ClickerTarget,
+    target_slot: Option<u32>,
+    target_pid: Option<u32>,
+    filter: &WindowFilterState,
+) -> bool {
+    // If packet has no slot and no pid information, allow it to match all rules
+    if target_slot.is_none() && target_pid.is_none() {
+        return true;
+    }
+
+    match target {
+        ClickerTarget::All => true,
+        ClickerTarget::Slot(s) => {
+            if let Some(slot) = target_slot {
+                if slot == *s {
+                    return true;
+                }
+            }
+            if let Some(pid) = target_pid {
+                if let Some(slot_info) = filter.get_slot(*s) {
+                    if slot_info.pid == pid {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        ClickerTarget::Captured => {
+            if let Some(active_or_first) = filter.get_active_or_first_slot() {
+                if let Some(slot) = target_slot {
+                    if slot == active_or_first.slot {
+                        return true;
+                    }
+                }
+                if let Some(pid) = target_pid {
+                    if pid == active_or_first.pid {
+                        return true;
+                    }
+                }
+                false
+            } else {
+                // No specific slot assigned (All mode)
+                true
+            }
+        }
     }
 }
 
@@ -166,34 +215,37 @@ impl ClickerState {
                 // Resolve target HWND(s) according to this rule's independent setting
                 let target_hwnds: Vec<isize> = match &target {
                     ClickerTarget::Captured => {
-                        match filter_ref.get_mode() {
-                            WindowFilterMode::Single(info) => {
-                                #[cfg(windows)]
-                                {
-                                    use windows::Win32::Foundation::HWND;
-                                    use windows::Win32::UI::WindowsAndMessaging::IsWindow;
-                                    if unsafe { IsWindow(HWND(info.hwnd as _)).as_bool() } {
-                                        vec![info.hwnd]
-                                    } else {
-                                        Vec::new()
-                                    }
+                        if let Some(info) = filter_ref.get_active_or_first_slot() {
+                            #[cfg(windows)]
+                            {
+                                use windows::Win32::Foundation::HWND;
+                                use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+                                if unsafe { IsWindow(HWND(info.hwnd as _)).as_bool() } {
+                                    vec![info.hwnd]
+                                } else {
+                                    Vec::new()
                                 }
-                                #[cfg(not(windows))]
-                                vec![info.hwnd]
                             }
-                            WindowFilterMode::All => Vec::new(),
+                            #[cfg(not(windows))]
+                            vec![info.hwnd]
+                        } else {
+                            Vec::new()
                         }
                     }
                     ClickerTarget::Slot(slot) => {
-                        let current_mode = filter_ref.get_mode();
-                        if let WindowFilterMode::Single(ref info) = current_mode {
-                            if info.slot == *slot {
-                                vec![info.hwnd]
-                            } else {
-                                let windows = screen_capture::find_target_windows(&proc_ref);
-                                let idx = (*slot as usize).saturating_sub(1);
-                                windows.get(idx).map(|w| vec![w.hwnd]).unwrap_or_default()
+                        if let Some(info) = filter_ref.get_slot(*slot) {
+                            #[cfg(windows)]
+                            {
+                                use windows::Win32::Foundation::HWND;
+                                use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+                                if unsafe { IsWindow(HWND(info.hwnd as _)).as_bool() } {
+                                    vec![info.hwnd]
+                                } else {
+                                    Vec::new()
+                                }
                             }
+                            #[cfg(not(windows))]
+                            vec![info.hwnd]
                         } else {
                             let windows = screen_capture::find_target_windows(&proc_ref);
                             let idx = (*slot as usize).saturating_sub(1);
@@ -273,6 +325,8 @@ impl ClickerState {
     pub fn trigger_pattern_event(
         &self,
         pattern_name: &str,
+        target_slot: Option<u32>,
+        target_pid: Option<u32>,
         app: &AppHandle,
         config_arc: &Arc<Mutex<AppConfig>>,
         filter: &WindowFilterState,
@@ -286,11 +340,14 @@ impl ClickerState {
         let mut stopped_rule_labels = Vec::new();
         let mut started_rule_labels = Vec::new();
 
-        // 1. Process stop triggers (for currently active rules)
+        // 1. Process stop triggers (for currently active rules that match window)
         if self.is_running() {
             if let Ok(mut map) = self.active_rules.lock() {
                 for rule in &rules {
                     if !rule.enabled || !rule.stop_on_pattern {
+                        continue;
+                    }
+                    if !rule_matches_window(&rule.target, target_slot, target_pid, filter) {
                         continue;
                     }
                     let matches = rule.stop_patterns.is_empty()
@@ -310,13 +367,16 @@ impl ClickerState {
             }
         }
 
-        // 2. Process start triggers (for enabled rules configured to start on this pattern)
+        // 2. Process start triggers (for enabled rules configured to start on this pattern that match window)
         let rules_to_start: Vec<ClickerRule> = {
             let active_map = self.active_rules.lock().ok();
             rules
                 .into_iter()
                 .filter(|r| {
                     if !r.enabled || !r.start_on_pattern {
+                        return false;
+                    }
+                    if !rule_matches_window(&r.target, target_slot, target_pid, filter) {
                         return false;
                     }
                     let matches = r.start_patterns.is_empty()
@@ -343,8 +403,12 @@ impl ClickerState {
 
         // 3. Notifications & status emission
         if !stopped_rule_labels.is_empty() {
+            let slot_prefix = target_slot
+                .map(|s| format!("Слот #{}: ", s))
+                .unwrap_or_default();
             let reason = format!(
-                "Остановлены [{}]: сработал паттерн '{}'",
+                "{}Остановлены [{}]: сработал паттерн '{}'",
+                slot_prefix,
                 stopped_rule_labels.join(", "),
                 pattern_name
             );
@@ -366,8 +430,12 @@ impl ClickerState {
         }
 
         if !started_rule_labels.is_empty() {
+            let slot_prefix = target_slot
+                .map(|s| format!("Слот #{}: ", s))
+                .unwrap_or_default();
             let msg = format!(
-                "Запущены [{}]: сработал паттерн '{}'",
+                "{}Запущены [{}]: сработал паттерн '{}'",
+                slot_prefix,
                 started_rule_labels.join(", "),
                 pattern_name
             );
@@ -405,7 +473,7 @@ impl ClickerState {
         filter: &WindowFilterState,
         rt: &tokio::runtime::Handle,
     ) {
-        self.trigger_pattern_event(pattern_name, app, config_arc, filter, rt);
+        self.trigger_pattern_event(pattern_name, None, None, app, config_arc, filter, rt);
     }
 }
 
@@ -434,5 +502,27 @@ mod tests {
         assert!(rules[0].start_patterns.is_empty());
         assert!(cfg.notify_on_stop);
         assert!(cfg.notify_on_start);
+    }
+
+    #[test]
+    fn test_rule_matches_window() {
+        let filter = WindowFilterState::new();
+        filter.set_slot(1, 1001, 111, "Window 1".into());
+        filter.set_slot(2, 1002, 222, "Window 2".into());
+
+        // Target::All matches any slot
+        assert!(rule_matches_window(&ClickerTarget::All, Some(1), Some(1001), &filter));
+        assert!(rule_matches_window(&ClickerTarget::All, Some(2), Some(1002), &filter));
+
+        // Target::Slot(1) matches slot 1, not slot 2
+        assert!(rule_matches_window(&ClickerTarget::Slot(1), Some(1), Some(1001), &filter));
+        assert!(!rule_matches_window(&ClickerTarget::Slot(1), Some(2), Some(1002), &filter));
+
+        // Target::Slot(2) matches slot 2, not slot 1
+        assert!(!rule_matches_window(&ClickerTarget::Slot(2), Some(1), Some(1001), &filter));
+        assert!(rule_matches_window(&ClickerTarget::Slot(2), Some(2), Some(1002), &filter));
+
+        // Unknown slot/pid matches everything
+        assert!(rule_matches_window(&ClickerTarget::Slot(1), None, None, &filter));
     }
 }

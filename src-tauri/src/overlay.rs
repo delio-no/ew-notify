@@ -1,5 +1,6 @@
-//! Visual overlay for highlighting the tracked game window (Windows).
-//! Uses a native Win32 transparent, click-through, always-on-top layered window.
+//! Visual overlay for highlighting tracked game windows (Windows).
+//! Uses native Win32 transparent, click-through, always-on-top layered windows.
+//! Supports multiple simultaneous slots (e.g. Slot 1 on Window A, Slot 2 on Window B).
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct OverlayStatus {
@@ -19,6 +20,16 @@ pub fn show_overlay(_hwnd: isize, _status: OverlayStatus) {}
 pub fn hide_overlay() {}
 
 #[cfg(not(windows))]
+pub fn hide_all_overlays() {}
+
+#[cfg(not(windows))]
+pub fn sync_overlays_from_state(
+    _filter: &crate::window_filter::WindowFilterState,
+    _monitoring: bool,
+    _clicker_running: bool,
+) {}
+
+#[cfg(not(windows))]
 pub fn update_overlay_from_state(
     _filter: &crate::window_filter::WindowFilterState,
     _monitoring: bool,
@@ -28,6 +39,7 @@ pub fn update_overlay_from_state(
 #[cfg(windows)]
 mod win {
     use super::OverlayStatus;
+    use std::collections::HashMap;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::{channel, Receiver, Sender};
     use std::sync::{Mutex, Once};
@@ -40,19 +52,19 @@ mod win {
         DT_SINGLELINE, DT_VCENTER, HBRUSH, PAINTSTRUCT, TRANSPARENT,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect, GetWindowRect, IsIconic,
-        IsWindow, PeekMessageW, PostQuitMessage, RegisterClassW, SetLayeredWindowAttributes,
-        SetWindowPos, ShowWindow, TranslateMessage, HMENU, HWND_TOPMOST, LWA_COLORKEY, MSG,
-        PM_REMOVE, SWP_NOACTIVATE, SW_HIDE, SW_SHOWNOACTIVATE, WNDCLASSW, WS_EX_LAYERED,
-        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
+        GetWindowRect, IsIconic, IsWindow, PeekMessageW, PostQuitMessage, RegisterClassW,
+        SetLayeredWindowAttributes, SetWindowPos, ShowWindow, TranslateMessage, HMENU,
+        HWND_TOPMOST, LWA_COLORKEY, MSG, PM_REMOVE, SWP_NOACTIVATE, SW_HIDE, SW_SHOWNOACTIVATE,
+        WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+        WS_EX_TRANSPARENT, WS_POPUP,
     };
 
     enum OverlayCmd {
-        Show {
-            target_hwnd: isize,
-            status: OverlayStatus,
+        SyncSlots {
+            slots: Vec<(u32, isize, OverlayStatus)>,
         },
-        Hide,
+        HideAll,
     }
 
     struct OverlayController {
@@ -68,11 +80,8 @@ mod win {
         COLORREF((r as u32) | ((g as u32) << 8) | ((b as u32) << 16))
     }
 
-    // Shared state between worker and window proc
-    struct WindowDrawState {
-        status: OverlayStatus,
-    }
-    static DRAW_STATE: Mutex<Option<WindowDrawState>> = Mutex::new(None);
+    // Map of overlay_hwnd -> OverlayStatus for painting
+    static DRAW_STATES: Mutex<Option<HashMap<isize, OverlayStatus>>> = Mutex::new(None);
 
     unsafe extern "system" fn overlay_wnd_proc(
         hwnd: HWND,
@@ -90,21 +99,20 @@ mod win {
                 let mut rc = RECT::default();
                 let _ = GetClientRect(hwnd, &mut rc);
 
-                // 1. Fill entire window with black (transparent key 0x00000000)
-                // Note: The green outer border has been removed as requested by user.
+                // 1. Transparent key-color fill
                 let black_brush = CreateSolidBrush(rgb(0, 0, 0));
                 FillRect(hdc, &rc, black_brush);
                 let _ = DeleteObject(black_brush);
 
                 let status_opt = {
-                    if let Ok(guard) = DRAW_STATE.lock() {
-                        guard.as_ref().map(|s| s.status.clone())
+                    if let Ok(guard) = DRAW_STATES.lock() {
+                        guard.as_ref().and_then(|map| map.get(&(hwnd.0 as isize)).cloned())
                     } else {
                         None
                     }
                 };
 
-                // 2. Info badge in top-right corner showing EW Slot, Notification status, and Clicker status
+                // 2. Info badge in top-right corner
                 if let Some(status) = status_opt {
                     if (rc.right - rc.left) > 220 && (rc.bottom - rc.top) > 80 {
                         let font = CreateFontW(
@@ -127,30 +135,29 @@ mod win {
 
                         let notif_text = if status.monitoring { "ВКЛ" } else { "ВЫКЛ" };
                         let notif_color = if status.monitoring {
-                            rgb(74, 222, 128) // Emerald green #4ade80
+                            rgb(74, 222, 128) // Emerald green
                         } else {
-                            rgb(248, 113, 113) // Coral red #f87171
+                            rgb(248, 113, 113) // Coral red
                         };
 
                         let clicker_text = if status.clicker_running { "АКТИВЕН" } else { "ВЫКЛ" };
                         let clicker_color = if status.clicker_running {
-                            rgb(74, 222, 128) // Emerald green #4ade80
+                            rgb(74, 222, 128) // Emerald green
                         } else {
-                            rgb(148, 163, 184) // Slate-400 #94a3b8
+                            rgb(148, 163, 184) // Slate-400
                         };
 
                         let slot_str = format!("EW #{}", status.slot);
                         let segments: [(&str, COLORREF); 7] = [
-                            (&slot_str, rgb(56, 189, 248)), // Sky blue #38bdf8
-                            ("  |  ", rgb(71, 85, 105)),     // Slate-600 #475569
-                            ("Уведомления: ", rgb(203, 213, 225)), // Slate-300
+                            (&slot_str, rgb(56, 189, 248)), // Sky blue
+                            ("  |  ", rgb(71, 85, 105)),
+                            ("Уведомления: ", rgb(203, 213, 225)),
                             (notif_text, notif_color),
-                            ("  |  ", rgb(71, 85, 105)),     // Slate-600 #475569
-                            ("Кликер: ", rgb(203, 213, 225)), // Slate-300
+                            ("  |  ", rgb(71, 85, 105)),
+                            ("Кликер: ", rgb(203, 213, 225)),
                             (clicker_text, clicker_color),
                         ];
 
-                        // Measure widths of each segment using GDI DT_CALCRECT
                         let mut wide_segments: Vec<(Vec<u16>, COLORREF, i32)> = Vec::with_capacity(7);
                         let mut total_content_w = 0i32;
 
@@ -168,7 +175,7 @@ mod win {
                         let badge_w = total_content_w + pad_x * 2;
                         let badge_h = 26i32;
                         let badge_margin_right = 10i32;
-                        let badge_top = rc.top + 38; // Lowered below standard window title bar
+                        let badge_top = rc.top + 38;
 
                         let badge_rc = RECT {
                             left: (rc.right - badge_w - badge_margin_right).max(0),
@@ -177,17 +184,14 @@ mod win {
                             bottom: badge_top + badge_h,
                         };
 
-                        // Dark charcoal pill background
-                        let pill_brush = CreateSolidBrush(rgb(15, 23, 42)); // Slate-900
+                        let pill_brush = CreateSolidBrush(rgb(15, 23, 42));
                         FillRect(hdc, &badge_rc, pill_brush);
                         let _ = DeleteObject(pill_brush);
 
-                        // Subtle pill border
-                        let pill_border = CreateSolidBrush(rgb(51, 65, 85)); // Slate-700
+                        let pill_border = CreateSolidBrush(rgb(51, 65, 85));
                         FrameRect(hdc, &badge_rc, pill_border);
                         let _ = DeleteObject(pill_border);
 
-                        // Draw each text segment
                         let _ = SetBkMode(hdc, TRANSPARENT);
                         let mut cur_x = badge_rc.left + pad_x;
 
@@ -225,6 +229,13 @@ mod win {
         }
     }
 
+    struct SlotOverlay {
+        overlay_hwnd: HWND,
+        target_hwnd: HWND,
+        last_rect: RECT,
+        is_visible: bool,
+    }
+
     fn init_overlay_thread() {
         INIT.call_once(|| {
             let (tx, rx) = channel::<OverlayCmd>();
@@ -242,7 +253,7 @@ mod win {
     }
 
     fn run_overlay_loop(rx: Receiver<OverlayCmd>) {
-        let class_name = w!("EW_OVERLAY_WINDOW_CLASS");
+        let class_name = w!("EW_MULTI_OVERLAY_WINDOW_CLASS");
         let wnd_class = WNDCLASSW {
             style: Default::default(),
             lpfnWndProc: Some(overlay_wnd_proc),
@@ -259,134 +270,159 @@ mod win {
         unsafe {
             let _ = RegisterClassW(&wnd_class);
 
-            let overlay_hwnd = CreateWindowExW(
-                WS_EX_LAYERED
-                    | WS_EX_TRANSPARENT
-                    | WS_EX_TOPMOST
-                    | WS_EX_TOOLWINDOW
-                    | WS_EX_NOACTIVATE,
-                class_name,
-                w!("EW_Window_Overlay"),
-                WS_POPUP,
-                0,
-                0,
-                100,
-                100,
-                HWND(0),
-                HMENU(0),
-                HMODULE(0),
-                None,
-            );
-
-            if overlay_hwnd.0 == 0 {
-                tracing::error!("Failed to create overlay HWND");
-                return;
-            }
-
-            // Key-color transparency: black (0x00000000) is 100% transparent and click-through
-            let _ = SetLayeredWindowAttributes(
-                overlay_hwnd,
-                COLORREF(0x00000000),
-                0,
-                LWA_COLORKEY,
-            );
-
-            let mut active_target: Option<HWND> = None;
-            let mut last_rect = RECT::default();
-            let mut is_visible = false;
+            let mut active_overlays: HashMap<u32, SlotOverlay> = HashMap::new();
 
             loop {
                 // 1. Process all pending commands
                 while let Ok(cmd) = rx.try_recv() {
                     match cmd {
-                        OverlayCmd::Show {
-                            target_hwnd,
-                            status,
-                        } => {
-                            let new_target = HWND(target_hwnd as _);
-                            if active_target != Some(new_target) {
-                                active_target = Some(new_target);
-                                last_rect = RECT::default();
+                        OverlayCmd::SyncSlots { slots } => {
+                            let new_slot_nums: Vec<u32> = slots.iter().map(|(s, _, _)| *s).collect();
+
+                            // Destroy overlays for slots that are no longer active
+                            let removed_slots: Vec<u32> = active_overlays
+                                .keys()
+                                .filter(|s| !new_slot_nums.contains(s))
+                                .copied()
+                                .collect();
+
+                            for s in removed_slots {
+                                if let Some(entry) = active_overlays.remove(&s) {
+                                    let _ = ShowWindow(entry.overlay_hwnd, SW_HIDE);
+                                    let _ = DestroyWindow(entry.overlay_hwnd);
+                                    if let Ok(mut guard) = DRAW_STATES.lock() {
+                                        if let Some(map) = guard.as_mut() {
+                                            map.remove(&(entry.overlay_hwnd.0 as isize));
+                                        }
+                                    }
+                                }
                             }
 
-                            if let Ok(mut guard) = DRAW_STATE.lock() {
-                                *guard = Some(WindowDrawState { status });
-                            }
-                            if is_visible {
-                                let _ = InvalidateRect(overlay_hwnd, None, false);
+                            // Create or update overlays for desired slots
+                            for (slot, target_hwnd, status) in slots {
+                                let new_target = HWND(target_hwnd as _);
+
+                                if let Some(entry) = active_overlays.get_mut(&slot) {
+                                    if entry.target_hwnd != new_target {
+                                        entry.target_hwnd = new_target;
+                                        entry.last_rect = RECT::default();
+                                    }
+                                    if let Ok(mut guard) = DRAW_STATES.lock() {
+                                        let map = guard.get_or_insert_with(HashMap::new);
+                                        map.insert(entry.overlay_hwnd.0 as isize, status);
+                                    }
+                                    if entry.is_visible {
+                                        let _ = InvalidateRect(entry.overlay_hwnd, None, false);
+                                    }
+                                } else {
+                                    // Create new overlay window for this slot
+                                    let overlay_hwnd = CreateWindowExW(
+                                        WS_EX_LAYERED
+                                            | WS_EX_TRANSPARENT
+                                            | WS_EX_TOPMOST
+                                            | WS_EX_TOOLWINDOW
+                                            | WS_EX_NOACTIVATE,
+                                        class_name,
+                                        w!("EW_Slot_Overlay"),
+                                        WS_POPUP,
+                                        0,
+                                        0,
+                                        100,
+                                        100,
+                                        HWND(0),
+                                        HMENU(0),
+                                        HMODULE(0),
+                                        None,
+                                    );
+
+                                    if overlay_hwnd.0 != 0 {
+                                        let _ = SetLayeredWindowAttributes(
+                                            overlay_hwnd,
+                                            COLORREF(0x00000000),
+                                            0,
+                                            LWA_COLORKEY,
+                                        );
+
+                                        if let Ok(mut guard) = DRAW_STATES.lock() {
+                                            let map = guard.get_or_insert_with(HashMap::new);
+                                            map.insert(overlay_hwnd.0 as isize, status);
+                                        }
+
+                                        active_overlays.insert(
+                                            slot,
+                                            SlotOverlay {
+                                                overlay_hwnd,
+                                                target_hwnd: new_target,
+                                                last_rect: RECT::default(),
+                                                is_visible: false,
+                                            },
+                                        );
+                                    }
+                                }
                             }
                         }
-                        OverlayCmd::Hide => {
-                            active_target = None;
-                            if is_visible {
-                                let _ = ShowWindow(overlay_hwnd, SW_HIDE);
-                                is_visible = false;
-                            }
-                            if let Ok(mut guard) = DRAW_STATE.lock() {
-                                *guard = None;
+                        OverlayCmd::HideAll => {
+                            for (_, entry) in active_overlays.drain() {
+                                let _ = ShowWindow(entry.overlay_hwnd, SW_HIDE);
+                                let _ = DestroyWindow(entry.overlay_hwnd);
+                                if let Ok(mut guard) = DRAW_STATES.lock() {
+                                    if let Some(map) = guard.as_mut() {
+                                        map.remove(&(entry.overlay_hwnd.0 as isize));
+                                    }
+                                }
                             }
                         }
                     }
                 }
 
-                // 2. Track target window position
-                if let Some(target) = active_target {
-                    if !IsWindow(target).as_bool() {
-                        // Target window closed
-                        active_target = None;
-                        if is_visible {
-                            let _ = ShowWindow(overlay_hwnd, SW_HIDE);
-                            is_visible = false;
+                // 2. Track each slot's target window position & visibility
+                for (_, entry) in active_overlays.iter_mut() {
+                    if !IsWindow(entry.target_hwnd).as_bool() {
+                        if entry.is_visible {
+                            let _ = ShowWindow(entry.overlay_hwnd, SW_HIDE);
+                            entry.is_visible = false;
                         }
-                    } else if IsIconic(target).as_bool() {
-                        // Minimized
-                        if is_visible {
-                            let _ = ShowWindow(overlay_hwnd, SW_HIDE);
-                            is_visible = false;
+                        continue;
+                    }
+
+                    if IsIconic(entry.target_hwnd).as_bool() {
+                        if entry.is_visible {
+                            let _ = ShowWindow(entry.overlay_hwnd, SW_HIDE);
+                            entry.is_visible = false;
                         }
-                    } else {
-                        let mut target_rect = RECT::default();
-                        if GetWindowRect(target, &mut target_rect).as_bool() {
-                            let w = target_rect.right - target_rect.left;
-                            let h = target_rect.bottom - target_rect.top;
+                        continue;
+                    }
 
-                            if target_rect != last_rect {
-                                last_rect = target_rect;
-                                let _ = SetWindowPos(
-                                    overlay_hwnd,
-                                    HWND_TOPMOST,
-                                    target_rect.left,
-                                    target_rect.top,
-                                    w,
-                                    h,
-                                    SWP_NOACTIVATE,
-                                );
-                                let _ = InvalidateRect(overlay_hwnd, None, false);
-                            }
+                    let mut target_rect = RECT::default();
+                    if GetWindowRect(entry.target_hwnd, &mut target_rect).as_bool() {
+                        let w = target_rect.right - target_rect.left;
+                        let h = target_rect.bottom - target_rect.top;
 
-                            if !is_visible {
-                                let _ = ShowWindow(overlay_hwnd, SW_SHOWNOACTIVATE);
-                                is_visible = true;
-                                let _ = InvalidateRect(overlay_hwnd, None, false);
-                            }
+                        if target_rect != entry.last_rect {
+                            entry.last_rect = target_rect;
+                            let _ = SetWindowPos(
+                                entry.overlay_hwnd,
+                                HWND_TOPMOST,
+                                target_rect.left,
+                                target_rect.top,
+                                w,
+                                h,
+                                SWP_NOACTIVATE,
+                            );
+                            let _ = InvalidateRect(entry.overlay_hwnd, None, false);
+                        }
+
+                        if !entry.is_visible {
+                            let _ = ShowWindow(entry.overlay_hwnd, SW_SHOWNOACTIVATE);
+                            entry.is_visible = true;
+                            let _ = InvalidateRect(entry.overlay_hwnd, None, false);
                         }
                     }
-                } else if is_visible {
-                    let _ = ShowWindow(overlay_hwnd, SW_HIDE);
-                    is_visible = false;
                 }
 
-                // 3. Dispatch standard Win32 messages
+                // 3. Dispatch Win32 messages
                 let mut msg = MSG::default();
-                while PeekMessageW(
-                    &mut msg,
-                    HWND(0),
-                    0,
-                    0,
-                    PM_REMOVE,
-                )
-                .as_bool()
-                {
+                while PeekMessageW(&mut msg, HWND(0), 0, 0, PM_REMOVE).as_bool() {
                     let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
@@ -396,29 +432,70 @@ mod win {
         }
     }
 
-    pub fn show_overlay(target_hwnd: isize, status: OverlayStatus) {
+    pub fn sync_overlays_from_state(
+        filter: &crate::window_filter::WindowFilterState,
+        monitoring: bool,
+        clicker_running: bool,
+    ) {
         init_overlay_thread();
         IS_ACTIVE.store(true, Ordering::SeqCst);
+        let slots = filter.get_all_slots();
+
+        if slots.is_empty() {
+            hide_all_overlays();
+            return;
+        }
+
+        let sync_data: Vec<(u32, isize, OverlayStatus)> = slots
+            .into_iter()
+            .map(|w| {
+                (
+                    w.slot,
+                    w.hwnd,
+                    OverlayStatus {
+                        slot: w.slot,
+                        pid: w.pid,
+                        monitoring,
+                        clicker_running,
+                    },
+                )
+            })
+            .collect();
+
         if let Ok(guard) = CONTROLLER.lock() {
             if let Some(ctrl) = guard.as_ref() {
-                let _ = ctrl.sender.send(OverlayCmd::Show {
-                    target_hwnd,
-                    status,
-                });
+                let _ = ctrl.sender.send(OverlayCmd::SyncSlots { slots: sync_data });
             }
         }
     }
 
-    pub fn hide_overlay() {
+    pub fn hide_all_overlays() {
         if !IS_ACTIVE.swap(false, Ordering::SeqCst) {
             return;
         }
         init_overlay_thread();
         if let Ok(guard) = CONTROLLER.lock() {
             if let Some(ctrl) = guard.as_ref() {
-                let _ = ctrl.sender.send(OverlayCmd::Hide);
+                let _ = ctrl.sender.send(OverlayCmd::HideAll);
             }
         }
+    }
+
+    // Legacy compatibility helpers
+    pub fn show_overlay(target_hwnd: isize, status: OverlayStatus) {
+        init_overlay_thread();
+        IS_ACTIVE.store(true, Ordering::SeqCst);
+        if let Ok(guard) = CONTROLLER.lock() {
+            if let Some(ctrl) = guard.as_ref() {
+                let _ = ctrl.sender.send(OverlayCmd::SyncSlots {
+                    slots: vec![(status.slot, target_hwnd, status)],
+                });
+            }
+        }
+    }
+
+    pub fn hide_overlay() {
+        hide_all_overlays();
     }
 
     pub fn update_overlay_from_state(
@@ -426,18 +503,6 @@ mod win {
         monitoring: bool,
         clicker_running: bool,
     ) {
-        if let crate::window_filter::WindowFilterMode::Single(ref win) = filter.get_mode() {
-            show_overlay(
-                win.hwnd,
-                OverlayStatus {
-                    slot: win.slot,
-                    pid: win.pid,
-                    monitoring,
-                    clicker_running,
-                },
-            );
-        } else {
-            hide_overlay();
-        }
+        sync_overlays_from_state(filter, monitoring, clicker_running);
     }
 }

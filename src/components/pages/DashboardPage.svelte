@@ -29,6 +29,7 @@
     onStop,
     onHideTray,
     onSelectWindow,
+    onRemoveSlot,
     onResetWindowFilter,
     onRefreshWindows,
   }: {
@@ -57,11 +58,24 @@
     onStop: () => void;
     onHideTray: () => void;
     onSelectWindow: (slot: number, pid: number) => void;
+    onRemoveSlot?: (slot: number) => void;
     onResetWindowFilter: () => void;
     onRefreshWindows: () => void;
   } = $props();
 
   let discoveredLabel = $derived(discoveredEndpoints.join(', '));
+
+  function getWindowSlot(pid: number): number | null {
+    if (!windowFilterMode) return null;
+    if (windowFilterMode.mode === 'Single') {
+      return windowFilterMode.data.pid === pid ? windowFilterMode.data.slot : null;
+    }
+    if (windowFilterMode.mode === 'Multi') {
+      const match = windowFilterMode.data.find((d) => d.pid === pid);
+      return match ? match.slot : null;
+    }
+    return null;
+  }
 </script>
 
 <PageHeader title="Дашборд">
@@ -118,11 +132,13 @@
       </div>
       <div class="card-body">
         <!-- Active Filter Banner -->
-        <div class="filter-banner" class:filter-active={windowFilterMode.mode === 'Single'}>
+        <div class="filter-banner" class:filter-active={windowFilterMode.mode !== 'All'}>
           <div class="filter-banner-info">
             <span class="filter-mode-tag">
               {#if windowFilterMode.mode === 'Single'}
                 🟢 EW #{windowFilterMode.data.slot} [PID {windowFilterMode.data.pid}]
+              {:else if windowFilterMode.mode === 'Multi'}
+                🟢 Захвачено окон: {windowFilterMode.data.length} ({windowFilterMode.data.map(d => `EW #${d.slot}`).join(', ')})
               {:else}
                 🌐 Все окна EndlessWar
               {/if}
@@ -130,18 +146,20 @@
             <span class="filter-subtext">
               {#if windowFilterMode.mode === 'Single'}
                 {windowFilterMode.data.title || 'Окно игры'} (оверлей активен)
+              {:else if windowFilterMode.mode === 'Multi'}
+                Раздельный мониторинг активен (оверлей на каждом захваченном окне)
               {:else}
                 Пакеты и действия обрабатываются для всех окон игры
               {/if}
             </span>
           </div>
-          {#if windowFilterMode.mode === 'Single'}
+          {#if windowFilterMode.mode !== 'All'}
             <button
               type="button"
               class="btn btn-secondary btn-xs"
               onclick={onResetWindowFilter}
             >
-              Сбросить (Ctrl+0)
+              Сбросить все (Ctrl+0)
             </button>
           {/if}
         </div>
@@ -158,7 +176,8 @@
           {:else}
             <div class="windows-grid">
               {#each targetWindows as win, idx}
-                {@const isTracked = windowFilterMode.mode === 'Single' && windowFilterMode.data.pid === win.pid}
+                {@const trackedSlot = getWindowSlot(win.pid)}
+                {@const isTracked = trackedSlot !== null}
                 <div class="window-item" class:is-tracked={isTracked}>
                   <div class="window-meta">
                     <div class="window-title-row">
@@ -174,13 +193,13 @@
                     </div>
                   </div>
                   <div class="window-actions">
-                    {#if isTracked}
-                      <span class="tracked-badge">✓ Активно</span>
+                    {#if isTracked && trackedSlot !== null}
+                      <span class="tracked-badge">✓ Слот #{trackedSlot}</span>
                       <button
                         type="button"
                         class="btn btn-secondary btn-xs"
-                        onclick={onResetWindowFilter}
-                        title="Сбросить на все окна"
+                        onclick={() => onRemoveSlot ? onRemoveSlot(trackedSlot) : onResetWindowFilter()}
+                        title="Снять привязку слота"
                       >
                         Снять
                       </button>

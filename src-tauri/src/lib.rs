@@ -425,10 +425,16 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     windows_cache.0.iter().enumerate().find(|(_, w)| w.pid == pid)
                 });
 
+                let explicit_slot = target_pid.and_then(|pid| window_filter.get_slot_by_pid(pid));
                 let (target_slot, target_win, target_title) = match matched_win {
-                    Some((idx, win)) => (Some((idx + 1) as u32), Some(win.clone()), Some(win.title.clone())),
+                    Some((idx, win)) => {
+                        let slot = explicit_slot.or(Some((idx + 1) as u32));
+                        (slot, Some(win.clone()), Some(win.title.clone()))
+                    }
                     None => {
-                        if windows_cache.0.len() == 1 {
+                        if explicit_slot.is_some() {
+                            (explicit_slot, None, None)
+                        } else if windows_cache.0.len() == 1 {
                             let win = &windows_cache.0[0];
                             (Some(1), Some(win.clone()), Some(win.title.clone()))
                         } else {
@@ -474,8 +480,13 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     continue;
                 };
 
+                let pid_for_filter = target_pid.or_else(|| target_win.as_ref().map(|w| w.pid)).unwrap_or(0);
+                if !window_filter.is_pid_allowed(pid_for_filter) {
+                    continue;
+                }
+
                 // Automatically process pattern triggers (start / stop) for auto-clicker
-                clicker.trigger_pattern_event(&pattern.name, &app_notify, &config, &window_filter, &rt);
+                clicker.trigger_pattern_event(&pattern.name, target_slot, target_pid, &app_notify, &config, &window_filter, &rt);
 
                 let cooldown_key = match &conn {
                     Some(c) => c.cooldown_id(&pattern.name),
@@ -544,11 +555,6 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                 let matches_n = matches_seen.fetch_add(1, Ordering::SeqCst) + 1;
                 // User-facing: description only; pattern id without IP/client.
                 let notify_title = pattern.description.clone();
-
-                let pid_for_filter = target_pid.or_else(|| target_win.as_ref().map(|w| w.pid)).unwrap_or(0);
-                if !window_filter.is_pid_allowed(pid_for_filter) {
-                    continue;
-                }
 
                 let window_label = match (&target_slot, &target_win) {
                     (Some(slot), Some(win)) => {
@@ -1434,28 +1440,20 @@ async fn test_send_key(
 
     let target_hwnds: Vec<(isize, u32)> = match target_mode {
         config::ClickerTarget::Captured => {
-            match state.window_filter.get_mode() {
-                window_filter::WindowFilterMode::Single(info) => vec![(info.hwnd, info.pid)],
-                window_filter::WindowFilterMode::All => {
-                    let windows = screen_capture::find_target_windows(&process_name);
-                    if let Some(w) = windows.first() {
-                        vec![(w.hwnd, w.pid)]
-                    } else {
-                        Vec::new()
-                    }
+            if let Some(info) = state.window_filter.get_active_or_first_slot() {
+                vec![(info.hwnd, info.pid)]
+            } else {
+                let windows = screen_capture::find_target_windows(&process_name);
+                if let Some(w) = windows.first() {
+                    vec![(w.hwnd, w.pid)]
+                } else {
+                    Vec::new()
                 }
             }
         }
         config::ClickerTarget::Slot(slot) => {
-            let current_mode = state.window_filter.get_mode();
-            if let window_filter::WindowFilterMode::Single(ref info) = current_mode {
-                if info.slot == slot {
-                    vec![(info.hwnd, info.pid)]
-                } else {
-                    let windows = screen_capture::find_target_windows(&process_name);
-                    let idx = (slot as usize).saturating_sub(1);
-                    windows.get(idx).map(|w| vec![(w.hwnd, w.pid)]).unwrap_or_default()
-                }
+            if let Some(info) = state.window_filter.get_slot(slot) {
+                vec![(info.hwnd, info.pid)]
             } else {
                 let windows = screen_capture::find_target_windows(&process_name);
                 let idx = (slot as usize).saturating_sub(1);
@@ -1523,7 +1521,7 @@ async fn set_window_filter(
 
     state
         .window_filter
-        .set_single(slot, win.pid, win.hwnd, win.title.clone());
+        .set_slot(slot, win.pid, win.hwnd, win.title.clone());
     overlay::update_overlay_from_state(
         &state.window_filter,
         state.monitoring.load(Ordering::SeqCst),
@@ -1533,11 +1531,29 @@ async fn set_window_filter(
 }
 
 #[tauri::command]
+fn remove_window_slot(
+    state: State<'_, AppState>,
+    slot: u32,
+) -> Result<window_filter::WindowFilterMode, String> {
+    state.window_filter.remove_slot(slot);
+    if state.window_filter.get_all_slots().is_empty() {
+        overlay::hide_all_overlays();
+    } else {
+        overlay::update_overlay_from_state(
+            &state.window_filter,
+            state.monitoring.load(Ordering::SeqCst),
+            state.clicker.is_running(),
+        );
+    }
+    Ok(state.window_filter.get_mode())
+}
+
+#[tauri::command]
 fn reset_window_filter(
     state: State<'_, AppState>,
 ) -> Result<window_filter::WindowFilterMode, String> {
     state.window_filter.reset_to_all();
-    overlay::hide_overlay();
+    overlay::hide_all_overlays();
     Ok(window_filter::WindowFilterMode::All)
 }
 
@@ -1828,6 +1844,7 @@ pub fn run() {
             test_send_key,
             get_window_filter_status,
             set_window_filter,
+            remove_window_slot,
             reset_window_filter,
             get_target_windows,
             start_clicker,

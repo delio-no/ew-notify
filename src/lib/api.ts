@@ -85,6 +85,8 @@ export const api = {
     invoke<WindowFilterMode>('get_window_filter_status'),
   setWindowFilter: (slot: number, pid: number) =>
     invoke<WindowFilterMode>('set_window_filter', { slot, pid }),
+  removeWindowSlot: (slot: number) =>
+    invoke<WindowFilterMode>('remove_window_slot', { slot }),
   resetWindowFilter: () =>
     invoke<WindowFilterMode>('reset_window_filter'),
   getTargetWindows: () =>

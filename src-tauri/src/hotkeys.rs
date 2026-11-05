@@ -176,7 +176,7 @@ mod win {
         if hotkey_id == 10 {
             // Ctrl + 0: Reset to All Windows
             filter.reset_to_all();
-            overlay::hide_overlay();
+            overlay::hide_all_overlays();
             let _ = app.emit("window-filter-changed", WindowFilterMode::All);
             tracing::info!("Window filter reset to All windows via Ctrl+0");
             return;
@@ -185,18 +185,6 @@ mod win {
         let slot = hotkey_id;
         if !(1..=6).contains(&slot) {
             return;
-        }
-
-        let current_mode = filter.get_mode();
-        if let WindowFilterMode::Single(ref info) = current_mode {
-            // If pressing the same slot again, toggle back to All
-            if info.slot == slot {
-                filter.reset_to_all();
-                overlay::hide_overlay();
-                let _ = app.emit("window-filter-changed", WindowFilterMode::All);
-                tracing::info!("Window filter toggled off via Ctrl+{} -> All windows", slot);
-                return;
-            }
         }
 
         let process_name = match config.try_lock() {
@@ -259,7 +247,26 @@ mod win {
         }
 
         if let Some(target) = chosen_window {
-            filter.set_single(slot, target.pid, target.hwnd, target.title.clone());
+            // If the same window already has this slot, toggle it off
+            if let Some(existing) = filter.get_slot(slot) {
+                if existing.pid == target.pid {
+                    filter.remove_slot(slot);
+                    if filter.get_all_slots().is_empty() {
+                        overlay::hide_all_overlays();
+                    } else {
+                        overlay::update_overlay_from_state(
+                            filter,
+                            monitoring.load(Ordering::SeqCst),
+                            clicker.is_running(),
+                        );
+                    }
+                    let _ = app.emit("window-filter-changed", filter.get_mode());
+                    tracing::info!("Slot #{} removed (toggled off) via Ctrl+{}", slot, slot);
+                    return;
+                }
+            }
+
+            filter.set_slot(slot, target.pid, target.hwnd, target.title.clone());
 
             overlay::update_overlay_from_state(
                 filter,
@@ -270,7 +277,7 @@ mod win {
             let new_mode = filter.get_mode();
             let _ = app.emit("window-filter-changed", new_mode);
             tracing::info!(
-                "Window filter set via Ctrl+{} to window #{} [PID {}] (HWND {})",
+                "Window filter slot #{} set via Ctrl+{} to window [PID {}] (HWND {})",
                 slot,
                 slot,
                 target.pid,

@@ -131,7 +131,8 @@ export interface TrackedWindowInfo {
 
 export type WindowFilterMode =
   | { mode: 'All' }
-  | { mode: 'Single'; data: TrackedWindowInfo };
+  | { mode: 'Single'; data: TrackedWindowInfo }
+  | { mode: 'Multi'; data: TrackedWindowInfo[] };
 
 export interface TargetWindow {
   hwnd: number;

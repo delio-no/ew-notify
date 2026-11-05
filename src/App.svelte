@@ -208,6 +208,15 @@
     }
   }
 
+  async function removeWindowSlot(slot: number) {
+    try {
+      windowFilterMode = await api.removeWindowSlot(slot);
+      showStatus(`Слот #${slot} снят с отслеживания`);
+    } catch (e) {
+      showStatus(`Ошибка снятия слота: ${e}`);
+    }
+  }
+
   async function resetWindowFilter() {
     try {
       windowFilterMode = await api.resetWindowFilter();
@@ -925,6 +934,7 @@
         onStop={stopMonitoring}
         onHideTray={hideToTray}
         onSelectWindow={selectWindowFilter}
+        onRemoveSlot={removeWindowSlot}
         onResetWindowFilter={resetWindowFilter}
         onRefreshWindows={refreshWindowFilter}
       />

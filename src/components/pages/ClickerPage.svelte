@@ -99,14 +99,18 @@
       label:
         windowFilterMode?.mode === 'Single'
           ? `Захваченное (Слот #${windowFilterMode.data.slot})`
-          : 'Захваченное (Ctrl+1..6)',
+          : windowFilterMode?.mode === 'Multi'
+            ? `Захваченные (${windowFilterMode.data.map((d) => `#${d.slot}`).join(', ')})`
+            : 'Захваченное (Ctrl+1..6)',
       icon: '🎯',
       targetMatch: (t) => !t || t.type === 'Captured',
       defaultTarget: { type: 'Captured' },
       description:
         windowFilterMode?.mode === 'Single'
           ? `Динамическое окно: клавиши отправляются в активное окно по Ctrl+1..6 (сейчас Слот #${windowFilterMode.data.slot} [PID ${windowFilterMode.data.pid}]). При переключении захвата правила автоматически переходят на новое окно.`
-          : 'Динамическое окно: клавиши следуют за окном, которое активно по Ctrl+1..6. Сейчас окно игры не выбрано (режим «Все окна»).',
+          : windowFilterMode?.mode === 'Multi'
+            ? `Захваченные окна: правила для «Захваченное» отправляются в активный/первый слот (${windowFilterMode.data.map((d) => `Слот #${d.slot}`).join(', ')}). Либо выберите конкретную вкладку «Слот #1», «Слот #2» для раздельной настройки клавиш для каждого окна.`
+            : 'Динамическое окно: клавиши следуют за окном, которое активно по Ctrl+1..6. Сейчас окно игры не выбрано (режим «Все окна»).',
     },
     {
       id: 'slot-1',
@@ -350,6 +354,13 @@
           Текущее захваченное окно: <strong>Слот #{windowFilterMode.data.slot} [PID {windowFilterMode.data.pid}]</strong> — {windowFilterMode.data.title}
         </span>
       </div>
+    {:else if windowFilterMode?.mode === 'Multi'}
+      <div class="target-window-banner captured">
+        <span class="banner-icon">🎯</span>
+        <span>
+          Захвачено окон: <strong>{windowFilterMode.data.length}</strong> ({windowFilterMode.data.map((d) => `Слот #${d.slot} [PID ${d.pid}]`).join(', ')}) — на каждом окне отображается оверлей
+        </span>
+      </div>
     {:else}
       <div class="target-window-banner warning">
         <span class="banner-icon">⚠️</span>
@@ -539,7 +550,7 @@
                   onchange={(e) => setTargetValue(rule, e.currentTarget.value)}
                 >
                   <option value="Captured">
-                    🎯 Захваченное окно {windowFilterMode?.mode === 'Single' ? `(сейчас Слот #${windowFilterMode.data.slot})` : '(следует за Ctrl+1..6)'}
+                    🎯 Захваченное окно {windowFilterMode?.mode === 'Single' ? `(сейчас Слот #${windowFilterMode.data.slot})` : windowFilterMode?.mode === 'Multi' ? '(активный/первый слот)' : '(следует за Ctrl+1..6)'}
                   </option>
                   <option value="Slot-1">🟢 Окно Слот #1 (фиксированное)</option>
                   <option value="Slot-2">🟢 Окно Слот #2 (фиксированное)</option>
