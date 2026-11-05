@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import PageHeader from '../PageHeader.svelte';
   import type {
     ClickerConfig,
@@ -27,44 +28,58 @@
     onTestKey?: (key: string, target?: ClickerTarget) => void;
   } = $props();
 
+  function parseInitialRules(rawRules?: ClickerRule[]): ClickerRule[] {
+    if (rawRules && rawRules.length > 0) {
+      return rawRules.map((r, i) => ({
+        ...r,
+        id: r.id || `rule-${i + 1}`,
+        name: r.name || `Клавиша ${i + 1}`,
+        enabled: r.enabled !== false,
+        key: r.key || '1',
+        interval_ms: Number(r.interval_ms) || 1000,
+        target: r.target || { type: 'Captured' },
+        stop_on_pattern: r.stop_on_pattern !== false,
+        stop_patterns: [...(r.stop_patterns || [])],
+      }));
+    }
+    return [
+      {
+        id: 'rule-1',
+        name: 'Клавиша 1',
+        enabled: true,
+        key: '1',
+        interval_ms: 1000,
+        target: { type: 'Captured' },
+        stop_on_pattern: true,
+        stop_patterns: [],
+      },
+    ];
+  }
+
   let rules = $state<ClickerRule[]>([]);
   let notifyOnStop = $state(true);
 
-  // Sync when clickerStatus config changes
+  // Sync safely when clickerStatus config changes externally without reactive feedback loops
   $effect(() => {
-    if (clickerStatus?.config) {
-      if (clickerStatus.config.rules && clickerStatus.config.rules.length > 0) {
-        rules = clickerStatus.config.rules.map((r) => ({
-          ...r,
-          stop_patterns: [...(r.stop_patterns || [])],
-        }));
-      } else {
-        // Fallback default rule
-        rules = [
-          {
-            id: 'rule-1',
-            name: 'Клавиша 1',
-            enabled: true,
-            key: '1',
-            interval_ms: 1000,
-            target: { type: 'Captured' },
-            stop_on_pattern: true,
-            stop_patterns: [],
-          },
-        ];
+    const externalRules = clickerStatus?.config?.rules;
+    const externalNotify = clickerStatus?.config?.notify_on_stop;
+    untrack(() => {
+      rules = parseInitialRules(externalRules);
+      if (externalNotify !== undefined) {
+        notifyOnStop = externalNotify;
       }
-      notifyOnStop = clickerStatus.config.notify_on_stop ?? true;
-    }
+    });
   });
 
   const quickKeys = ['1', '2', '3', '4', 'F1', 'F2', 'F3', 'F4', 'Z', 'Space'];
   const quickIntervals = [200, 500, 1000, 2000, 3000, 5000];
 
-  function getTargetValue(target: ClickerTarget): string {
+  function getTargetValue(target?: ClickerTarget): string {
+    if (!target) return 'Captured';
     if (target.type === 'Slot') {
-      return `Slot-${target.data}`;
+      return `Slot-${target.data ?? 1}`;
     }
-    return target.type;
+    return target.type || 'Captured';
   }
 
   function setTargetValue(rule: ClickerRule, val: string) {
@@ -113,6 +128,7 @@
   }
 
   function toggleRulePattern(rule: ClickerRule, patName: string) {
+    if (!rule.stop_patterns) rule.stop_patterns = [];
     if (rule.stop_patterns.includes(patName)) {
       rule.stop_patterns = rule.stop_patterns.filter((p) => p !== patName);
     } else {
@@ -377,7 +393,7 @@
                 <button
                   type="button"
                   class="pattern-chip"
-                  class:active={rule.stop_patterns.length === 0}
+                  class:active={!rule.stop_patterns || rule.stop_patterns.length === 0}
                   onclick={() => (rule.stop_patterns = [])}
                 >
                   ⚡ Любой паттерн
@@ -386,7 +402,7 @@
                   <button
                     type="button"
                     class="pattern-chip"
-                    class:active={rule.stop_patterns.includes(pat.name)}
+                    class:active={(rule.stop_patterns || []).includes(pat.name)}
                     onclick={() => toggleRulePattern(rule, pat.name)}
                   >
                     {pat.name}
