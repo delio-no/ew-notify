@@ -442,6 +442,15 @@
         <button class="btn" onclick="onManualConnect()">Смотреть</button>
       </div>
     </div>
+
+    <!-- On-screen real-time connection log for mobile diagnostic -->
+    <div style="width: 100%; max-width: 1200px; background: rgba(15, 23, 42, 0.85); border: 1px solid var(--card-border); border-radius: 12px; padding: 12px 16px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.8rem; color: #94a3b8; margin-top: 4px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-weight: 600; color: #cbd5e1;">
+        <span>Диагностика подключения:</span>
+        <button onclick="document.getElementById('debugLog').innerHTML = ''" style="background:none; border:none; color: var(--accent); cursor:pointer; font-size: 0.75rem;">Очистить</button>
+      </div>
+      <div id="debugLog" style="max-height: 120px; overflow-y: auto; line-height: 1.5; color: #38bdf8;">Ожидание запуска...</div>
+    </div>
   </main>
 
   <script>
@@ -537,15 +546,32 @@
       });
     }
 
+    function log(msg, color) {
+      console.log(msg);
+      const el = document.getElementById('debugLog');
+      if (el) {
+        const time = new Date().toLocaleTimeString();
+        const style = color ? ` style="color: ${color};"` : '';
+        el.innerHTML += `<div${style}>[${time}] ${msg}</div>`;
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+
+    window.addEventListener('error', (e) => log('JS Error: ' + e.message, '#ef4444'));
+    window.addEventListener('unhandledrejection', (e) => log('Promise Error: ' + (e.reason ? (e.reason.message || e.reason) : e), '#ef4444'));
+
+    let activeMqttClients = [];
+
     function cleanupCurrentConnection() {
       if (pc) {
         try { pc.close(); } catch(e) {}
         pc = null;
       }
-      if (mqttClient) {
-        try { mqttClient.end(true); } catch(e) {}
-        mqttClient = null;
-      }
+      activeMqttClients.forEach((c) => {
+        try { c.end(true); } catch(e) {}
+      });
+      activeMqttClients = [];
+      mqttClient = null;
       isConnectedToHost = false;
       mediaStreamObj = null;
     }
@@ -575,13 +601,15 @@
       const answerTopic = `ew-notify/${targetStreamId}/answer/${viewerId}`;
       const offerTopic = `ew-notify/${targetStreamId}/offer`;
       let isOfferReady = false;
-      let isMqttConnected = false;
+      let connectedBrokerClient = null;
+
+      log('Старт сессии: ' + targetStreamId + ' (ID зрителя: ' + viewerId + ')');
 
       function tryPublishOffer() {
-        if (!isOfferReady || !isMqttConnected || !pc || !pc.localDescription || !mqttClient) {
+        if (!isOfferReady || !connectedBrokerClient || !pc || !pc.localDescription) {
           return;
         }
-        console.log('Publishing OFFER to topic:', offerTopic);
+        log('Отправка WebRTC OFFER на хост...', '#22c55e');
         setStatus('connecting', 'Ожидание ответа игры...');
         placeholderTitle.innerText = 'Запрос отправлен';
         placeholderSubtitle.innerText = 'Ожидание ответа от игрового клиента...';
@@ -590,179 +618,198 @@
           viewer_id: viewerId,
           sdp: pc.localDescription.sdp,
         });
-        mqttClient.publish(offerTopic, offerPayload, { qos: 1 }, (err) => {
-          if (err) console.error('Publish offer error:', err);
-          else console.log('Offer published successfully!');
+        connectedBrokerClient.publish(offerTopic, offerPayload, { qos: 1 }, (err) => {
+          if (err) log('Ошибка публикации OFFER: ' + err.message, '#ef4444');
+          else log('OFFER успешно отправлен! Ждём ответ игры...', '#22c55e');
         });
       }
 
-      const brokerUrl = MQTT_BROKERS[brokerIndex % MQTT_BROKERS.length];
-      console.log('Connecting to MQTT signaling broker:', brokerUrl);
-      placeholderSubtitle.innerText = 'Сервер связи: ' + brokerUrl.replace('wss://', '').split(':')[0];
+      // Parallel race across multiple public MQTT signaling brokers
+      const candidateBrokers = [
+        'wss://broker.emqx.io:8084/mqtt',
+        'wss://broker.hivemq.com:8884/mqtt'
+      ];
 
-      try {
-        mqttClient = mqtt.connect(brokerUrl, {
-          clientId: 'ew-web-' + viewerId,
-          clean: true,
-          connectTimeout: 7000,
-          reconnectPeriod: 3000,
-        });
-      } catch (err) {
-        console.error('MQTT connect error:', err);
-        brokerIndex++;
-        showError('Ошибка связи', 'Не удалось подключиться к сигнальному брокеру. Попробуйте еще раз.');
-        return;
-      }
+      candidateBrokers.forEach((bUrl) => {
+        log('Соединение с ' + bUrl + '...');
+        try {
+          const client = mqtt.connect(bUrl, {
+            clientId: 'ew-web-' + viewerId + '-' + Math.random().toString(36).slice(2, 6),
+            clean: true,
+            connectTimeout: 5000,
+            reconnectPeriod: 3000,
+          });
+          activeMqttClients.push(client);
 
-      mqttClient.on('connect', () => {
-        console.log('Connected to MQTT signaling broker!');
-        isMqttConnected = true;
-        setStatus('connecting', 'Связь с брокером OK');
-        placeholderTitle.innerText = 'Связь с брокером установлена';
-        placeholderSubtitle.innerText = 'Подготовка видеоканала к хосту ' + targetStreamId + '...';
+          client.on('connect', () => {
+            if (!connectedBrokerClient) {
+              connectedBrokerClient = client;
+              mqttClient = client;
+              log('Брокер подключен: ' + bUrl, '#22c55e');
+              setStatus('connecting', 'Связь с брокером OK');
+              placeholderTitle.innerText = 'Связь с брокером установлена';
+              placeholderSubtitle.innerText = 'Сервер: ' + bUrl.replace('wss://', '').split(':')[0];
 
-        mqttClient.subscribe(answerTopic, (err) => {
-          if (err) {
-            console.error('MQTT subscribe error:', err);
-            return;
-          }
-          tryPublishOffer();
-        });
-      });
-
-      mqttClient.on('message', async (topic, payload) => {
-        if (topic === answerTopic) {
-          try {
-            const data = JSON.parse(payload.toString());
-            if (data.sdp && pc && pc.signalingState !== 'closed') {
-              console.log('Received WebRTC ANSWER via MQTT!');
-              setStatus('connecting', 'Хост ответил • P2P рукопожатие...');
-              placeholderTitle.innerText = 'Хост ответил!';
-              placeholderSubtitle.innerText = 'Установка защищенного P2P соединения...';
-
-              await pc.setRemoteDescription(new RTCSessionDescription({
-                type: 'answer',
-                sdp: data.sdp,
-              }));
-              console.log('Remote description applied successfully!');
-            }
-          } catch (e) {
-            console.error('Failed to parse answer SDP:', e);
-          }
-        }
-      });
-
-      mqttClient.on('error', (err) => {
-        console.error('MQTT error:', err);
-        brokerIndex++;
-      });
-
-      if (mqttClient.connected) {
-        isMqttConnected = true;
-        mqttClient.subscribe(answerTopic, () => {
-          tryPublishOffer();
-        });
-      }
-
-      // Configure WebRTC PeerConnection with STUN
-      pc = new RTCPeerConnection({
-        iceServers: [
-          { urls: 'stun:stun.cloudflare.com:3478' },
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:global.stun.twilio.com:3478' }
-        ]
-      });
-
-      video.muted = true;
-
-      pc.ontrack = (event) => {
-        console.log('Received remote media track:', event.track.kind, event);
-        const stream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
-        video.srcObject = stream;
-        video.muted = true;
-
-        if (event.track) {
-          event.track.onunmute = () => {
-            console.log('Video track unmuted! Frames arriving.');
-            video.play().then(onStreamPlaying).catch(e => console.warn(e));
-          };
-        }
-
-        video.play().then(() => {
-          if (video.videoWidth > 0) {
-            onStreamPlaying();
-          }
-        }).catch((err) => {
-          console.warn('Autoplay prevented on mobile:', err);
-          loadingSpinner.style.display = 'none';
-          playBtn.style.display = 'inline-flex';
-          placeholderTitle.innerText = 'Трансляция готова';
-          placeholderSubtitle.innerText = 'Нажмите кнопку ниже для запуска воспроизведения';
-        });
-      };
-
-      pc.onconnectionstatechange = () => {
-        console.log('WebRTC connection state:', pc.connectionState);
-        if (pc.connectionState === 'connected') {
-          isConnectedToHost = true;
-          setStatus('connecting', 'P2P канал открыт • Приём видео...');
-          placeholderTitle.innerText = 'P2P связь установлена!';
-          placeholderSubtitle.innerText = 'Ожидание видеопотока 720p 30fps...';
-          setTimeout(() => {
-            if (!video.srcObject || (video.srcObject.getVideoTracks && video.srcObject.getVideoTracks().length === 0)) {
-              const receivers = pc.getReceivers ? pc.getReceivers() : [];
-              for (const r of receivers) {
-                if (r.track && r.track.kind === 'video') {
-                  console.log('Connected fallback: binding receiver track');
-                  video.srcObject = new MediaStream([r.track]);
-                  video.play().then(onStreamPlaying).catch(e => console.warn(e));
-                  break;
+              client.subscribe(answerTopic, (err) => {
+                if (err) log('Ошибка подписки: ' + err.message, '#ef4444');
+                else {
+                  log('Подписка на ответ активна (' + answerTopic + ')');
+                  tryPublishOffer();
                 }
+              });
+            } else {
+              try { client.end(true); } catch(e) {}
+            }
+          });
+
+          client.on('message', async (topic, payload) => {
+            if (topic === answerTopic) {
+              try {
+                const data = JSON.parse(payload.toString());
+                if (data.sdp && pc && pc.signalingState !== 'closed') {
+                  log('Получен ANSWER от хоста! Размер SDP: ' + data.sdp.length, '#22c55e');
+                  setStatus('connecting', 'Хост ответил • P2P рукопожатие...');
+                  placeholderTitle.innerText = 'Хост ответил!';
+                  placeholderSubtitle.innerText = 'Установка защищенного P2P соединения...';
+
+                  await pc.setRemoteDescription(new RTCSessionDescription({
+                    type: 'answer',
+                    sdp: data.sdp,
+                  }));
+                  log('Remote SDP применен успешно!');
+                }
+              } catch (e) {
+                log('Ошибка обработки ответа: ' + e.message, '#ef4444');
               }
             }
-          }, 300);
-        } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-          if (!isConnectedToHost) {
-            showError('Трансляция не найдена', 'Стример офлайн или идентификатор окна устарел.');
-          } else {
-            showError('Связь прервана', 'Соединение с хостом было разорвано.');
-          }
-        }
-      };
+          });
 
-      pc.oniceconnectionstatechange = () => {
-        console.log('ICE connection state:', pc.iceConnectionState);
-        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-          isConnectedToHost = true;
-        }
-      };
+          client.on('error', (err) => {
+            log('Брокер ' + bUrl + ' ошибка: ' + (err.message || err), '#f59e0b');
+          });
 
-      // Add recvonly transceiver for 720p video stream
-      pc.addTransceiver('video', { direction: 'recvonly' });
-
-      // Create Offer SDP
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      // Wait briefly for ICE gathering
-      await new Promise((resolve) => {
-        if (pc.iceGatheringState === 'complete') {
-          resolve();
-        } else {
-          const check = () => {
-            if (pc.iceGatheringState === 'complete') {
-              pc.removeEventListener('icegatheringstatechange', check);
-              resolve();
+          client.on('close', () => {
+            if (connectedBrokerClient === client) {
+              log('Связь с активным брокером закрыта', '#f59e0b');
             }
-          };
-          pc.addEventListener('icegatheringstatechange', check);
-          setTimeout(resolve, 600);
+          });
+        } catch (err) {
+          log('Исключение mqtt.connect: ' + err.message, '#ef4444');
         }
       });
 
-      isOfferReady = true;
-      tryPublishOffer();
+      // Configure WebRTC PeerConnection with STUN
+      try {
+        log('Инициализация RTCPeerConnection...');
+        pc = new RTCPeerConnection({
+          iceServers: [
+            { urls: 'stun:stun.cloudflare.com:3478' },
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:global.stun.twilio.com:3478' }
+          ]
+        });
+
+        video.muted = true;
+
+        pc.ontrack = (event) => {
+          log('Получен медиа-трек: ' + event.track.kind, '#22c55e');
+          const stream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
+          video.srcObject = stream;
+          video.muted = true;
+
+          if (event.track) {
+            event.track.onunmute = () => {
+              log('Видео-трек разблокирован (unmuted)! Кадры поступают.', '#22c55e');
+              video.play().then(onStreamPlaying).catch(e => log('video.play: ' + e.message, '#f59e0b'));
+            };
+          }
+
+          video.play().then(() => {
+            if (video.videoWidth > 0) {
+              onStreamPlaying();
+            }
+          }).catch((err) => {
+            log('Autoplay заблокирован, требуется тап по экрану', '#f59e0b');
+            loadingSpinner.style.display = 'none';
+            playBtn.style.display = 'inline-flex';
+            placeholderTitle.innerText = 'Трансляция готова';
+            placeholderSubtitle.innerText = 'Нажмите кнопку ниже для запуска воспроизведения';
+          });
+        };
+
+        pc.onconnectionstatechange = () => {
+          log('WebRTC Connection State: ' + pc.connectionState, pc.connectionState === 'connected' ? '#22c55e' : '#f59e0b');
+          if (pc.connectionState === 'connected') {
+            isConnectedToHost = true;
+            setStatus('connecting', 'P2P канал открыт • Приём видео...');
+            placeholderTitle.innerText = 'P2P связь установлена!';
+            placeholderSubtitle.innerText = 'Ожидание видеопотока 720p 30fps...';
+            setTimeout(() => {
+              if (!video.srcObject || (video.srcObject.getVideoTracks && video.srcObject.getVideoTracks().length === 0)) {
+                const receivers = pc.getReceivers ? pc.getReceivers() : [];
+                for (const r of receivers) {
+                  if (r.track && r.track.kind === 'video') {
+                    log('Connected fallback: привязка receiver track');
+                    video.srcObject = new MediaStream([r.track]);
+                    video.play().then(onStreamPlaying).catch(e => console.warn(e));
+                    break;
+                  }
+                }
+              }
+            }, 300);
+          } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+            if (!isConnectedToHost) {
+              showError('Сбой P2P соединения', 'Не удалось связаться с ПК напрямую через UDP. Попробуйте еще раз.');
+            }
+          }
+        };
+
+        pc.oniceconnectionstatechange = () => {
+          log('ICE State: ' + pc.iceConnectionState);
+          if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+            isConnectedToHost = true;
+          }
+        };
+
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            log('ICE кандидат: ' + event.candidate.type + ' ' + (event.candidate.protocol || 'udp'));
+          } else {
+            log('ICE сбор кандидатов завершен');
+          }
+        };
+
+        try {
+          pc.addTransceiver('video', { direction: 'recvonly' });
+        } catch(e) {
+          log('addTransceiver: ' + e.message);
+        }
+
+        const offer = await pc.createOffer({ offerToReceiveVideo: true });
+        await pc.setLocalDescription(offer);
+        log('Локальный OFFER создан, ожидание ICE...');
+
+        await new Promise((resolve) => {
+          if (pc.iceGatheringState === 'complete') {
+            resolve();
+          } else {
+            const check = () => {
+              if (pc.iceGatheringState === 'complete') {
+                pc.removeEventListener('icegatheringstatechange', check);
+                resolve();
+              }
+            };
+            pc.addEventListener('icegatheringstatechange', check);
+            setTimeout(resolve, 600);
+          }
+        });
+
+        isOfferReady = true;
+        tryPublishOffer();
+      } catch (err) {
+        log('Критическая ошибка WebRTC: ' + err.message, '#ef4444');
+      }
 
       // 15 seconds check
       setTimeout(() => {
@@ -774,7 +821,7 @@
             placeholderTitle.innerText = 'Видеопоток ожидается';
             placeholderSubtitle.innerText = 'P2P соединение установлено. Убедитесь, что окно игры развернуто на ПК, или нажмите кнопку ниже.';
           } else {
-            showError('Хост не отвечает', 'Проверьте, что в ew-notify запущен стрим этого окна.');
+            showError('Хост не отвечает', 'Проверьте лог диагностики внизу страницы.');
             retryBtn.style.display = 'inline-flex';
           }
         }

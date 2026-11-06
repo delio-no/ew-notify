@@ -738,7 +738,7 @@ struct OfferMessage {
     sdp: String,
 }
 
-/// MQTT signaling loop with automatic failover between EMQX and HiveMQ
+/// MQTT signaling loop running both EMQX and HiveMQ brokers concurrently for maximum reliability
 async fn run_mqtt_signaling_loop(
     stream_id: String,
     running: Arc<AtomicBool>,
@@ -746,15 +746,43 @@ async fn run_mqtt_signaling_loop(
     viewer_count: Arc<AtomicUsize>,
     force_keyframe: Arc<AtomicBool>,
 ) {
-    let brokers = [
+    let brokers: [(&'static str, u16); 2] = [
         ("broker.emqx.io", 1883),
         ("broker.hivemq.com", 1883),
     ];
 
-    let mut broker_idx = 0;
+    for &(host, port) in &brokers {
+        let stream_id = stream_id.clone();
+        let running = running.clone();
+        let active_viewers = active_viewers.clone();
+        let viewer_count = viewer_count.clone();
+        let force_keyframe = force_keyframe.clone();
 
+        tokio::spawn(async move {
+            run_single_mqtt_broker_loop(
+                host,
+                port,
+                stream_id,
+                running,
+                active_viewers,
+                viewer_count,
+                force_keyframe,
+            )
+            .await;
+        });
+    }
+}
+
+async fn run_single_mqtt_broker_loop(
+    host: &'static str,
+    port: u16,
+    stream_id: String,
+    running: Arc<AtomicBool>,
+    active_viewers: Arc<std::sync::RwLock<HashMap<String, ActiveViewer>>>,
+    viewer_count: Arc<AtomicUsize>,
+    force_keyframe: Arc<AtomicBool>,
+) {
     while running.load(Ordering::SeqCst) {
-        let (host, port) = brokers[broker_idx % brokers.len()];
         let rand_client_id: String = (0..8)
             .map(|_| format!("{:x}", rand::random::<u8>() % 16))
             .collect();
@@ -773,11 +801,10 @@ async fn run_mqtt_signaling_loop(
 
         if let Err(e) = client.subscribe(&offer_topic, QoS::AtLeastOnce).await {
             warn!(
-                "Failed to subscribe to MQTT topic {} on {}: {}. Retrying with next broker...",
+                "Failed to subscribe to MQTT topic {} on {}: {}. Retrying in 3s...",
                 offer_topic, host, e
             );
-            broker_idx += 1;
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            tokio::time::sleep(Duration::from_secs(3)).await;
             continue;
         }
 
@@ -812,18 +839,17 @@ async fn run_mqtt_signaling_loop(
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    warn!("MQTT eventloop error on {}: {}. Reconnecting...", host, e);
-                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    warn!("MQTT eventloop error on {}: {}. Reconnecting in 3s...", host, e);
+                    tokio::time::sleep(Duration::from_secs(3)).await;
                     break;
                 }
             }
         }
 
-        broker_idx += 1;
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
-    info!("MQTT signaling loop finished for stream: {}", stream_id);
+    info!("MQTT signaling loop finished on {} for stream: {}", host, stream_id);
 }
 
 /// Handle incoming WebRTC OFFER message from viewer
