@@ -52,6 +52,12 @@ npm run tauri build
 
 ---
 
+## Полезные ссылки
+
+- **[open-ew-launcher](https://github.com/delio-no/open-ew-launcher)** — открытый альтернативный лаунчер/апдейтер для клиента EndlessWar.
+
+---
+
 ## Лицензия
 
 MIT License.
