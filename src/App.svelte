@@ -930,7 +930,13 @@
 </script>
 
 <div class="app-container">
-  <Sidebar {currentPage} {isAdmin} hasUpdate={!!availableUpdate?.has_update} onNavigate={showPage} />
+  <Sidebar
+    {currentPage}
+    {isAdmin}
+    hasUpdate={!!availableUpdate?.has_update}
+    updateVersion={availableUpdate?.latest_version || ''}
+    onNavigate={showPage}
+  />
 
   <main class="content">
     {#if !configLoaded}

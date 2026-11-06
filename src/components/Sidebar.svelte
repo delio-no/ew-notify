@@ -7,15 +7,17 @@
     currentPage,
     isAdmin = false,
     hasUpdate = false,
+    updateVersion = '',
     onNavigate,
   }: {
     currentPage: PageId;
     isAdmin?: boolean;
     hasUpdate?: boolean;
+    updateVersion?: string;
     onNavigate: (page: PageId) => void;
   } = $props();
 
-  let appVersion = $state('v0.3.4');
+  let appVersion = $state('v0.3.5');
 
   onMount(async () => {
     try {
@@ -71,6 +73,22 @@
     {/each}
   </nav>
   <div class="sidebar-footer">
+    {#if hasUpdate}
+      <button
+        type="button"
+        class="sidebar-update-btn"
+        onclick={() => onNavigate('settings')}
+        title="Доступно обновление! Нажмите, чтобы перейти в настройки"
+      >
+        <svg class="update-btn-icon" viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true">
+          <path d="M8 1a7 7 0 1 0 7 7A7 7 0 0 0 8 1zm0 12.5A5.5 5.5 0 1 1 13.5 8 5.5 5.5 0 0 1 8 13.5zm.75-8.25a.75.75 0 0 0-1.5 0v3.69L5.53 7.22a.75.75 0 0 0-1.06 1.06l3 3a.75.75 0 0 0 1.06 0l3-3a.75.75 0 1 0-1.06-1.06L8.75 8.94z"/>
+        </svg>
+        <span>Обновить</span>
+        {#if updateVersion}
+          <span class="update-ver-chip">{updateVersion}</span>
+        {/if}
+      </button>
+    {/if}
     <button
       type="button"
       class="github-link-btn"
@@ -112,6 +130,64 @@
     font-size: 11px;
     font-weight: 800;
     letter-spacing: 0.02em;
+  }
+
+  .sidebar-update-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 7px 12px;
+    width: 100%;
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.3) 0%, rgba(99, 102, 241, 0.35) 100%);
+    border: 1px solid rgba(129, 140, 248, 0.5);
+    border-radius: 6px;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .sidebar-update-btn:hover {
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.45) 0%, rgba(99, 102, 241, 0.5) 100%);
+    border-color: #818cf8;
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+    transform: translateY(-1px);
+  }
+
+  .sidebar-update-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 1px 4px rgba(99, 102, 241, 0.3);
+  }
+
+  .update-btn-icon {
+    flex-shrink: 0;
+    color: #60a5fa;
+    animation: bounce-subtle 2s infinite ease-in-out;
+  }
+
+  .update-ver-chip {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.18);
+    color: #fff;
+    letter-spacing: 0.02em;
+    margin-left: 2px;
+  }
+
+  @keyframes bounce-subtle {
+    0%, 100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(2px);
+    }
   }
 
   .github-link-btn {
