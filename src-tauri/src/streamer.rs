@@ -1,4 +1,4 @@
-//! P2P WebRTC 1080p Window Streamer using OpenH264 & MQTT Signaling (broker.emqx.io / broker.hivemq.com).
+//! P2P WebRTC 720p Window Streamer using OpenH264 & MQTT Signaling (broker.emqx.io / broker.hivemq.com).
 
 use anyhow::{anyhow, Result};
 use rumqttc::{AsyncClient, MqttOptions, QoS};
@@ -33,8 +33,8 @@ use webrtc::peer_connection::{
     RTCPeerConnectionState,
 };
 
-const TARGET_WIDTH: usize = 1920;
-const TARGET_HEIGHT: usize = 1080;
+const TARGET_WIDTH: usize = 1280;
+const TARGET_HEIGHT: usize = 720;
 const TARGET_FPS: u64 = 30;
 const FRAME_DURATION_MS: u64 = 1000 / TARGET_FPS;
 const SSRC_VIDEO: u32 = 5000;
@@ -297,7 +297,7 @@ pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<Active
     let cap_force_keyframe = force_keyframe.clone();
 
     std::thread::Builder::new()
-        .name("ew-1080p-stream-capture".into())
+        .name("ew-720p-stream-capture".into())
         .spawn(move || {
             run_capture_encode_loop(
                 hwnd,
@@ -341,7 +341,7 @@ pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<Active
     Ok(info)
 }
 
-/// Screen capture and H.264 encoding loop at 1080p, 30fps (runs in dedicated OS thread)
+/// Screen capture and H.264 encoding loop at 720p, 30fps (runs in dedicated OS thread)
 fn run_capture_encode_loop(
     hwnd_val: isize,
     pid: u32,
@@ -350,7 +350,7 @@ fn run_capture_encode_loop(
     _viewer_count: Arc<AtomicUsize>,
     force_keyframe: Arc<AtomicBool>,
 ) {
-    info!("Starting 1080p capture & encode loop for HWND: {}, PID: {}", hwnd_val, pid);
+    info!("Starting 720p capture & encode loop for HWND: {}, PID: {}", hwnd_val, pid);
 
     #[cfg(windows)]
     unsafe {
@@ -366,10 +366,10 @@ fn run_capture_encode_loop(
 
     let api = OpenH264API::from_source();
     let config = EncoderConfig::new()
-        .bitrate(BitRate::from_bps(3_000_000))
+        .bitrate(BitRate::from_bps(1_800_000))
         .max_frame_rate(FrameRate::from_hz(TARGET_FPS as f32))
         .intra_frame_period(IntraFramePeriod::from_num_frames(30))
-        .sps_pps_strategy(SpsPpsStrategy::IncreasingId);
+        .sps_pps_strategy(SpsPpsStrategy::ConstantId);
 
     let mut encoder = match Encoder::with_api_config(api, config) {
         Ok(enc) => enc,
@@ -391,6 +391,7 @@ fn run_capture_encode_loop(
     let mut last_hwnd_check = Instant::now();
     let mut total_encoded_frames = 0u64;
     let mut last_stat_log = Instant::now();
+    let mut last_frame_instant = Instant::now();
 
     while running.load(Ordering::SeqCst) {
         let frame_start = Instant::now();
@@ -408,6 +409,7 @@ fn run_capture_encode_loop(
         // If no active connected viewers, sleep lightly to conserve CPU
         if viewers.is_empty() {
             std::thread::sleep(Duration::from_millis(100));
+            last_frame_instant = Instant::now();
             continue;
         }
 
@@ -438,8 +440,8 @@ fn run_capture_encode_loop(
             }
         }
 
-        // Capture 1080p frame from Windows window via GDI StretchBlt
-        let captured = capture_window_1080p_into(current_hwnd, &mut bgra_buffer);
+        // Capture 720p frame from Windows window via GDI StretchBlt
+        let captured = capture_window_720p_into(current_hwnd, &mut bgra_buffer);
         if !captured {
             std::thread::sleep(Duration::from_millis(100));
             continue;
@@ -473,10 +475,14 @@ fn run_capture_encode_loop(
             let sample_bytes = bytes::Bytes::from(nalu_bytes);
             total_encoded_frames += 1;
 
+            let frame_elapsed = last_frame_instant.elapsed();
+            last_frame_instant = Instant::now();
+            let sample_duration = frame_elapsed.clamp(Duration::from_millis(5), Duration::from_millis(200));
+
             for (vid, viewer) in &viewers {
                 let sample = Sample {
                     data: sample_bytes.clone(),
-                    duration: Duration::from_millis(FRAME_DURATION_MS),
+                    duration: sample_duration,
                     ..Sample::new(Instant::now())
                 };
                 let writer = viewer.track.sample_writer(SSRC_VIDEO, viewer.payload_type);
@@ -489,7 +495,7 @@ fn run_capture_encode_loop(
 
             if last_stat_log.elapsed() >= Duration::from_secs(5) {
                 info!(
-                    "Streaming active: encoded {} frames (1080p 30fps), active viewers: {}",
+                    "Streaming active: encoded {} frames (720p 30fps), active viewers: {}",
                     total_encoded_frames, viewers.len()
                 );
                 last_stat_log = Instant::now();
@@ -503,12 +509,12 @@ fn run_capture_encode_loop(
         }
     }
 
-    info!("1080p capture loop terminated for HWND: {}", current_hwnd);
+    info!("720p capture loop terminated for HWND: {}", current_hwnd);
 }
 
-/// Capture game window and scale directly to 1920x1080 BGRA
+/// Capture game window and scale directly to 1280x720 BGRA
 #[cfg(windows)]
-fn capture_window_1080p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
+fn capture_window_720p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
     use std::mem::{size_of, zeroed};
     use windows::Win32::Foundation::{HWND, RECT};
     use windows::Win32::Graphics::Gdi::{
@@ -544,15 +550,15 @@ fn capture_window_1080p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
         }
 
         let hdc_mem = CreateCompatibleDC(hdc_screen);
-        let hbmp_1080p = CreateCompatibleBitmap(
+        let hbmp_720p = CreateCompatibleBitmap(
             hdc_screen,
             TARGET_WIDTH as i32,
             TARGET_HEIGHT as i32,
         );
 
-        if hdc_mem.is_invalid() || hbmp_1080p.is_invalid() {
-            if !hbmp_1080p.is_invalid() {
-                DeleteObject(hbmp_1080p);
+        if hdc_mem.is_invalid() || hbmp_720p.is_invalid() {
+            if !hbmp_720p.is_invalid() {
+                DeleteObject(hbmp_720p);
             }
             if !hdc_mem.is_invalid() {
                 DeleteDC(hdc_mem);
@@ -561,7 +567,7 @@ fn capture_window_1080p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
             return false;
         }
 
-        let old_mem = SelectObject(hdc_mem, hbmp_1080p);
+        let old_mem = SelectObject(hdc_mem, hbmp_720p);
 
         // Capture source window into memory DC
         let hdc_src = CreateCompatibleDC(hdc_screen);
@@ -586,7 +592,7 @@ fn capture_window_1080p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
             }
         }
 
-        // StretchBlt from original resolution to 1920x1080
+        // StretchBlt from original resolution to 1280x720
         SetStretchBltMode(hdc_mem, HALFTONE);
         let _ = StretchBlt(
             hdc_mem,
@@ -613,7 +619,7 @@ fn capture_window_1080p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
 
         let lines = GetDIBits(
             hdc_mem,
-            hbmp_1080p,
+            hbmp_720p,
             0,
             TARGET_HEIGHT as u32,
             Some(out_bgra.as_mut_ptr() as *mut _),
@@ -622,7 +628,12 @@ fn capture_window_1080p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
         );
 
         // Check if frame has content; if all black and PrintWindow was used, fallback to screen DC BitBlt
-        let sample_has_content = out_bgra.iter().take(2000).any(|&b| b > 10);
+        let mid = out_bgra.len() / 2;
+        let sample_has_content = if mid + 4000 <= out_bgra.len() {
+            out_bgra[mid..mid + 4000].iter().any(|&b| b > 15)
+        } else {
+            out_bgra.iter().any(|&b| b > 15)
+        };
         if lines > 0 && !sample_has_content && printed.as_bool() {
             let _ = BitBlt(hdc_src, 0, 0, src_w, src_h, hdc_screen, rect.left, rect.top, SRCCOPY);
             let _ = StretchBlt(
@@ -630,7 +641,7 @@ fn capture_window_1080p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
                 hdc_src, 0, 0, src_w, src_h, SRCCOPY,
             );
             let _ = GetDIBits(
-                hdc_mem, hbmp_1080p, 0, TARGET_HEIGHT as u32,
+                hdc_mem, hbmp_720p, 0, TARGET_HEIGHT as u32,
                 Some(out_bgra.as_mut_ptr() as *mut _), &mut bmi, DIB_RGB_COLORS,
             );
         }
@@ -641,7 +652,7 @@ fn capture_window_1080p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
         DeleteDC(hdc_src);
 
         SelectObject(hdc_mem, old_mem);
-        DeleteObject(hbmp_1080p);
+        DeleteObject(hbmp_720p);
         DeleteDC(hdc_mem);
         ReleaseDC(HWND(0), hdc_screen);
 
@@ -650,7 +661,7 @@ fn capture_window_1080p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
 }
 
 #[cfg(not(windows))]
-fn capture_window_1080p_into(_hwnd: isize, _out: &mut [u8]) -> bool {
+fn capture_window_720p_into(_hwnd: isize, _out: &mut [u8]) -> bool {
     false
 }
 
@@ -859,11 +870,12 @@ async fn handle_offer_message(
     let rtc_config = RTCConfigurationBuilder::new()
         .with_ice_servers(vec![
             RTCIceServer {
-                urls: vec!["stun:stun.l.google.com:19302".to_string()],
-                ..Default::default()
-            },
-            RTCIceServer {
-                urls: vec!["stun:global.stun.twilio.com:3478".to_string()],
+                urls: vec![
+                    "stun:stun.cloudflare.com:3478".to_string(),
+                    "stun:stun.l.google.com:19302".to_string(),
+                    "stun:stun1.l.google.com:19302".to_string(),
+                    "stun:global.stun.twilio.com:3478".to_string(),
+                ],
                 ..Default::default()
             },
         ])
