@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import type { PageId } from '../lib/types';
   import { api } from '../lib/api';
-  import logoImg from '../assets/logo.png';
 
   let {
     currentPage,
@@ -22,7 +21,7 @@
     onDirectUpdate?: () => void;
   } = $props();
 
-  let appVersion = $state('v0.3.9');
+  let appVersion = $state('v0.3.10');
 
   onMount(async () => {
     try {
@@ -59,7 +58,7 @@
 
 <aside class="sidebar">
   <div class="logo">
-    <img src={logoImg} alt="EW" class="logo-img" />
+    <span class="logo-icon" aria-hidden="true">EW</span>
     <span class="logo-text">EW Notify</span>
   </div>
   <nav class="nav">
@@ -130,12 +129,18 @@
 </aside>
 
 <style>
-  .logo-img {
+  .logo-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     width: 32px;
     height: 32px;
     border-radius: 8px;
-    object-fit: cover;
-    flex-shrink: 0;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
   }
 
   .sidebar-update-btn {

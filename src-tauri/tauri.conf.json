@@ -1,6 +1,6 @@
 {
   "productName": "EndlessWar Notifier",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "identifier": "com.ewnotify.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -33,9 +33,6 @@
       "nsis"
     ],
     "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
       "icons/icon.png",
       "icons/icon.ico"
     ],
