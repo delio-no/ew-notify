@@ -33,15 +33,22 @@ mod win {
             .chain(std::iter::once(0))
             .collect();
         unsafe {
-            let handle = CreateMutexW(None, true, PCWSTR(wide.as_ptr()))?;
-            let already = windows::Win32::Foundation::GetLastError() == ERROR_ALREADY_EXISTS;
-            if already {
+            // If a previous instance is shutting down (e.g. during restart or update),
+            // retry for up to 3 seconds before giving up.
+            for attempt in 0..15 {
+                let handle = CreateMutexW(None, true, PCWSTR(wide.as_ptr()))?;
+                let already = windows::Win32::Foundation::GetLastError() == ERROR_ALREADY_EXISTS;
+                if !already {
+                    return Ok(InstanceLock { handle });
+                }
                 let _ = CloseHandle(handle);
-                return Err(anyhow!(
-                    "EndlessWar Notifier уже запущен. Закрой другой экземпляр или иконку в трее."
-                ));
+                if attempt < 14 {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
             }
-            Ok(InstanceLock { handle })
+            Err(anyhow!(
+                "EndlessWar Notifier уже запущен. Закрой другой экземпляр или иконку в трее."
+            ))
         }
     }
 
@@ -74,4 +81,11 @@ pub fn ensure_single_instance() -> Result<()> {
     let lock = acquire_single_instance("Local\\ew-notify_SingleInstance")?;
     *INSTANCE.lock().map_err(|e| anyhow!("{e}"))? = Some(lock);
     Ok(())
+}
+
+/// Explicitly release the single instance mutex so a newly spawned process can acquire it.
+pub fn release_single_instance() {
+    if let Ok(mut guard) = INSTANCE.lock() {
+        *guard = None;
+    }
 }

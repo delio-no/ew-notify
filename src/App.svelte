@@ -74,7 +74,6 @@
     if (!availableUpdate || !availableUpdate.download_url || isUpdating) return;
     isUpdating = true;
     updateError = null;
-    showPage('settings');
     showStatus(`Скачивание обновления ${availableUpdate.latest_version}...`);
     try {
       await api.installUpdate(availableUpdate.download_url, availableUpdate.asset_name);
@@ -1055,4 +1054,43 @@
 
     <Toast message={statusMessage} />
   </main>
+
+  {#if isUpdating}
+    <div class="update-overlay" role="dialog" aria-modal="true">
+      <div class="update-card">
+        <div class="update-icon-wrapper">
+          <div class="update-pulse-ring"></div>
+          <div class="update-icon-circle">
+            <svg class="update-icon-svg" viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+          </div>
+        </div>
+
+        <h3 class="update-title">Установка обновления</h3>
+
+        <div class="update-version-row">
+          <span class="update-ver-curr">{availableUpdate?.current_version || 'v0.3.11'}</span>
+          <svg class="update-arrow-icon" viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+            <path fill-rule="evenodd" d="M1 8a.5.5 0 0 1 .5-.5h11.793l-3.147-3.146a.5.5 0 0 1 .708-.708l4 4a.5.5 0 0 1 0 .708l-4 4a.5.5 0 0 1-.708-.708L13.293 8.5H1.5A.5.5 0 0 1 1 8z"/>
+          </svg>
+          <span class="update-ver-target">{availableUpdate?.latest_version || 'новая версия'}</span>
+        </div>
+
+        <div class="update-progress-track">
+          <div class="update-progress-bar-indeterminate"></div>
+        </div>
+
+        <p class="update-desc">
+          Загрузка файлов и подготовка к перезапуску...
+        </p>
+
+        <span class="update-hint">
+          Программа автоматически перезапустится через пару секунд
+        </span>
+      </div>
+    </div>
+  {/if}
 </div>

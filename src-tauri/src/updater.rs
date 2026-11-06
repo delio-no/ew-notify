@@ -257,22 +257,51 @@ pub async fn download_and_install_update(
 
     tracing::info!("Update successfully installed! Relaunching application...");
 
+    // Release the single instance lock in this process before spawning new one
+    crate::platform::release_single_instance();
+
     // Spawn new process
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        const DETACHED_PROCESS: u32 = 0x00000008;
-        let mut cmd = std::process::Command::new(&current_exe);
-        cmd.creation_flags(DETACHED_PROCESS);
-        cmd.spawn()?;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let exe_str = current_exe.to_string_lossy();
+        let dir_str = exe_dir.to_string_lossy();
+
+        // Use PowerShell with Start-Sleep and Start-Process:
+        // 1. Waits 600ms for current process to release all handles and exit
+        // 2. Uses Start-Process which invokes ShellExecuteEx (handling UAC/elevation manifest)
+        // 3. Sets working directory properly
+        let ps_cmd = format!(
+            "Start-Sleep -Milliseconds 600; Start-Process -FilePath '{}' -WorkingDirectory '{}'",
+            exe_str, dir_str
+        );
+
+        let ps_res = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps_cmd])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
+
+        if let Err(e) = ps_res {
+            tracing::warn!("PowerShell relaunch failed: {e}, falling back to cmd start");
+            let cmd_str = format!("ping 127.0.0.1 -n 2 >nul & start \"\" \"{}\"", exe_str);
+            let _ = std::process::Command::new("cmd")
+                .args(["/C", &cmd_str])
+                .current_dir(exe_dir)
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn();
+        }
     }
 
     #[cfg(not(windows))]
     {
-        std::process::Command::new(&current_exe).spawn()?;
+        let _ = std::process::Command::new(&current_exe)
+            .current_dir(exe_dir)
+            .spawn();
     }
 
-    // Terminate current process cleanly
+    // Give background process a short moment to start, then exit
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     app.exit(0);
 
     Ok(())
