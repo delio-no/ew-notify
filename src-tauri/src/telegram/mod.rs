@@ -194,9 +194,10 @@ pub fn make_user_keyboard(is_admin: bool) -> KeyboardMarkup {
     let mut rows = vec![
         vec![
             KeyboardButton::new("📸 Скриншот"),
-            KeyboardButton::new("⚙️ Настройки"),
+            KeyboardButton::new("📺 Стрим"),
         ],
         vec![
+            KeyboardButton::new("⚙️ Настройки"),
             KeyboardButton::new("🆔 Мой ID"),
         ],
     ];
@@ -213,6 +214,14 @@ pub async fn test_connection(token: &str) -> anyhow::Result<()> {
         BotCommand {
             command: "screen".to_string(),
             description: "Скриншот игровых окон".to_string(),
+        },
+        BotCommand {
+            command: "stream".to_string(),
+            description: "P2P-стриминг игровых окон (1080p)".to_string(),
+        },
+        BotCommand {
+            command: "stream".to_string(),
+            description: "P2P-стриминг игровых окон (1080p)".to_string(),
         },
         BotCommand {
             command: "settings".to_string(),
@@ -455,6 +464,75 @@ pub async fn start_bot(
                                         .send()
                                         .await;
                                 }
+                            } else if text_cmd == "/stream" || text_cmd == "📺 Стрим" {
+                                let config_guard = config.lock().await;
+                                let chat_str = chat_id.to_string();
+                                let allowed = crate::config::can_user_stream(&config_guard, &chat_str);
+                                let process_name = config_guard.target.process_name.clone();
+                                drop(config_guard);
+
+                                if !allowed {
+                                    let _ = bot
+                                        .send_message(
+                                            ChatId(chat_id),
+                                            "⛔ У вас нет доступа к функции стриминга.\n\
+                                             Обратитесь к администратору для включения доступа.",
+                                        )
+                                        .reply_markup(make_user_keyboard(is_admin))
+                                        .send()
+                                        .await;
+                                } else if let Some(active) = crate::streamer::get_stream_info().await {
+                                    let info_msg = format!(
+                                        "📺 Сейчас активна трансляция:\n\n\
+                                         🎮 Окно: «{}» (PID {})\n\
+                                         👁 Зрителей: {}\n\
+                                         ⏱ Время в эфире: {} сек\n\n\
+                                         🔗 Ссылка на стрим:\n{}\n\n\
+                                         Вы можете открыть плеер или остановить вещание:",
+                                        active.title, active.pid, active.viewer_count, active.uptime_secs, active.player_url
+                                    );
+                                    let mut kb = InlineKeyboardMarkup::default();
+                                    if let Ok(url) = active.player_url.parse() {
+                                        kb = kb.append_row(vec![InlineKeyboardButton::url("🌐 Открыть плеер", url)]);
+                                    }
+                                    kb = kb.append_row(vec![InlineKeyboardButton::callback("🛑 Остановить стрим", "stream_stop")]);
+                                    let _ = bot
+                                        .send_message(ChatId(chat_id), info_msg)
+                                        .reply_markup(kb)
+                                        .send()
+                                        .await;
+                                } else {
+                                    let windows = crate::screen_capture::find_target_windows(&process_name);
+                                    if windows.is_empty() {
+                                        let _ = bot
+                                            .send_message(
+                                                ChatId(chat_id),
+                                                format!(
+                                                    "⚠️ Окна процесса «{}» не найдены.\n\
+                                                     Убедитесь, что игра запущена.",
+                                                    process_name
+                                                ),
+                                            )
+                                            .send()
+                                            .await;
+                                    } else {
+                                        let mut kb = InlineKeyboardMarkup::default();
+                                        for (idx, win) in windows.iter().enumerate() {
+                                            let win_num = idx + 1;
+                                            let min_mark = if win.is_minimized { " [Свёрнуто ⚠️]" } else { "" };
+                                            let label = format!("🎮 Окно #{} (PID {}){}", win_num, win.pid, min_mark);
+                                            kb = kb.append_row(vec![
+                                                InlineKeyboardButton::callback(label, format!("stream_pick_{}", win.hwnd)),
+                                            ]);
+                                        }
+                                        let prompt = "📺 P2P-стриминг игровых окон (1080p, 30 FPS)\n\n                                                      Видео транслируется напрямую на любое устройство без серверов.\n                                                      Выберите окно для начала стрима:";
+                                        let _ = bot
+                                            .send_message(ChatId(chat_id), prompt)
+                                            .reply_markup(kb)
+                                            .send()
+                                            .await;
+                                    }
+                                }
                             } else if text_cmd == "/screen" || text_cmd == "/shot" || text_cmd == "/screenshot" || text_cmd == "📸 Скриншот" {
                                 let config_guard = config.lock().await;
                                 let chat_str = chat_id.to_string();
@@ -599,6 +677,165 @@ pub async fn start_bot(
                                             .await;
                                     }
                                 }
+                            } else if data.starts_with("stream_pick_") {
+                                let hwnd_str = &data["stream_pick_".len()..];
+                                let chat_id = message.chat().id.0;
+                                let chat_str = chat_id.to_string();
+                                let config_guard = config.lock().await;
+                                let allowed = crate::config::can_user_stream(&config_guard, &chat_str);
+                                let process_name = config_guard.target.process_name.clone();
+                                drop(config_guard);
+
+                                if !allowed {
+                                    let _ = bot
+                                        .answer_callback_query(callback.id.clone())
+                                        .text("⛔ Нет прав на запуск стрима")
+                                        .send()
+                                        .await;
+                                } else if let Ok(hwnd_val) = hwnd_str.parse::<isize>() {
+                                    let windows = crate::screen_capture::find_target_windows(&process_name);
+                                    if let Some(target_win) = windows.into_iter().find(|w| w.hwnd == hwnd_val) {
+                                        if target_win.is_minimized {
+                                            let warn_msg = format!(
+                                                "⚠️ Окно «{}» (PID {}) свёрнуто!\n\n                                                 В свёрнутом состоянии Windows (DWM) приостанавливает отрисовку кадров, поэтому трансляция будет чёрным экраном.\n\n                                                 Развернуть окно без перехвата фокуса и начать стрим?",
+                                                target_win.title, target_win.pid
+                                            );
+                                            let kb = InlineKeyboardMarkup::default()
+                                                .append_row(vec![
+                                                    InlineKeyboardButton::callback("✅ Развернуть и начать", format!("stream_start_force_{}", target_win.hwnd)),
+                                                ])
+                                                .append_row(vec![
+                                                    InlineKeyboardButton::callback("❌ Отмена", "stream_cancel"),
+                                                ]);
+                                            let _ = bot
+                                                .edit_message_text(message.chat().id, message.id(), warn_msg)
+                                                .reply_markup(kb)
+                                                .send()
+                                                .await;
+                                        } else {
+                                            let _ = bot
+                                                .answer_callback_query(callback.id.clone())
+                                                .text("Запуск трансляции 1080p...")
+                                                .send()
+                                                .await;
+                                            match crate::streamer::start_stream(target_win.hwnd, target_win.pid, target_win.title.clone()).await {
+                                                Ok(info) => {
+                                                    let success_msg = format!(
+                                                        "📺 Трансляция окна запущена!\n\n                                                         🎮 Окно: «{}» (PID {})\n                                                         🌐 Качество: 1080p Full HD, 30 FPS\n                                                         🔗 Ссылка для просмотра:\n{}\n\n                                                         👁 Зрителей: 0\n                                                         Откройте ссылку на телефоне, планшете или другом ПК.",
+                                                        info.title, info.pid, info.player_url
+                                                    );
+                                                    let mut kb = InlineKeyboardMarkup::default();
+                                                    if let Ok(url) = info.player_url.parse() {
+                                                        kb = kb.append_row(vec![InlineKeyboardButton::url("🌐 Открыть плеер", url)]);
+                                                    }
+                                                    kb = kb.append_row(vec![InlineKeyboardButton::callback("🛑 Остановить стрим", "stream_stop")]);
+                                                    let _ = bot
+                                                        .send_message(ChatId(chat_id), success_msg)
+                                                        .reply_markup(kb)
+                                                        .send()
+                                                        .await;
+                                                }
+                                                Err(e) => {
+                                                    let _ = bot
+                                                        .send_message(ChatId(chat_id), format!("❌ Ошибка запуска стрима: {e}"))
+                                                        .send()
+                                                        .await;
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        let _ = bot
+                                            .send_message(ChatId(chat_id), "⚠️ Окно больше не найдено (возможно, игра закрыта).")
+                                            .send()
+                                            .await;
+                                    }
+                                }
+                            } else if data.starts_with("stream_start_force_") {
+                                let hwnd_str = &data["stream_start_force_".len()..];
+                                let chat_id = message.chat().id.0;
+                                let chat_str = chat_id.to_string();
+                                let config_guard = config.lock().await;
+                                let allowed = crate::config::can_user_stream(&config_guard, &chat_str);
+                                let process_name = config_guard.target.process_name.clone();
+                                drop(config_guard);
+
+                                if !allowed {
+                                    let _ = bot
+                                        .answer_callback_query(callback.id.clone())
+                                        .text("⛔ Нет прав на запуск стрима")
+                                        .send()
+                                        .await;
+                                } else if let Ok(hwnd_val) = hwnd_str.parse::<isize>() {
+                                    let _ = bot
+                                        .answer_callback_query(callback.id.clone())
+                                        .text("Разворачиваю окно и запускаю 1080p...")
+                                        .send()
+                                        .await;
+
+                                    #[cfg(windows)]
+                                    unsafe {
+                                        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SHOW_WINDOW_CMD, SW_SHOWNOACTIVATE};
+                                        ShowWindow(
+                                            windows::Win32::Foundation::HWND(hwnd_val),
+                                            SHOW_WINDOW_CMD(SW_SHOWNOACTIVATE.0 as u32),
+                                        );
+                                    }
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+
+                                    let windows = crate::screen_capture::find_target_windows(&process_name);
+                                    if let Some(target_win) = windows.into_iter().find(|w| w.hwnd == hwnd_val) {
+                                        match crate::streamer::start_stream(target_win.hwnd, target_win.pid, target_win.title.clone()).await {
+                                            Ok(info) => {
+                                                let success_msg = format!(
+                                                    "📺 Трансляция окна запущена (развёрнуто программно)!\n\n                                                     🎮 Окно: «{}» (PID {})\n                                                     🌐 Качество: 1080p Full HD, 30 FPS\n                                                     🔗 Ссылка для просмотра:\n{}\n\n                                                     👁 Зрителей: 0\n                                                     Откройте ссылку на телефоне, планшете или другом ПК.",
+                                                    info.title, info.pid, info.player_url
+                                                );
+                                                let mut kb = InlineKeyboardMarkup::default();
+                                                if let Ok(url) = info.player_url.parse() {
+                                                    kb = kb.append_row(vec![InlineKeyboardButton::url("🌐 Открыть плеер", url)]);
+                                                }
+                                                kb = kb.append_row(vec![InlineKeyboardButton::callback("🛑 Остановить стрим", "stream_stop")]);
+                                                let _ = bot
+                                                    .send_message(ChatId(chat_id), success_msg)
+                                                    .reply_markup(kb)
+                                                    .send()
+                                                    .await;
+                                            }
+                                            Err(e) => {
+                                                let _ = bot
+                                                    .send_message(ChatId(chat_id), format!("❌ Ошибка запуска стрима: {e}"))
+                                                    .send()
+                                                    .await;
+                                            }
+                                        }
+                                    } else {
+                                        let _ = bot
+                                            .send_message(ChatId(chat_id), "⚠️ Окно больше не найдено.")
+                                            .send()
+                                            .await;
+                                    }
+                                }
+                            } else if data == "stream_stop" {
+                                crate::streamer::stop_stream().await;
+                                let _ = bot
+                                    .answer_callback_query(callback.id.clone())
+                                    .text("🛑 Трансляция остановлена")
+                                    .send()
+                                    .await;
+                                let _ = bot
+                                    .send_message(message.chat().id, "🛑 Трансляция окна была остановлена.")
+                                    .send()
+                                    .await;
+                            } else if data == "stream_cancel" {
+                                let _ = bot
+                                    .answer_callback_query(callback.id.clone())
+                                    .text("Отменено")
+                                    .send()
+                                    .await;
+                                let _ = bot
+                                    .edit_message_text(message.chat().id, message.id(), "❌ Запуск трансляции отменён.")
+                                    .send()
+                                    .await;
                             } else if data == "toggle_death_screen" {
                                 let (new_val, delay) = {
                                     let mut config_guard = config.lock().await;

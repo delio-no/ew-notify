@@ -8,6 +8,7 @@ pub struct OverlayStatus {
     pub pid: u32,
     pub monitoring: bool,
     pub clicker_running: bool,
+    pub target_hwnd: isize,
 }
 
 #[cfg(windows)]
@@ -148,17 +149,29 @@ mod win {
                         };
 
                         let slot_str = format!("EW #{}", status.slot);
-                        let segments: [(&str, COLORREF); 7] = [
-                            (&slot_str, rgb(56, 189, 248)), // Sky blue
-                            ("  |  ", rgb(71, 85, 105)),
-                            ("Уведомления: ", rgb(203, 213, 225)),
-                            (notif_text, notif_color),
-                            ("  |  ", rgb(71, 85, 105)),
-                            ("Кликер: ", rgb(203, 213, 225)),
-                            (clicker_text, clicker_color),
+                        let mut segments: Vec<(String, COLORREF)> = vec![
+                            (slot_str, rgb(56, 189, 248)), // Sky blue
+                            ("  |  ".into(), rgb(71, 85, 105)),
+                            ("Уведомления: ".into(), rgb(203, 213, 225)),
+                            (notif_text.into(), notif_color),
+                            ("  |  ".into(), rgb(71, 85, 105)),
+                            ("Кликер: ".into(), rgb(203, 213, 225)),
+                            (clicker_text.into(), clicker_color),
                         ];
 
-                        let mut wide_segments: Vec<(Vec<u16>, COLORREF, i32)> = Vec::with_capacity(7);
+                        if let Some(viewers) = crate::streamer::get_sync_viewer_count(status.target_hwnd) {
+                            if viewers > 0 {
+                                let live_label = if viewers == 1 {
+                                    "🔴 LIVE".to_string()
+                                } else {
+                                    format!("🔴 LIVE ({viewers})")
+                                };
+                                segments.push(("  |  ".into(), rgb(71, 85, 105)));
+                                segments.push((live_label, rgb(239, 68, 68)));
+                            }
+                        }
+
+                        let mut wide_segments: Vec<(Vec<u16>, COLORREF, i32)> = Vec::with_capacity(segments.len());
                         let mut total_content_w = 0i32;
 
                         for (text, col) in &segments {
@@ -271,6 +284,7 @@ mod win {
             let _ = RegisterClassW(&wnd_class);
 
             let mut active_overlays: HashMap<u32, SlotOverlay> = HashMap::new();
+        let mut stream_states: HashMap<isize, Option<usize>> = HashMap::new();
 
             loop {
                 // 1. Process all pending commands
@@ -375,6 +389,17 @@ mod win {
                     }
                 }
 
+                // 1.5 Invalidate overlays if stream viewer state changed
+                for (_, entry) in active_overlays.iter_mut() {
+                    let thwnd = entry.target_hwnd.0 as isize;
+                    let cur_stream = crate::streamer::get_sync_viewer_count(thwnd);
+                    let prev_stream = stream_states.get(&thwnd).copied().flatten();
+                    if cur_stream != prev_stream {
+                        stream_states.insert(thwnd, cur_stream);
+                        let _ = InvalidateRect(entry.overlay_hwnd, None, false);
+                    }
+                }
+
                 // 2. Track each slot's target window position & visibility
                 for (_, entry) in active_overlays.iter_mut() {
                     if !IsWindow(entry.target_hwnd).as_bool() {
@@ -457,6 +482,7 @@ mod win {
                         pid: w.pid,
                         monitoring,
                         clicker_running,
+                        target_hwnd: w.hwnd,
                     },
                 )
             })

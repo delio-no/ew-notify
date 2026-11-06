@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>EndlessWar Live Stream</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <style>
+    :root {
+      --bg-dark: #0c0f17;
+      --card-bg: rgba(22, 27, 39, 0.85);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --accent: #6366f1;
+      --accent-glow: rgba(99, 102, 241, 0.35);
+      --accent-hover: #4f46e5;
+      --live-red: #ef4444;
+      --text-main: #f8fafc;
+      --text-dim: #94a3b8;
+      --success: #22c55e;
+      --warning: #f59e0b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.15) 0%, transparent 60%),
+        radial-gradient(circle at 100% 100%, rgba(239, 68, 68, 0.05) 0%, transparent 40%);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 16px;
+      overflow-x: hidden;
+    }
+
+    header {
+      width: 100%;
+      max-width: 1200px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 4px 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 700;
+      font-size: 1.15rem;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-icon {
+      font-size: 1.5rem;
+      filter: drop-shadow(0 0 10px var(--accent-glow));
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      backdrop-filter: blur(8px);
+      transition: all 0.3s ease;
+    }
+
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--text-dim);
+    }
+
+    .status-badge.live {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+    }
+
+    .status-badge.live .status-dot {
+      background: var(--live-red);
+      box-shadow: 0 0 10px var(--live-red);
+      animation: pulse 1.8s infinite;
+    }
+
+    .status-badge.connecting {
+      background: rgba(245, 158, 11, 0.15);
+      border-color: rgba(245, 158, 11, 0.4);
+      color: #fde68a;
+    }
+
+    .status-badge.connecting .status-dot {
+      background: var(--warning);
+      animation: pulse 1.2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    main {
+      width: 100%;
+      max-width: 1200px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .player-container {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid var(--card-border);
+      box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.7);
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      background: #000;
+    }
+
+    .player-placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
+      background: linear-gradient(180deg, #131722 0%, #0a0d14 100%);
+      color: var(--text-dim);
+      padding: 24px;
+      text-align: center;
+      z-index: 5;
+      transition: opacity 0.3s ease;
+    }
+
+    .player-placeholder.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border: 3px solid rgba(255, 255, 255, 0.1);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .controls-overlay {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 16px 20px;
+      background: linear-gradient(to top, rgba(0, 0, 0, 0.8) 0%, transparent 100%);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      opacity: 0;
+      transition: opacity 0.25s ease;
+      z-index: 10;
+    }
+
+    .player-container:hover .controls-overlay,
+    .player-container:focus-within .controls-overlay,
+    .controls-overlay.active {
+      opacity: 1;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn {
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: white;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+      backdrop-filter: blur(4px);
+    }
+
+    .btn:hover {
+      background: rgba(255, 255, 255, 0.22);
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-hover);
+    }
+
+    .info-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      backdrop-filter: blur(12px);
+      border-radius: 14px;
+      padding: 18px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .stream-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .stream-id-label {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-dim);
+    }
+
+    .stream-id-value {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .copy-btn {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 1rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: color 0.2s;
+    }
+
+    .copy-btn:hover {
+      color: var(--text-main);
+    }
+
+    .manual-connect {
+      display: flex;
+      gap: 8px;
+      width: 100%;
+      max-width: 420px;
+    }
+
+    .manual-input {
+      flex: 1;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--card-border);
+      color: white;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .manual-input:focus {
+      border-color: var(--accent);
+    }
+
+    .stats-panel {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      display: flex;
+      gap: 16px;
+    }
+
+    .banner-unmute {
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: white;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      z-index: 20;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    }
+
+    @media (max-width: 640px) {
+      body {
+        padding: 8px;
+      }
+      .info-card {
+        padding: 14px 16px;
+      }
+      .manual-connect {
+        max-width: 100%;
+      }
+      .stats-panel {
+        flex-direction: column;
+        gap: 4px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="brand-icon">🎮</span>
+      <span>EndlessWar Live</span>
+    </div>
+    <div id="statusBadge" class="status-badge connecting">
+      <span class="status-dot"></span>
+      <span id="statusText">Инициализация...</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="player-container" id="playerContainer">
+      <video id="videoPlayer" autoplay playsinline></video>
+
+      <div id="unmuteBanner" class="banner-unmute" onclick="unmuteAudio()">
+        🔊 Нажмите для включения звука
+      </div>
+
+      <div id="placeholder" class="player-placeholder">
+        <div class="spinner" id="loadingSpinner"></div>
+        <h3 id="placeholderTitle">Подключение к трансляции...</h3>
+        <p id="placeholderSubtitle">Ожидание P2P-сигнала от игрового клиента ew-notify</p>
+        <button id="retryBtn" class="btn btn-primary" style="display:none; margin-top: 12px;" onclick="connectToStream()">
+          🔄 Повторить попытку
+        </button>
+      </div>
+
+      <div class="controls-overlay" id="controlsOverlay">
+        <div class="btn-group">
+          <button class="btn" onclick="togglePlay()" id="playPauseBtn" title="Пауза/Воспроизведение">⏸</button>
+          <button class="btn" onclick="toggleMute()" id="muteBtn" title="Звук">🔊</button>
+        </div>
+        <div class="stats-panel" id="statsPanel">
+          <span id="resolutionStat">1080p</span>
+          <span id="fpsStat">30 FPS</span>
+        </div>
+        <div class="btn-group">
+          <button class="btn" onclick="togglePiP()" id="pipBtn" title="Картинка в картинке">⧉ PiP</button>
+          <button class="btn" onclick="toggleFullscreen()" id="fsBtn" title="На весь экран">⛶</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-card">
+      <div class="stream-meta">
+        <span class="stream-id-label">Идентификатор трансляции</span>
+        <div class="stream-id-value">
+          <span id="currentStreamId">—</span>
+          <button class="copy-btn" onclick="copyStreamId()" title="Скопировать ID">📋</button>
+        </div>
+      </div>
+
+      <div class="manual-connect">
+        <input type="text" id="streamInput" class="manual-input" placeholder="ew-abc123" />
+        <button class="btn btn-primary" onclick="onManualConnect()">Смотреть</button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    let peer = null;
+    let currentCall = null;
+    let targetStreamId = '';
+    const video = document.getElementById('videoPlayer');
+    const placeholder = document.getElementById('placeholder');
+    const placeholderTitle = document.getElementById('placeholderTitle');
+    const placeholderSubtitle = document.getElementById('placeholderSubtitle');
+    const loadingSpinner = document.getElementById('loadingSpinner');
+    const retryBtn = document.getElementById('retryBtn');
+    const statusBadge = document.getElementById('statusBadge');
+    const statusText = document.getElementById('statusText');
+    const currentStreamIdEl = document.getElementById('currentStreamId');
+    const streamInput = document.getElementById('streamInput');
+    const unmuteBanner = document.getElementById('unmuteBanner');
+
+    function parseStreamIdFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('s') || params.get('id') || '';
+    }
+
+    function setStatus(state, message) {
+      statusBadge.className = 'status-badge ' + state;
+      statusText.innerText = message;
+    }
+
+    function createDummyMediaStream() {
+      // 2x2 canvas dummy stream ensures SDP offer includes m=video section without requesting user camera
+      const canvas = document.createElement('canvas');
+      canvas.width = 2;
+      canvas.height = 2;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, 2, 2);
+      return canvas.captureStream(1);
+    }
+
+    function initPeer() {
+      if (peer) {
+        peer.destroy();
+      }
+
+      setStatus('connecting', 'Подключение к брокеру...');
+      
+      // PeerJS Cloud broker (default)
+      peer = new Peer({
+        debug: 1,
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:global.stun.twilio.com:3478' }
+          ]
+        }
+      });
+
+      peer.on('open', (myId) => {
+        console.log('Registered with PeerJS broker. My ID:', myId);
+        if (targetStreamId) {
+          connectToStream();
+        } else {
+          setStatus('', 'Ожидание ID стрима');
+          showError('Укажите ID трансляции', 'Введите идентификатор окна в поле ниже или откройте ссылку из бота.');
+        }
+      });
+
+      peer.on('error', (err) => {
+        console.error('PeerJS error:', err);
+        if (err.type === 'peer-unavailable') {
+          showError('Трансляция не найдена', 'Стример офлайн или идентификатор окна устарел.');
+        } else {
+          setStatus('', 'Ошибка брокера');
+          showError('Ошибка связи', err.message || 'Не удалось подключиться к PeerJS брокеру');
+        }
+      });
+
+      peer.on('disconnected', () => {
+        console.warn('PeerJS disconnected from broker, reconnecting...');
+        peer.reconnect();
+      });
+    }
+
+    function connectToStream() {
+      if (!targetStreamId) return;
+
+      currentStreamIdEl.innerText = targetStreamId;
+      streamInput.value = targetStreamId;
+
+      setStatus('connecting', 'Соединение с игрой...');
+      placeholder.classList.remove('hidden');
+      loadingSpinner.style.display = 'block';
+      retryBtn.style.display = 'none';
+      placeholderTitle.innerText = 'Установка P2P соединения...';
+      placeholderSubtitle.innerText = 'Подключение к хосту ' + targetStreamId;
+
+      if (currentCall) {
+        try { currentCall.close(); } catch(e) {}
+      }
+
+      const dummyStream = createDummyMediaStream();
+      console.log('Initiating call to:', targetStreamId);
+      currentCall = peer.call(targetStreamId, dummyStream);
+
+      if (!currentCall) {
+        showError('Не удалось создать вызов', 'Проверьте соединение с сетью');
+        return;
+      }
+
+      currentCall.on('stream', (remoteStream) => {
+        console.log('Received remote stream:', remoteStream);
+        video.srcObject = remoteStream;
+
+        video.play().then(() => {
+          onStreamPlaying();
+        }).catch((err) => {
+          console.warn('Autoplay prevented:', err);
+          video.muted = true;
+          video.play().then(() => {
+            onStreamPlaying();
+            unmuteBanner.style.display = 'flex';
+          });
+        });
+      });
+
+      currentCall.on('close', () => {
+        console.log('Call closed by streamer');
+        setStatus('', 'Трансляция завершена');
+        showError('Трансляция завершена', 'Вещание было остановлено стримером.');
+      });
+
+      currentCall.on('error', (err) => {
+        console.error('Call error:', err);
+        showError('Ошибка видеопотока', err.message || 'Сбой P2P соединения');
+      });
+    }
+
+    function onStreamPlaying() {
+      placeholder.classList.add('hidden');
+      setStatus('live', 'В ЭФИРЕ');
+    }
+
+    function showError(title, subtitle) {
+      placeholder.classList.remove('hidden');
+      loadingSpinner.style.display = 'none';
+      retryBtn.style.display = 'inline-flex';
+      placeholderTitle.innerText = title;
+      placeholderSubtitle.innerText = subtitle;
+    }
+
+    function onManualConnect() {
+      const inputVal = streamInput.value.trim();
+      if (!inputVal) return;
+      targetStreamId = inputVal;
+      const url = new URL(window.location);
+      url.searchParams.set('s', targetStreamId);
+      window.history.replaceState({}, '', url);
+      connectToStream();
+    }
+
+    function copyStreamId() {
+      if (!targetStreamId) return;
+      navigator.clipboard.writeText(targetStreamId).then(() => {
+        alert('ID стрима скопирован: ' + targetStreamId);
+      });
+    }
+
+    function unmuteAudio() {
+      video.muted = false;
+      unmuteBanner.style.display = 'none';
+    }
+
+    function toggleMute() {
+      video.muted = !video.muted;
+      document.getElementById('muteBtn').innerText = video.muted ? '🔇' : '🔊';
+    }
+
+    function togglePlay() {
+      if (video.paused) {
+        video.play();
+        document.getElementById('playPauseBtn').innerText = '⏸';
+      } else {
+        video.pause();
+        document.getElementById('playPauseBtn').innerText = '▶';
+      }
+    }
+
+    function toggleFullscreen() {
+      const container = document.getElementById('playerContainer');
+      if (!document.fullscreenElement) {
+        container.requestFullscreen?.() || container.webkitRequestFullscreen?.();
+      } else {
+        document.exitFullscreen?.() || document.webkitExitFullscreen?.();
+      }
+    }
+
+    function togglePiP() {
+      if (document.pictureInPictureElement) {
+        document.exitPictureInPicture();
+      } else if (video.requestPictureInPicture) {
+        video.requestPictureInPicture();
+      }
+    }
+
+    // Auto-init on load
+    window.addEventListener('DOMContentLoaded', () => {
+      targetStreamId = parseStreamIdFromUrl();
+      if (targetStreamId) {
+        currentStreamIdEl.innerText = targetStreamId;
+        streamInput.value = targetStreamId;
+      }
+      initPeer();
+    });
+  </script>
+</body>
+</html>

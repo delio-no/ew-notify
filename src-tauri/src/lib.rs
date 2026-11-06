@@ -15,6 +15,7 @@ pub mod screen_capture;
 pub mod window_filter;
 pub mod notifications;
 pub mod updater;
+pub mod streamer;
 
 use config::{AppConfig, CaptureMode, Pattern};
 use packet::{
