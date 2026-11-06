@@ -327,7 +327,7 @@
           </div>
           <div class="info-row">
             <span class="info-label">Кулдаун</span>
-            <span class="info-value">{config.notifications?.cooldown_seconds || 60} сек</span>
+            <span class="info-value">{config.notifications?.cooldown_seconds ?? 10} сек</span>
           </div>
           <div class="info-row">
             <span class="info-label">Burst dedup</span>

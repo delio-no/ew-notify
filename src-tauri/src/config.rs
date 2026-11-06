@@ -372,7 +372,7 @@ fn default_tcp_port() -> Option<u16> {
 }
 
 fn default_cooldown_seconds() -> u64 {
-    60
+    10
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

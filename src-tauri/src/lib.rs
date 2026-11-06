@@ -1641,10 +1641,23 @@ pub fn run() {
             notifications::register_app_user_model_id();
             let start = MenuItem::with_id(app, "start", "Старт мониторинга", true, None::<&str>)?;
             let stop = MenuItem::with_id(app, "stop", "Стоп мониторинга", true, None::<&str>)?;
+            let start_clicker = MenuItem::with_id(app, "start_clicker", "Старт кликера", true, None::<&str>)?;
+            let stop_clicker = MenuItem::with_id(app, "stop_clicker", "Стоп кликера", true, None::<&str>)?;
             let show = MenuItem::with_id(app, "show", "Показать окно", true, None::<&str>)?;
             let hide = MenuItem::with_id(app, "hide", "Свернуть в трей", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&start, &stop, &show, &hide, &quit])?;
+            let menu = Menu::with_items(
+                app,
+                &[
+                    &start,
+                    &stop,
+                    &start_clicker,
+                    &stop_clicker,
+                    &show,
+                    &hide,
+                    &quit,
+                ],
+            )?;
 
             let mut tray_builder = TrayIconBuilder::new()
                 .menu(&menu)
@@ -1673,6 +1686,26 @@ pub fn run() {
                         stop_capture(&state);
                         info!("Monitoring stopped from tray");
                         let _ = app.emit("tray-stop", ());
+                    }
+                    "start_clicker" => {
+                        let state = app.state::<AppState>();
+                        state.clicker.start(app, &state.config, &state.window_filter);
+                        overlay::update_overlay_from_state(
+                            &state.window_filter,
+                            state.monitoring.load(Ordering::SeqCst),
+                            true,
+                        );
+                        info!("Clicker started from tray");
+                    }
+                    "stop_clicker" => {
+                        let state = app.state::<AppState>();
+                        state.clicker.stop(app, Some("Остановлен из трея".to_string()), &state.config);
+                        overlay::update_overlay_from_state(
+                            &state.window_filter,
+                            state.monitoring.load(Ordering::SeqCst),
+                            false,
+                        );
+                        info!("Clicker stopped from tray");
                     }
                     "show" => show_main_window(app),
                     "hide" => hide_main_window(app),

@@ -207,7 +207,7 @@ export const defaultConfig = (): Config => ({
   notifications: {
     telegram_enabled: true,
     tray_enabled: true,
-    cooldown_seconds: 60,
+    cooldown_seconds: 10,
     burst_dedup_ms: 2000,
     screenshot_delay_ms: 1500,
   },
