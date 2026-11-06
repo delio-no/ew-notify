@@ -5,7 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>EndlessWar Live Stream</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
-  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.5.0/mqtt.min.js"></script>
+  <script>
+    if (typeof mqtt === 'undefined') {
+      document.write('<script src="https://unpkg.com/mqtt@5.5.0/dist/mqtt.min.js"><\/script>');
+    }
+  </script>
   <style>
     :root {
       --bg-dark: #0c0f17;
@@ -107,12 +112,13 @@
 
     .status-badge.connecting .status-dot {
       background: var(--warning);
-      animation: pulse 1.2s infinite;
+      animation: pulse 1s infinite;
     }
 
     @keyframes pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.4; transform: scale(0.85); }
+      0% { transform: scale(0.9); opacity: 0.7; }
+      50% { transform: scale(1.15); opacity: 1; }
+      100% { transform: scale(0.9); opacity: 0.7; }
     }
 
     main {
@@ -130,35 +136,87 @@
       background: #000;
       border-radius: 16px;
       overflow: hidden;
-      border: 1px solid var(--card-border);
-      box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.7);
+      box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.7),
+                  0 0 0 1px var(--card-border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     video {
       width: 100%;
       height: 100%;
       object-fit: contain;
-      display: block;
       background: #000;
     }
 
-    .player-placeholder {
+    .player-overlay {
       position: absolute;
       inset: 0;
       display: flex;
       flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      gap: 16px;
-      background: linear-gradient(180deg, #131722 0%, #0a0d14 100%);
-      color: var(--text-dim);
-      padding: 24px;
-      text-align: center;
-      z-index: 5;
+      justify-content: space-between;
+      padding: 16px;
+      pointer-events: none;
+      background: linear-gradient(to top, rgba(0, 0, 0, 0.7) 0%, transparent 25%, transparent 75%, rgba(0, 0, 0, 0.5) 100%);
+      opacity: 0;
       transition: opacity 0.3s ease;
     }
 
-    .player-placeholder.hidden {
+    .player-container:hover .player-overlay,
+    .player-container:active .player-overlay {
+      opacity: 1;
+    }
+
+    .overlay-top {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .overlay-bottom {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      pointer-events: auto;
+    }
+
+    .control-btn {
+      background: rgba(15, 23, 42, 0.75);
+      border: 1px solid var(--card-border);
+      color: var(--text-main);
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      backdrop-filter: blur(8px);
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .control-btn:hover {
+      background: rgba(99, 102, 241, 0.8);
+      border-color: var(--accent);
+    }
+
+    .placeholder-view {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding: 24px;
+      text-align: center;
+      background: rgba(12, 15, 23, 0.95);
+      z-index: 10;
+      transition: opacity 0.4s ease;
+    }
+
+    .placeholder-view.hidden {
       opacity: 0;
       pointer-events: none;
     }
@@ -167,77 +225,53 @@
       width: 48px;
       height: 48px;
       border: 3px solid rgba(255, 255, 255, 0.1);
-      border-top-color: var(--accent);
       border-radius: 50%;
-      animation: spin 1s linear infinite;
+      border-top-color: var(--accent);
+      animation: spin 1s ease-in-out infinite;
     }
 
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
 
-    .controls-overlay {
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      padding: 16px 20px;
-      background: linear-gradient(to top, rgba(0, 0, 0, 0.8) 0%, transparent 100%);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      opacity: 0;
-      transition: opacity 0.25s ease;
-      z-index: 10;
+    .placeholder-title {
+      font-size: 1.25rem;
+      font-weight: 600;
     }
 
-    .player-container:hover .controls-overlay,
-    .player-container:focus-within .controls-overlay,
-    .controls-overlay.active {
-      opacity: 1;
-    }
-
-    .btn-group {
-      display: flex;
-      gap: 8px;
+    .placeholder-subtitle {
+      color: var(--text-dim);
+      font-size: 0.9rem;
+      max-width: 400px;
+      line-height: 1.5;
     }
 
     .btn {
-      background: rgba(255, 255, 255, 0.12);
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      color: white;
-      padding: 8px 14px;
-      border-radius: 8px;
-      font-size: 0.9rem;
-      font-weight: 500;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 10px;
+      font-weight: 600;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
+      box-shadow: 0 4px 14px var(--accent-glow);
       transition: all 0.2s ease;
-      backdrop-filter: blur(4px);
     }
 
     .btn:hover {
-      background: rgba(255, 255, 255, 0.22);
-      border-color: rgba(255, 255, 255, 0.3);
-    }
-
-    .btn-primary {
-      background: var(--accent);
-      border-color: var(--accent);
-    }
-
-    .btn-primary:hover {
       background: var(--accent-hover);
+      transform: translateY(-1px);
     }
 
-    .info-card {
+    .stream-meta-card {
       background: var(--card-bg);
       border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 20px;
       backdrop-filter: blur(12px);
-      border-radius: 14px;
-      padding: 18px 24px;
       display: flex;
       flex-wrap: wrap;
       justify-content: space-between;
@@ -245,27 +279,31 @@
       gap: 16px;
     }
 
-    .stream-meta {
+    .stream-id-group {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 6px;
     }
 
     .stream-id-label {
-      font-size: 0.8rem;
+      font-size: 0.75rem;
       text-transform: uppercase;
       letter-spacing: 0.05em;
       color: var(--text-dim);
+      font-weight: 600;
     }
 
     .stream-id-value {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 1.1rem;
-      font-weight: 600;
-      color: #e2e8f0;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 1.15rem;
+      color: #a5b4fc;
+      background: rgba(99, 102, 241, 0.1);
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px dashed rgba(99, 102, 241, 0.3);
     }
 
     .copy-btn {
@@ -273,8 +311,7 @@
       border: none;
       color: var(--text-dim);
       cursor: pointer;
-      font-size: 1rem;
-      padding: 2px 6px;
+      padding: 4px;
       border-radius: 4px;
       transition: color 0.2s;
     }
@@ -285,18 +322,19 @@
 
     .manual-connect {
       display: flex;
-      gap: 8px;
+      gap: 10px;
       width: 100%;
-      max-width: 420px;
+      max-width: 380px;
     }
 
     .manual-input {
       flex: 1;
-      background: rgba(0, 0, 0, 0.35);
+      background: rgba(0, 0, 0, 0.4);
       border: 1px solid var(--card-border);
-      color: white;
+      border-radius: 10px;
       padding: 10px 14px;
-      border-radius: 8px;
+      color: #fff;
+      font-family: monospace;
       font-size: 0.95rem;
       outline: none;
       transition: border-color 0.2s;
@@ -306,45 +344,34 @@
       border-color: var(--accent);
     }
 
-    .stats-panel {
-      font-size: 0.8rem;
-      color: var(--text-dim);
-      display: flex;
-      gap: 16px;
-    }
-
-    .banner-unmute {
+    .unmute-banner {
       position: absolute;
       top: 16px;
       left: 50%;
       transform: translateX(-50%);
-      background: rgba(15, 23, 42, 0.9);
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      color: white;
+      background: rgba(0, 0, 0, 0.85);
+      border: 1px solid var(--accent);
       padding: 8px 16px;
-      border-radius: 20px;
-      font-size: 0.85rem;
+      border-radius: 9999px;
       display: none;
       align-items: center;
       gap: 8px;
       cursor: pointer;
       z-index: 20;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(8px);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
     }
 
     @media (max-width: 640px) {
       body {
-        padding: 8px;
+        padding: 10px;
       }
-      .info-card {
-        padding: 14px 16px;
+      .stream-meta-card {
+        flex-direction: column;
+        align-items: flex-start;
       }
       .manual-connect {
         max-width: 100%;
-      }
-      .stats-panel {
-        flex-direction: column;
-        gap: 4px;
       }
     }
   </style>
@@ -357,46 +384,46 @@
     </div>
     <div id="statusBadge" class="status-badge connecting">
       <span class="status-dot"></span>
-      <span id="statusText">Инициализация...</span>
+      <span id="statusText">Подключение...</span>
     </div>
   </header>
 
   <main>
     <div class="player-container" id="playerContainer">
-      <video id="videoPlayer" autoplay playsinline></video>
+      <video id="videoPlayer" playsinline autoplay muted></video>
 
-      <div id="unmuteBanner" class="banner-unmute" onclick="unmuteAudio()">
-        🔊 Нажмите для включения звука
+      <div id="unmuteBanner" class="unmute-banner" onclick="unmuteAudio()">
+        <span>🔊</span>
+        <span>Нажмите для включения звука</span>
       </div>
 
-      <div id="placeholder" class="player-placeholder">
-        <div class="spinner" id="loadingSpinner"></div>
-        <h3 id="placeholderTitle">Подключение к трансляции...</h3>
-        <p id="placeholderSubtitle">Ожидание P2P-сигнала от игрового клиента ew-notify</p>
-        <button id="retryBtn" class="btn btn-primary" style="display:none; margin-top: 12px;" onclick="connectToStream()">
-          🔄 Повторить попытку
+      <div id="placeholder" class="placeholder-view">
+        <div id="loadingSpinner" class="spinner"></div>
+        <h2 id="placeholderTitle" class="placeholder-title">Подключение к трансляции</h2>
+        <p id="placeholderSubtitle" class="placeholder-subtitle">Ожидание подключения к хосту игры...</p>
+        <button id="retryBtn" class="btn" style="display: none;" onclick="initConnection()">
+          <span>🔄</span> Повторить подключение
         </button>
       </div>
 
-      <div class="controls-overlay" id="controlsOverlay">
-        <div class="btn-group">
-          <button class="btn" onclick="togglePlay()" id="playPauseBtn" title="Пауза/Воспроизведение">⏸</button>
-          <button class="btn" onclick="toggleMute()" id="muteBtn" title="Звук">🔊</button>
+      <div class="player-overlay">
+        <div class="overlay-top">
+          <button class="control-btn" onclick="togglePiP()" title="Картинка в картинке">⧉ PiP</button>
+          <button class="control-btn" onclick="toggleFullscreen()" title="Полный экран">⛶ Экран</button>
         </div>
-        <div class="stats-panel" id="statsPanel">
-          <span id="resolutionStat">1080p</span>
-          <span id="fpsStat">30 FPS</span>
-        </div>
-        <div class="btn-group">
-          <button class="btn" onclick="togglePiP()" id="pipBtn" title="Картинка в картинке">⧉ PiP</button>
-          <button class="btn" onclick="toggleFullscreen()" id="fsBtn" title="На весь экран">⛶</button>
+        <div class="overlay-bottom">
+          <div style="display: flex; gap: 8px;">
+            <button class="control-btn" id="playPauseBtn" onclick="togglePlay()">⏸</button>
+            <button class="control-btn" id="muteBtn" onclick="toggleMute()">🔇</button>
+          </div>
+          <span style="font-size: 0.8rem; color: var(--text-dim); background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px;">1080p 30fps WebRTC</span>
         </div>
       </div>
     </div>
 
-    <div class="info-card">
-      <div class="stream-meta">
-        <span class="stream-id-label">Идентификатор трансляции</span>
+    <div class="stream-meta-card">
+      <div class="stream-id-group">
+        <div class="stream-id-label">Идентификатор трансляции</div>
         <div class="stream-id-value">
           <span id="currentStreamId">—</span>
           <button class="copy-btn" onclick="copyStreamId()" title="Скопировать ID">📋</button>
@@ -405,15 +432,24 @@
 
       <div class="manual-connect">
         <input type="text" id="streamInput" class="manual-input" placeholder="ew-abc123" />
-        <button class="btn btn-primary" onclick="onManualConnect()">Смотреть</button>
+        <button class="btn" onclick="onManualConnect()">Смотреть</button>
       </div>
     </div>
   </main>
 
   <script>
-    let peer = null;
-    let currentCall = null;
+    let pc = null;
+    let mqttClient = null;
     let targetStreamId = '';
+    let viewerId = '';
+    let isConnectedToHost = false;
+
+    const MQTT_BROKERS = [
+      'wss://broker.emqx.io:8084/mqtt',
+      'wss://broker.hivemq.com:8884/mqtt'
+    ];
+    let brokerIndex = 0;
+
     const video = document.getElementById('videoPlayer');
     const placeholder = document.getElementById('placeholder');
     const placeholderTitle = document.getElementById('placeholderTitle');
@@ -436,90 +472,78 @@
       statusText.innerText = message;
     }
 
-    function createDummyMediaStream() {
-      // 2x2 canvas dummy stream ensures SDP offer includes m=video section without requesting user camera
-      const canvas = document.createElement('canvas');
-      canvas.width = 2;
-      canvas.height = 2;
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#000000';
-      ctx.fillRect(0, 0, 2, 2);
-      return canvas.captureStream(1);
+    function showError(title, subtitle) {
+      placeholder.classList.remove('hidden');
+      loadingSpinner.style.display = 'none';
+      retryBtn.style.display = 'inline-flex';
+      placeholderTitle.innerText = title;
+      placeholderSubtitle.innerText = subtitle;
     }
 
-    function initPeer() {
-      if (peer) {
-        peer.destroy();
+    function cleanupCurrentConnection() {
+      if (pc) {
+        try { pc.close(); } catch(e) {}
+        pc = null;
       }
-
-      setStatus('connecting', 'Подключение к брокеру...');
-      
-      // PeerJS Cloud broker (default)
-      peer = new Peer({
-        debug: 1,
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:global.stun.twilio.com:3478' }
-          ]
-        }
-      });
-
-      peer.on('open', (myId) => {
-        console.log('Registered with PeerJS broker. My ID:', myId);
-        if (targetStreamId) {
-          connectToStream();
-        } else {
-          setStatus('', 'Ожидание ID стрима');
-          showError('Укажите ID трансляции', 'Введите идентификатор окна в поле ниже или откройте ссылку из бота.');
-        }
-      });
-
-      peer.on('error', (err) => {
-        console.error('PeerJS error:', err);
-        if (err.type === 'peer-unavailable') {
-          showError('Трансляция не найдена', 'Стример офлайн или идентификатор окна устарел.');
-        } else {
-          setStatus('', 'Ошибка брокера');
-          showError('Ошибка связи', err.message || 'Не удалось подключиться к PeerJS брокеру');
-        }
-      });
-
-      peer.on('disconnected', () => {
-        console.warn('PeerJS disconnected from broker, reconnecting...');
-        peer.reconnect();
-      });
+      if (mqttClient) {
+        try { mqttClient.end(true); } catch(e) {}
+        mqttClient = null;
+      }
+      isConnectedToHost = false;
     }
 
-    function connectToStream() {
-      if (!targetStreamId) return;
+    async function initConnection() {
+      cleanupCurrentConnection();
+
+      if (!targetStreamId) {
+        setStatus('', 'Ожидание ID стрима');
+        showError('Укажите ID трансляции', 'Введите идентификатор окна в поле ниже или откройте ссылку из бота.');
+        return;
+      }
 
       currentStreamIdEl.innerText = targetStreamId;
       streamInput.value = targetStreamId;
 
-      setStatus('connecting', 'Соединение с игрой...');
+      setStatus('connecting', 'Подключение к брокеру...');
       placeholder.classList.remove('hidden');
       loadingSpinner.style.display = 'block';
       retryBtn.style.display = 'none';
       placeholderTitle.innerText = 'Установка P2P соединения...';
       placeholderSubtitle.innerText = 'Подключение к хосту ' + targetStreamId;
 
-      if (currentCall) {
-        try { currentCall.close(); } catch(e) {}
-      }
+      viewerId = 'v-' + Math.random().toString(36).substring(2, 10);
+      const brokerUrl = MQTT_BROKERS[brokerIndex % MQTT_BROKERS.length];
+      console.log('Connecting to MQTT signaling broker:', brokerUrl);
 
-      const dummyStream = createDummyMediaStream();
-      console.log('Initiating call to:', targetStreamId);
-      currentCall = peer.call(targetStreamId, dummyStream);
-
-      if (!currentCall) {
-        showError('Не удалось создать вызов', 'Проверьте соединение с сетью');
+      try {
+        mqttClient = mqtt.connect(brokerUrl, {
+          clientId: 'ew-web-' + viewerId,
+          clean: true,
+          connectTimeout: 7000,
+          reconnectPeriod: 3000,
+        });
+      } catch (err) {
+        console.error('MQTT connect error:', err);
+        brokerIndex++;
+        showError('Ошибка связи', 'Не удалось подключиться к сигнальному брокеру. Попробуйте еще раз.');
         return;
       }
 
-      currentCall.on('stream', (remoteStream) => {
-        console.log('Received remote stream:', remoteStream);
-        video.srcObject = remoteStream;
+      // Configure WebRTC PeerConnection
+      pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:global.stun.twilio.com:3478' }
+        ]
+      });
+
+      pc.ontrack = (event) => {
+        console.log('Received remote media track:', event.track.kind);
+        if (event.streams && event.streams[0]) {
+          video.srcObject = event.streams[0];
+        } else {
+          video.srcObject = new MediaStream([event.track]);
+        }
 
         video.play().then(() => {
           onStreamPlaying();
@@ -531,31 +555,102 @@
             unmuteBanner.style.display = 'flex';
           });
         });
+      };
+
+      pc.onconnectionstatechange = () => {
+        console.log('WebRTC connection state:', pc.connectionState);
+        if (pc.connectionState === 'connected') {
+          isConnectedToHost = true;
+          setStatus('live', 'В ЭФИРЕ • 1080p');
+        } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+          if (!isConnectedToHost) {
+            showError('Трансляция не найдена', 'Стример офлайн или окно игры закрыто.');
+          } else {
+            showError('Связь прервана', 'Соединение с хостом было разорвано.');
+          }
+        }
+      };
+
+      // Add recvonly transceiver for 1080p video stream
+      pc.addTransceiver('video', { direction: 'recvonly' });
+
+      // Create Offer SDP
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      // Wait briefly for ICE gathering
+      await new Promise((resolve) => {
+        if (pc.iceGatheringState === 'complete') {
+          resolve();
+        } else {
+          const check = () => {
+            if (pc.iceGatheringState === 'complete') {
+              pc.removeEventListener('icegatheringstatechange', check);
+              resolve();
+            }
+          };
+          pc.addEventListener('icegatheringstatechange', check);
+          setTimeout(resolve, 800);
+        }
       });
 
-      currentCall.on('close', () => {
-        console.log('Call closed by streamer');
-        setStatus('', 'Трансляция завершена');
-        showError('Трансляция завершена', 'Вещание было остановлено стримером.');
+      const answerTopic = `ew-notify/${targetStreamId}/answer/${viewerId}`;
+      const offerTopic = `ew-notify/${targetStreamId}/offer`;
+
+      mqttClient.on('connect', () => {
+        console.log('Connected to MQTT signaling broker!');
+        setStatus('connecting', 'Соединение с игрой...');
+
+        mqttClient.subscribe(answerTopic, (err) => {
+          if (err) {
+            console.error('MQTT subscribe error:', err);
+            return;
+          }
+
+          console.log('Publishing OFFER to topic:', offerTopic);
+          const offerPayload = JSON.stringify({
+            viewer_id: viewerId,
+            sdp: pc.localDescription.sdp,
+          });
+
+          mqttClient.publish(offerTopic, offerPayload, { qos: 1 });
+        });
       });
 
-      currentCall.on('error', (err) => {
-        console.error('Call error:', err);
-        showError('Ошибка видеопотока', err.message || 'Сбой P2P соединения');
+      mqttClient.on('message', async (topic, payload) => {
+        if (topic === answerTopic) {
+          try {
+            const data = JSON.parse(payload.toString());
+            if (data.sdp && pc && pc.signalingState !== 'closed') {
+              console.log('Received WebRTC ANSWER via MQTT!');
+              await pc.setRemoteDescription(new RTCSessionDescription({
+                type: 'answer',
+                sdp: data.sdp,
+              }));
+              console.log('Remote description applied successfully!');
+            }
+          } catch (e) {
+            console.error('Failed to parse answer SDP:', e);
+          }
+        }
       });
+
+      mqttClient.on('error', (err) => {
+        console.error('MQTT error:', err);
+        brokerIndex++;
+      });
+
+      // 15 seconds timeout if no video received
+      setTimeout(() => {
+        if (!isConnectedToHost && placeholder.classList.contains('hidden') === false) {
+          showError('Хост не отвечает', 'Проверьте, что в ew-notify запущен стрим этого окна.');
+        }
+      }, 15000);
     }
 
     function onStreamPlaying() {
       placeholder.classList.add('hidden');
-      setStatus('live', 'В ЭФИРЕ');
-    }
-
-    function showError(title, subtitle) {
-      placeholder.classList.remove('hidden');
-      loadingSpinner.style.display = 'none';
-      retryBtn.style.display = 'inline-flex';
-      placeholderTitle.innerText = title;
-      placeholderSubtitle.innerText = subtitle;
+      setStatus('live', 'В ЭФИРЕ • 1080p');
     }
 
     function onManualConnect() {
@@ -565,7 +660,7 @@
       const url = new URL(window.location);
       url.searchParams.set('s', targetStreamId);
       window.history.replaceState({}, '', url);
-      connectToStream();
+      initConnection();
     }
 
     function copyStreamId() {
@@ -612,14 +707,10 @@
       }
     }
 
-    // Auto-init on load
+    // Auto-init on page load
     window.addEventListener('DOMContentLoaded', () => {
       targetStreamId = parseStreamIdFromUrl();
-      if (targetStreamId) {
-        currentStreamIdEl.innerText = targetStreamId;
-        streamInput.value = targetStreamId;
-      }
-      initPeer();
+      initConnection();
     });
   </script>
 </body>

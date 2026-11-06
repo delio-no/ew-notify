@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>EndlessWar Live Stream</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.5.0/mqtt.min.js"></script>
+  <script>
+    if (typeof mqtt === 'undefined') {
+      document.write('<script src="https://unpkg.com/mqtt@5.5.0/dist/mqtt.min.js"><\/script>');
+    }
+  </script>
+  <style>
+    :root {
+      --bg-dark: #0c0f17;
+      --card-bg: rgba(22, 27, 39, 0.85);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --accent: #6366f1;
+      --accent-glow: rgba(99, 102, 241, 0.35);
+      --accent-hover: #4f46e5;
+      --live-red: #ef4444;
+      --text-main: #f8fafc;
+      --text-dim: #94a3b8;
+      --success: #22c55e;
+      --warning: #f59e0b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.15) 0%, transparent 60%),
+        radial-gradient(circle at 100% 100%, rgba(239, 68, 68, 0.05) 0%, transparent 40%);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 16px;
+      overflow-x: hidden;
+    }
+
+    header {
+      width: 100%;
+      max-width: 1200px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 4px 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 700;
+      font-size: 1.15rem;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-icon {
+      font-size: 1.5rem;
+      filter: drop-shadow(0 0 10px var(--accent-glow));
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      backdrop-filter: blur(8px);
+      transition: all 0.3s ease;
+    }
+
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--text-dim);
+    }
+
+    .status-badge.live {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+    }
+
+    .status-badge.live .status-dot {
+      background: var(--live-red);
+      box-shadow: 0 0 10px var(--live-red);
+      animation: pulse 1.8s infinite;
+    }
+
+    .status-badge.connecting {
+      background: rgba(245, 158, 11, 0.15);
+      border-color: rgba(245, 158, 11, 0.4);
+      color: #fde68a;
+    }
+
+    .status-badge.connecting .status-dot {
+      background: var(--warning);
+      animation: pulse 1s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.9); opacity: 0.7; }
+      50% { transform: scale(1.15); opacity: 1; }
+      100% { transform: scale(0.9); opacity: 0.7; }
+    }
+
+    main {
+      width: 100%;
+      max-width: 1200px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .player-container {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.7),
+                  0 0 0 1px var(--card-border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+    }
+
+    .player-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 16px;
+      pointer-events: none;
+      background: linear-gradient(to top, rgba(0, 0, 0, 0.7) 0%, transparent 25%, transparent 75%, rgba(0, 0, 0, 0.5) 100%);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .player-container:hover .player-overlay,
+    .player-container:active .player-overlay {
+      opacity: 1;
+    }
+
+    .overlay-top {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .overlay-bottom {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      pointer-events: auto;
+    }
+
+    .control-btn {
+      background: rgba(15, 23, 42, 0.75);
+      border: 1px solid var(--card-border);
+      color: var(--text-main);
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      backdrop-filter: blur(8px);
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .control-btn:hover {
+      background: rgba(99, 102, 241, 0.8);
+      border-color: var(--accent);
+    }
+
+    .placeholder-view {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding: 24px;
+      text-align: center;
+      background: rgba(12, 15, 23, 0.95);
+      z-index: 10;
+      transition: opacity 0.4s ease;
+    }
+
+    .placeholder-view.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border: 3px solid rgba(255, 255, 255, 0.1);
+      border-radius: 50%;
+      border-top-color: var(--accent);
+      animation: spin 1s ease-in-out infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .placeholder-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+
+    .placeholder-subtitle {
+      color: var(--text-dim);
+      font-size: 0.9rem;
+      max-width: 400px;
+      line-height: 1.5;
+    }
+
+    .btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 4px 14px var(--accent-glow);
+      transition: all 0.2s ease;
+    }
+
+    .btn:hover {
+      background: var(--accent-hover);
+      transform: translateY(-1px);
+    }
+
+    .stream-meta-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 20px;
+      backdrop-filter: blur(12px);
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .stream-id-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .stream-id-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-dim);
+      font-weight: 600;
+    }
+
+    .stream-id-value {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 1.15rem;
+      color: #a5b4fc;
+      background: rgba(99, 102, 241, 0.1);
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px dashed rgba(99, 102, 241, 0.3);
+    }
+
+    .copy-btn {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+      transition: color 0.2s;
+    }
+
+    .copy-btn:hover {
+      color: var(--text-main);
+    }
+
+    .manual-connect {
+      display: flex;
+      gap: 10px;
+      width: 100%;
+      max-width: 380px;
+    }
+
+    .manual-input {
+      flex: 1;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 10px 14px;
+      color: #fff;
+      font-family: monospace;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .manual-input:focus {
+      border-color: var(--accent);
+    }
+
+    .unmute-banner {
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.85);
+      border: 1px solid var(--accent);
+      padding: 8px 16px;
+      border-radius: 9999px;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      z-index: 20;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+
+    @media (max-width: 640px) {
+      body {
+        padding: 10px;
+      }
+      .stream-meta-card {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .manual-connect {
+        max-width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="brand-icon">🎮</span>
+      <span>EndlessWar Live</span>
+    </div>
+    <div id="statusBadge" class="status-badge connecting">
+      <span class="status-dot"></span>
+      <span id="statusText">Подключение...</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="player-container" id="playerContainer">
+      <video id="videoPlayer" playsinline autoplay muted></video>
+
+      <div id="unmuteBanner" class="unmute-banner" onclick="unmuteAudio()">
+        <span>🔊</span>
+        <span>Нажмите для включения звука</span>
+      </div>
+
+      <div id="placeholder" class="placeholder-view">
+        <div id="loadingSpinner" class="spinner"></div>
+        <h2 id="placeholderTitle" class="placeholder-title">Подключение к трансляции</h2>
+        <p id="placeholderSubtitle" class="placeholder-subtitle">Ожидание подключения к хосту игры...</p>
+        <button id="retryBtn" class="btn" style="display: none;" onclick="initConnection()">
+          <span>🔄</span> Повторить подключение
+        </button>
+      </div>
+
+      <div class="player-overlay">
+        <div class="overlay-top">
+          <button class="control-btn" onclick="togglePiP()" title="Картинка в картинке">⧉ PiP</button>
+          <button class="control-btn" onclick="toggleFullscreen()" title="Полный экран">⛶ Экран</button>
+        </div>
+        <div class="overlay-bottom">
+          <div style="display: flex; gap: 8px;">
+            <button class="control-btn" id="playPauseBtn" onclick="togglePlay()">⏸</button>
+            <button class="control-btn" id="muteBtn" onclick="toggleMute()">🔇</button>
+          </div>
+          <span style="font-size: 0.8rem; color: var(--text-dim); background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px;">1080p 30fps WebRTC</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="stream-meta-card">
+      <div class="stream-id-group">
+        <div class="stream-id-label">Идентификатор трансляции</div>
+        <div class="stream-id-value">
+          <span id="currentStreamId">—</span>
+          <button class="copy-btn" onclick="copyStreamId()" title="Скопировать ID">📋</button>
+        </div>
+      </div>
+
+      <div class="manual-connect">
+        <input type="text" id="streamInput" class="manual-input" placeholder="ew-abc123" />
+        <button class="btn" onclick="onManualConnect()">Смотреть</button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    let pc = null;
+    let mqttClient = null;
+    let targetStreamId = '';
+    let viewerId = '';
+    let isConnectedToHost = false;
+
+    const MQTT_BROKERS = [
+      'wss://broker.emqx.io:8084/mqtt',
+      'wss://broker.hivemq.com:8884/mqtt'
+    ];
+    let brokerIndex = 0;
+
+    const video = document.getElementById('videoPlayer');
+    const placeholder = document.getElementById('placeholder');
+    const placeholderTitle = document.getElementById('placeholderTitle');
+    const placeholderSubtitle = document.getElementById('placeholderSubtitle');
+    const loadingSpinner = document.getElementById('loadingSpinner');
+    const retryBtn = document.getElementById('retryBtn');
+    const statusBadge = document.getElementById('statusBadge');
+    const statusText = document.getElementById('statusText');
+    const currentStreamIdEl = document.getElementById('currentStreamId');
+    const streamInput = document.getElementById('streamInput');
+    const unmuteBanner = document.getElementById('unmuteBanner');
+
+    function parseStreamIdFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('s') || params.get('id') || '';
+    }
+
+    function setStatus(state, message) {
+      statusBadge.className = 'status-badge ' + state;
+      statusText.innerText = message;
+    }
+
+    function showError(title, subtitle) {
+      placeholder.classList.remove('hidden');
+      loadingSpinner.style.display = 'none';
+      retryBtn.style.display = 'inline-flex';
+      placeholderTitle.innerText = title;
+      placeholderSubtitle.innerText = subtitle;
+    }
+
+    function cleanupCurrentConnection() {
+      if (pc) {
+        try { pc.close(); } catch(e) {}
+        pc = null;
+      }
+      if (mqttClient) {
+        try { mqttClient.end(true); } catch(e) {}
+        mqttClient = null;
+      }
+      isConnectedToHost = false;
+    }
+
+    async function initConnection() {
+      cleanupCurrentConnection();
+
+      if (!targetStreamId) {
+        setStatus('', 'Ожидание ID стрима');
+        showError('Укажите ID трансляции', 'Введите идентификатор окна в поле ниже или откройте ссылку из бота.');
+        return;
+      }
+
+      currentStreamIdEl.innerText = targetStreamId;
+      streamInput.value = targetStreamId;
+
+      setStatus('connecting', 'Подключение к брокеру...');
+      placeholder.classList.remove('hidden');
+      loadingSpinner.style.display = 'block';
+      retryBtn.style.display = 'none';
+      placeholderTitle.innerText = 'Установка P2P соединения...';
+      placeholderSubtitle.innerText = 'Подключение к хосту ' + targetStreamId;
+
+      viewerId = 'v-' + Math.random().toString(36).substring(2, 10);
+      const brokerUrl = MQTT_BROKERS[brokerIndex % MQTT_BROKERS.length];
+      console.log('Connecting to MQTT signaling broker:', brokerUrl);
+
+      try {
+        mqttClient = mqtt.connect(brokerUrl, {
+          clientId: 'ew-web-' + viewerId,
+          clean: true,
+          connectTimeout: 7000,
+          reconnectPeriod: 3000,
+        });
+      } catch (err) {
+        console.error('MQTT connect error:', err);
+        brokerIndex++;
+        showError('Ошибка связи', 'Не удалось подключиться к сигнальному брокеру. Попробуйте еще раз.');
+        return;
+      }
+
+      // Configure WebRTC PeerConnection
+      pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:global.stun.twilio.com:3478' }
+        ]
+      });
+
+      pc.ontrack = (event) => {
+        console.log('Received remote media track:', event.track.kind);
+        if (event.streams && event.streams[0]) {
+          video.srcObject = event.streams[0];
+        } else {
+          video.srcObject = new MediaStream([event.track]);
+        }
+
+        video.play().then(() => {
+          onStreamPlaying();
+        }).catch((err) => {
+          console.warn('Autoplay prevented:', err);
+          video.muted = true;
+          video.play().then(() => {
+            onStreamPlaying();
+            unmuteBanner.style.display = 'flex';
+          });
+        });
+      };
+
+      pc.onconnectionstatechange = () => {
+        console.log('WebRTC connection state:', pc.connectionState);
+        if (pc.connectionState === 'connected') {
+          isConnectedToHost = true;
+          setStatus('live', 'В ЭФИРЕ • 1080p');
+        } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+          if (!isConnectedToHost) {
+            showError('Трансляция не найдена', 'Стример офлайн или окно игры закрыто.');
+          } else {
+            showError('Связь прервана', 'Соединение с хостом было разорвано.');
+          }
+        }
+      };
+
+      // Add recvonly transceiver for 1080p video stream
+      pc.addTransceiver('video', { direction: 'recvonly' });
+
+      // Create Offer SDP
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      // Wait briefly for ICE gathering
+      await new Promise((resolve) => {
+        if (pc.iceGatheringState === 'complete') {
+          resolve();
+        } else {
+          const check = () => {
+            if (pc.iceGatheringState === 'complete') {
+              pc.removeEventListener('icegatheringstatechange', check);
+              resolve();
+            }
+          };
+          pc.addEventListener('icegatheringstatechange', check);
+          setTimeout(resolve, 800);
+        }
+      });
+
+      const answerTopic = `ew-notify/${targetStreamId}/answer/${viewerId}`;
+      const offerTopic = `ew-notify/${targetStreamId}/offer`;
+
+      mqttClient.on('connect', () => {
+        console.log('Connected to MQTT signaling broker!');
+        setStatus('connecting', 'Соединение с игрой...');
+
+        mqttClient.subscribe(answerTopic, (err) => {
+          if (err) {
+            console.error('MQTT subscribe error:', err);
+            return;
+          }
+
+          console.log('Publishing OFFER to topic:', offerTopic);
+          const offerPayload = JSON.stringify({
+            viewer_id: viewerId,
+            sdp: pc.localDescription.sdp,
+          });
+
+          mqttClient.publish(offerTopic, offerPayload, { qos: 1 });
+        });
+      });
+
+      mqttClient.on('message', async (topic, payload) => {
+        if (topic === answerTopic) {
+          try {
+            const data = JSON.parse(payload.toString());
+            if (data.sdp && pc && pc.signalingState !== 'closed') {
+              console.log('Received WebRTC ANSWER via MQTT!');
+              await pc.setRemoteDescription(new RTCSessionDescription({
+                type: 'answer',
+                sdp: data.sdp,
+              }));
+              console.log('Remote description applied successfully!');
+            }
+          } catch (e) {
+            console.error('Failed to parse answer SDP:', e);
+          }
+        }
+      });
+
+      mqttClient.on('error', (err) => {
+        console.error('MQTT error:', err);
+        brokerIndex++;
+      });
+
+      // 15 seconds timeout if no video received
+      setTimeout(() => {
+        if (!isConnectedToHost && placeholder.classList.contains('hidden') === false) {
+          showError('Хост не отвечает', 'Проверьте, что в ew-notify запущен стрим этого окна.');
+        }
+      }, 15000);
+    }
+
+    function onStreamPlaying() {
+      placeholder.classList.add('hidden');
+      setStatus('live', 'В ЭФИРЕ • 1080p');
+    }
+
+    function onManualConnect() {
+      const inputVal = streamInput.value.trim();
+      if (!inputVal) return;
+      targetStreamId = inputVal;
+      const url = new URL(window.location);
+      url.searchParams.set('s', targetStreamId);
+      window.history.replaceState({}, '', url);
+      initConnection();
+    }
+
+    function copyStreamId() {
+      if (!targetStreamId) return;
+      navigator.clipboard.writeText(targetStreamId).then(() => {
+        alert('ID стрима скопирован: ' + targetStreamId);
+      });
+    }
+
+    function unmuteAudio() {
+      video.muted = false;
+      unmuteBanner.style.display = 'none';
+    }
+
+    function toggleMute() {
+      video.muted = !video.muted;
+      document.getElementById('muteBtn').innerText = video.muted ? '🔇' : '🔊';
+    }
+
+    function togglePlay() {
+      if (video.paused) {
+        video.play();
+        document.getElementById('playPauseBtn').innerText = '⏸';
+      } else {
+        video.pause();
+        document.getElementById('playPauseBtn').innerText = '▶';
+      }
+    }
+
+    function toggleFullscreen() {
+      const container = document.getElementById('playerContainer');
+      if (!document.fullscreenElement) {
+        container.requestFullscreen?.() || container.webkitRequestFullscreen?.();
+      } else {
+        document.exitFullscreen?.() || document.webkitExitFullscreen?.();
+      }
+    }
+
+    function togglePiP() {
+      if (document.pictureInPictureElement) {
+        document.exitPictureInPicture();
+      } else if (video.requestPictureInPicture) {
+        video.requestPictureInPicture();
+      }
+    }
+
+    // Auto-init on page load
+    window.addEventListener('DOMContentLoaded', () => {
+      targetStreamId = parseStreamIdFromUrl();
+      initConnection();
+    });
+  </script>
+</body>
+</html>
