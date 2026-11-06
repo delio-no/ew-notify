@@ -12,6 +12,7 @@ import type {
   RegisteredUser,
   StoredNotification,
   TargetWindow,
+  UpdateInfo,
   WindowFilterMode,
 } from './types';
 
@@ -99,4 +100,10 @@ export const api = {
   getClickerStatus: () => invoke<ClickerStatus>('get_clicker_status'),
   saveClickerConfig: (clickerConfig: ClickerConfig) =>
     invoke<string>('save_clicker_config', { clickerConfig }),
+
+  // Updater
+  checkForUpdates: () => invoke<UpdateInfo>('check_for_updates'),
+  installUpdate: (downloadUrl: string, assetName: string) =>
+    invoke<string>('install_update', { downloadUrl, assetName }),
+  getAppVersion: () => invoke<string>('get_app_version'),
 };

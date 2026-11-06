@@ -1072,6 +1072,8 @@ dependencies = [
  "dirs 5.0.1",
  "image",
  "notify-rust",
+ "reqwest 0.11.27",
+ "semver",
  "serde",
  "serde_json",
  "tauri",

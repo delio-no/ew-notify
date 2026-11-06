@@ -841,6 +841,10 @@
             start_minimized_to_tray: !!loaded.startup?.start_minimized_to_tray,
             close_to_tray: loaded.startup?.close_to_tray !== false,
           },
+          updater: {
+            check_on_startup: loaded.updater?.check_on_startup !== false,
+            ignored_version: loaded.updater?.ignored_version ?? null,
+          },
         };
         await refreshMonitorStatus();
       } catch (e) {
@@ -848,6 +852,18 @@
         lastError = String(e);
       } finally {
         configLoaded = true;
+        if (config.updater?.check_on_startup !== false) {
+          setTimeout(async () => {
+            try {
+              const update = await api.checkForUpdates();
+              if (update.has_update) {
+                showStatus(`Доступно обновление: ${update.latest_version}`);
+              }
+            } catch {
+              // Ignore background network errors
+            }
+          }, 3000);
+        }
       }
 
       try {

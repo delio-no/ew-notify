@@ -57,7 +57,23 @@ export interface ClickerStatus {
   config: ClickerConfig;
 }
 
+export interface UpdaterConfig {
+  check_on_startup: boolean;
+  ignored_version?: string | null;
+}
+
+export interface UpdateInfo {
+  current_version: string;
+  latest_version: string;
+  has_update: boolean;
+  release_notes: string;
+  published_at: string;
+  download_url: string;
+  asset_name: string;
+}
+
 export interface Config {
+  schema_version?: number;
   telegram: {
     bot_token: string;
     admin_chat_id?: string;
@@ -88,6 +104,7 @@ export interface Config {
     close_to_tray: boolean;
   };
   clicker?: ClickerConfig;
+  updater?: UpdaterConfig;
 }
 
 export interface MonitoringStatus {
@@ -228,5 +245,9 @@ export const defaultConfig = (): Config => ({
     notify_on_stop: false,
     notify_on_start: false,
     slot_notifications: {},
+  },
+  updater: {
+    check_on_startup: true,
+    ignored_version: null,
   },
 });

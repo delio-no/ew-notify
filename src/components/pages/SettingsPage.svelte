@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import PageHeader from '../PageHeader.svelte';
-  import type { Config } from '../../lib/types';
+  import { api } from '../../lib/api';
+  import type { Config, UpdateInfo } from '../../lib/types';
 
   let {
     config = $bindable(),
@@ -31,6 +33,51 @@
     onRestartBot: () => void;
     onApplyAndRestartBot?: () => void;
   } = $props();
+
+  let currentAppVersion = $state('v0.2.0');
+  let updateStatus = $state<'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'error'>('idle');
+  let updateInfo = $state<UpdateInfo | null>(null);
+  let updateError = $state<string | null>(null);
+  let lastCheckedTime = $state<string | null>(null);
+
+  onMount(async () => {
+    try {
+      currentAppVersion = await api.getAppVersion();
+    } catch {
+      // ignore
+    }
+  });
+
+  async function checkUpdates() {
+    updateStatus = 'checking';
+    updateError = null;
+    try {
+      const info = await api.checkForUpdates();
+      updateInfo = info;
+      lastCheckedTime = new Date().toLocaleTimeString();
+      if (info.has_update) {
+        updateStatus = 'available';
+      } else {
+        updateStatus = 'up-to-date';
+      }
+    } catch (e) {
+      updateStatus = 'error';
+      updateError = String(e);
+      lastCheckedTime = new Date().toLocaleTimeString();
+    }
+  }
+
+  async function installUpdate() {
+    if (!updateInfo || !updateInfo.download_url) return;
+    updateStatus = 'downloading';
+    updateError = null;
+    try {
+      await api.installUpdate(updateInfo.download_url, updateInfo.asset_name);
+    } catch (e) {
+      updateStatus = 'error';
+      updateError = `Ошибка установки обновления: ${e}`;
+    }
+  }
 </script>
 
 <PageHeader title="Настройки" />
@@ -242,6 +289,86 @@
     </div>
   </div>
 
+  <div class="card settings-card-updater">
+    <div class="card-header update-card-header">
+      <h2>Обновление программы</h2>
+      <span class="version-badge">{currentAppVersion || 'v0.2.0'}</span>
+    </div>
+    <div class="card-body">
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            checked={config.updater ? config.updater.check_on_startup : true}
+            onchange={(e) => {
+              if (!config.updater) config.updater = { check_on_startup: true, ignored_version: null };
+              config.updater.check_on_startup = (e.target as HTMLInputElement).checked;
+            }}
+          />
+          <span>Проверять наличие обновлений при запуске приложения</span>
+        </label>
+      </div>
+
+      <div class="update-actions">
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm"
+          disabled={updateStatus === 'checking' || updateStatus === 'downloading'}
+          onclick={checkUpdates}
+        >
+          {updateStatus === 'checking' ? 'Проверка...' : 'Проверить обновления'}
+        </button>
+
+        {#if lastCheckedTime}
+          <span class="last-checked">Проверено: {lastCheckedTime}</span>
+        {/if}
+      </div>
+
+      {#if updateStatus === 'up-to-date'}
+        <div class="update-notice success">
+          <span class="notice-icon">✓</span>
+          <span>У вас установлена самая актуальная версия программы.</span>
+        </div>
+      {:else if updateStatus === 'error'}
+        <div class="update-notice error">
+          <span class="notice-icon">⚠</span>
+          <span>{updateError || 'Ошибка проверки обновлений'}</span>
+        </div>
+      {:else if updateStatus === 'available' && updateInfo}
+        <div class="update-card-details">
+          <div class="update-header">
+            <div>
+              <div class="update-tag">Доступна версия {updateInfo.latest_version}</div>
+              {#if updateInfo.published_at}
+                <div class="update-date">Опубликовано: {new Date(updateInfo.published_at).toLocaleDateString()}</div>
+              {/if}
+            </div>
+            <button
+              type="button"
+              class="btn btn-primary btn-sm btn-update"
+              disabled={updateStatus === 'downloading'}
+              onclick={installUpdate}
+            >
+              Скачать и обновить
+            </button>
+          </div>
+
+          {#if updateInfo.release_notes}
+            <div class="release-notes-box">
+              <div class="release-notes-title">Что нового в обновлении:</div>
+              <pre class="release-notes-content">{updateInfo.release_notes}</pre>
+            </div>
+          {/if}
+        </div>
+      {:else if updateStatus === 'downloading'}
+        <div class="update-notice downloading">
+          <div class="spinner"></div>
+          <span>Скачивание обновления и замена файлов... Приложение автоматически перезапустится.</span>
+        </div>
+      {/if}
+    </div>
+  </div>
+
   <div class="actions settings-footer">
     <button class="btn btn-primary" onclick={onSave}>Сохранить настройки</button>
     <button type="button" class="btn btn-danger" onclick={onReset}>Сбросить</button>
@@ -268,5 +395,141 @@
   }
   .btn-warning:hover {
     background: #b45309;
+  }
+
+  .update-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .version-badge {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--accent, #60a5fa);
+    background: rgba(96, 165, 250, 0.12);
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(96, 165, 250, 0.25);
+  }
+
+  .update-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 10px;
+    margin-bottom: 8px;
+  }
+
+  .last-checked {
+    font-size: 11px;
+    color: var(--text-muted, #888);
+  }
+
+  .update-notice {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+
+  .update-notice.success {
+    background: rgba(34, 197, 94, 0.1);
+    color: #4ade80;
+    border: 1px solid rgba(34, 197, 94, 0.25);
+  }
+
+  .update-notice.error {
+    background: rgba(239, 68, 68, 0.1);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.25);
+  }
+
+  .update-notice.downloading {
+    background: rgba(96, 165, 250, 0.1);
+    color: #93c5fd;
+    border: 1px solid rgba(96, 165, 250, 0.25);
+  }
+
+  .update-card-details {
+    margin-top: 12px;
+    padding: 14px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(96, 165, 250, 0.3);
+    border-radius: 8px;
+  }
+
+  .update-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .update-tag {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--accent, #60a5fa);
+  }
+
+  .update-date {
+    font-size: 11px;
+    color: var(--text-muted, #888);
+    margin-top: 2px;
+  }
+
+  .btn-update {
+    background: #2563eb;
+    color: #fff;
+    font-weight: 600;
+  }
+  .btn-update:hover {
+    background: #1d4ed8;
+  }
+
+  .release-notes-box {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .release-notes-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted, #aaa);
+    margin-bottom: 6px;
+  }
+
+  .release-notes-content {
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--text-normal, #ddd);
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+    max-height: 160px;
+    overflow-y: auto;
+  }
+
+  .spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-top-color: #60a5fa;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 </style>

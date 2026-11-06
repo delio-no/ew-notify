@@ -14,6 +14,7 @@ pub mod overlay;
 pub mod screen_capture;
 pub mod window_filter;
 pub mod notifications;
+pub mod updater;
 
 use config::{AppConfig, CaptureMode, Pattern, PatternAction};
 use packet::{
@@ -1610,6 +1611,28 @@ fn test_system_notification() -> Result<String, String> {
     Ok("Уведомление отправлено в систему Windows".to_string())
 }
 
+#[tauri::command]
+async fn check_for_updates() -> Result<updater::UpdateInfo, String> {
+    updater::check_update().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn install_update(
+    app: AppHandle,
+    download_url: String,
+    asset_name: String,
+) -> Result<String, String> {
+    updater::download_and_install_update(&app, &download_url, &asset_name)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok("Update installed, restarting...".to_string())
+}
+
+#[tauri::command]
+fn get_app_version() -> String {
+    format!("v{}", updater::APP_VERSION)
+}
+
 pub fn run() {
     if let Err(e) = platform::ensure_single_instance() {
         eprintln!("{e}");
@@ -1618,6 +1641,7 @@ pub fn run() {
 
     let log_buffer = logging::LogBuffer::new();
     logging::init(log_buffer.clone());
+    updater::cleanup_old_version();
 
     info!("Starting EndlessWar Notifier");
     info!(
@@ -1626,7 +1650,8 @@ pub fn run() {
         config::get_config_path().display()
     );
 
-    let config = config::load_config().unwrap_or_else(|_| {
+    let config = config::load_config().unwrap_or_else(|e| {
+        tracing::error!("Failed to load config: {e}. Initializing default config.");
         let default = AppConfig::default();
         let _ = config::save_config(&default);
         default
@@ -1854,6 +1879,9 @@ pub fn run() {
             get_clicker_status,
             save_clicker_config,
             test_system_notification,
+            check_for_updates,
+            install_update,
+            get_app_version,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

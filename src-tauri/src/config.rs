@@ -3,46 +3,57 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+
+fn default_schema_version() -> u32 {
+    CURRENT_SCHEMA_VERSION
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
+    #[serde(default)]
     pub telegram: TelegramConfig,
+    #[serde(default)]
     pub target: TargetConfig,
+    #[serde(default)]
     pub notifications: NotificationsConfig,
     #[serde(default)]
     pub startup: StartupConfig,
     #[serde(default)]
     pub clicker: ClickerConfig,
+    #[serde(default)]
+    pub updater: UpdaterConfig,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            telegram: TelegramConfig {
-                bot_token: String::new(),
-                admin_chat_id: String::new(),
-                auto_start: false,
-                registered_users: Vec::new(),
-                notify_all_users: true,
-            },
-            target: TargetConfig {
-                process_name: "EndlessWar.exe".to_string(),
-                capture_mode: CaptureMode::default(),
-                tcp_port: Some(7777),
-                udp_port: None,
-                remote_ip: None,
-                patterns: default_patterns(),
-            },
-            notifications: NotificationsConfig {
-                telegram_enabled: true,
-                tray_enabled: true,
-                cooldown_seconds: 60,
-                burst_dedup_ms: default_burst_dedup_ms(),
-                screenshot_delay_ms: default_screenshot_delay_ms(),
-                screenshot_on_death: true,
-                actions_enabled: true,
-            },
+            schema_version: CURRENT_SCHEMA_VERSION,
+            telegram: TelegramConfig::default(),
+            target: TargetConfig::default(),
+            notifications: NotificationsConfig::default(),
             startup: StartupConfig::default(),
             clicker: ClickerConfig::default(),
+            updater: UpdaterConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpdaterConfig {
+    #[serde(default = "default_true")]
+    pub check_on_startup: bool,
+    #[serde(default)]
+    pub ignored_version: Option<String>,
+}
+
+impl Default for UpdaterConfig {
+    fn default() -> Self {
+        Self {
+            check_on_startup: true,
+            ignored_version: None,
         }
     }
 }
@@ -69,9 +80,10 @@ impl Default for StartupConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelegramConfig {
+    #[serde(default)]
     pub bot_token: String,
     /// Only this chat_id may use /users (empty = nobody).
-    #[serde(default)]
+    #[serde(default, alias = "chat_id")]
     pub admin_chat_id: String,
     #[serde(default)]
     pub auto_start: bool,
@@ -79,6 +91,18 @@ pub struct TelegramConfig {
     pub registered_users: Vec<RegisteredUser>,
     #[serde(default = "default_true")]
     pub notify_all_users: bool,
+}
+
+impl Default for TelegramConfig {
+    fn default() -> Self {
+        Self {
+            bot_token: String::new(),
+            admin_chat_id: String::new(),
+            auto_start: false,
+            registered_users: Vec::new(),
+            notify_all_users: true,
+        }
+    }
 }
 
 fn default_true() -> bool {
@@ -309,8 +333,13 @@ pub enum CaptureMode {
     Manual,
 }
 
+fn default_process_name() -> String {
+    "EndlessWar.exe".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TargetConfig {
+    #[serde(default = "default_process_name")]
     pub process_name: String,
     #[serde(default)]
     pub capture_mode: CaptureMode,
@@ -321,17 +350,38 @@ pub struct TargetConfig {
     /// Optional remote server IP filter (WinDivert `ip.SrcAddr`). Manual mode only.
     #[serde(default)]
     pub remote_ip: Option<String>,
+    #[serde(default = "default_patterns")]
     pub patterns: Vec<Pattern>,
+}
+
+impl Default for TargetConfig {
+    fn default() -> Self {
+        Self {
+            process_name: default_process_name(),
+            capture_mode: CaptureMode::default(),
+            tcp_port: default_tcp_port(),
+            udp_port: None,
+            remote_ip: None,
+            patterns: default_patterns(),
+        }
+    }
 }
 
 fn default_tcp_port() -> Option<u16> {
     Some(7777)
 }
 
+fn default_cooldown_seconds() -> u64 {
+    60
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationsConfig {
+    #[serde(default = "default_true")]
     pub telegram_enabled: bool,
+    #[serde(default = "default_true")]
     pub tray_enabled: bool,
+    #[serde(default = "default_cooldown_seconds")]
     pub cooldown_seconds: u64,
     /// Suppress same pattern on another local IP (LAN+VPN) within this window.
     #[serde(default = "default_burst_dedup_ms")]
@@ -345,6 +395,20 @@ pub struct NotificationsConfig {
     /// Master switch for background keystroke actions on pattern detection.
     #[serde(default = "default_true")]
     pub actions_enabled: bool,
+}
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        Self {
+            telegram_enabled: true,
+            tray_enabled: true,
+            cooldown_seconds: default_cooldown_seconds(),
+            burst_dedup_ms: default_burst_dedup_ms(),
+            screenshot_delay_ms: default_screenshot_delay_ms(),
+            screenshot_on_death: true,
+            actions_enabled: true,
+        }
+    }
 }
 
 fn default_screenshot_delay_ms() -> u64 {
@@ -512,12 +576,61 @@ pub fn ensure_default_patterns(config: &mut AppConfig) -> bool {
     }
 }
 
-pub fn load_config_from_path(path: &std::path::Path) -> Result<AppConfig> {
-    if !path.exists() {
-        return Err(anyhow!("Config file not found at {}", path.display()));
+/// Recursively merge patch JSON into target JSON (in-place).
+pub fn deep_merge_json(target: &mut serde_json::Value, patch: serde_json::Value) {
+    match (target, patch) {
+        (serde_json::Value::Object(t), serde_json::Value::Object(p)) => {
+            for (k, v) in p {
+                deep_merge_json(t.entry(k).or_insert(serde_json::Value::Null), v);
+            }
+        }
+        (target, patch) => *target = patch,
     }
-    let content = fs::read_to_string(path)?;
-    let mut config: AppConfig = serde_json::from_str(&content)?;
+}
+
+/// Run step-by-step migrations on raw JSON value before deserialization.
+pub fn migrate_raw_json(mut val: serde_json::Value) -> Result<(serde_json::Value, bool)> {
+    let raw_version = val
+        .get("schema_version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+
+    let mut migrated = false;
+
+    if raw_version < 1 {
+        val = migrate_legacy_to_v1(val)?;
+        migrated = true;
+    }
+
+    val["schema_version"] = serde_json::json!(CURRENT_SCHEMA_VERSION);
+    Ok((val, migrated))
+}
+
+fn migrate_legacy_to_v1(mut val: serde_json::Value) -> Result<serde_json::Value> {
+    if let Some(tg) = val.get_mut("telegram").and_then(|t| t.as_object_mut()) {
+        if let Some(old_chat) = tg.get("chat_id").cloned() {
+            let needs_admin = !tg.contains_key("admin_chat_id")
+                || tg["admin_chat_id"].as_str().unwrap_or("").is_empty();
+            if needs_admin {
+                tg.insert("admin_chat_id".to_string(), old_chat);
+            }
+        }
+    }
+    Ok(val)
+}
+
+fn load_and_finalize_config(
+    raw_json: serde_json::Value,
+    path: &std::path::Path,
+    recovered_from_bak: bool,
+) -> Result<AppConfig> {
+    let (migrated_json, was_migrated) = migrate_raw_json(raw_json)?;
+
+    let default_cfg = AppConfig::default();
+    let mut base_json = serde_json::to_value(&default_cfg)?;
+    deep_merge_json(&mut base_json, migrated_json);
+
+    let mut config: AppConfig = serde_json::from_value(base_json)?;
 
     let raw_token = config.telegram.bot_token.clone();
     let was_encrypted = raw_token.starts_with("enc:dpapi:");
@@ -531,24 +644,69 @@ pub fn load_config_from_path(path: &std::path::Path) -> Result<AppConfig> {
 
     let patterns_restored = ensure_default_patterns(&mut config);
     if patterns_restored {
-        tracing::warn!(
-            "config at {} had empty patterns — restored DEATH/STOP_FARM",
+        tracing::info!(
+            "Appended missing default patterns to config at {}",
             path.display()
         );
     }
 
-    // Auto-migrate plaintext token on disk to encrypted
-    if (!was_encrypted && !config.telegram.bot_token.is_empty()) || patterns_restored {
+    if (!was_encrypted && !config.telegram.bot_token.is_empty())
+        || patterns_restored
+        || was_migrated
+        || recovered_from_bak
+    {
         let _ = save_config_to_path(&config, path);
     }
 
     Ok(config)
 }
 
+pub fn load_config_from_path(path: &std::path::Path) -> Result<AppConfig> {
+    if !path.exists() {
+        return Err(anyhow!("Config file not found at {}", path.display()));
+    }
+    let content = fs::read_to_string(path)?;
+
+    let raw_json: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(
+                "Config file {} is corrupted (invalid JSON syntax): {e}",
+                path.display()
+            );
+            let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+            let broken_path = path.with_extension(format!("corrupted.{timestamp}.json"));
+            let _ = fs::copy(path, &broken_path);
+            tracing::warn!("Saved corrupted config copy to {}", broken_path.display());
+
+            let bak_path = path.with_extension("json.bak");
+            if bak_path.exists() {
+                tracing::info!("Attempting recovery from backup {}", bak_path.display());
+                if let Ok(bak_content) = fs::read_to_string(&bak_path) {
+                    if let Ok(v) = serde_json::from_str(&bak_content) {
+                        return load_and_finalize_config(v, path, true);
+                    }
+                }
+            }
+            return Err(anyhow!(
+                "Failed to parse config and backup recovery unavailable: {e}"
+            ));
+        }
+    };
+
+    load_and_finalize_config(raw_json, path, false)
+}
+
 pub fn save_config_to_path(config: &AppConfig, path: &std::path::Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
+    // Always backup existing config file before overwriting
+    if path.exists() {
+        let bak_path = path.with_extension("json.bak");
+        let _ = fs::copy(path, &bak_path);
+    }
+
     let mut disk_config = config.clone();
     if !disk_config.telegram.bot_token.is_empty() {
         match crate::crypto::encrypt_string(&disk_config.telegram.bot_token) {
@@ -870,6 +1028,71 @@ mod tests {
 
         let disk_content_after = fs::read_to_string(&config_path).unwrap();
         assert!(disk_content_after.contains("enc:dpapi:"), "Plaintext token must be automatically migrated to encrypted on disk");
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_migrate_legacy_config_adds_schema_version_and_defaults() {
+        let legacy_json = serde_json::json!({
+            "telegram": {
+                "bot_token": "token",
+                "chat_id": "999"
+            },
+            "target": {
+                "process_name": "EndlessWar.exe"
+            }
+        });
+
+        let (migrated, was_migrated) = migrate_raw_json(legacy_json).unwrap();
+        assert!(was_migrated);
+        assert_eq!(migrated["schema_version"], CURRENT_SCHEMA_VERSION);
+        assert_eq!(migrated["telegram"]["admin_chat_id"], "999");
+    }
+
+    #[test]
+    fn test_deep_merge_preserves_user_settings_and_populates_new_fields() {
+        let mut base = serde_json::json!({
+            "telegram": { "bot_token": "", "admin_chat_id": "", "notify_all_users": true },
+            "updater": { "check_on_startup": true, "ignored_version": null }
+        });
+
+        let user = serde_json::json!({
+            "telegram": { "bot_token": "my_secret_token" }
+        });
+
+        deep_merge_json(&mut base, user);
+        assert_eq!(base["telegram"]["bot_token"], "my_secret_token");
+        assert_eq!(base["telegram"]["notify_all_users"], true);
+        assert_eq!(base["updater"]["check_on_startup"], true);
+    }
+
+    #[test]
+    fn test_corrupted_config_quarantine_and_backup_recovery() {
+        let unique_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("ew_test_corrupt_{unique_id}"));
+        let _ = fs::create_dir_all(&temp_dir);
+        let config_path = temp_dir.join("config.json");
+        let bak_path = temp_dir.join("config.json.bak");
+
+        // Create a valid backup
+        let valid_backup = AppConfig::default();
+        save_config_to_path(&valid_backup, &bak_path).unwrap();
+
+        // Write corrupt JSON to main config file
+        fs::write(&config_path, "{ broken invalid json...").unwrap();
+
+        // Loading should recover from backup and save quarantine file
+        let loaded = load_config_from_path(&config_path).expect("Should recover from backup");
+        assert_eq!(loaded.schema_version, CURRENT_SCHEMA_VERSION);
+
+        // Verify corrupted file was quarantined
+        let files: Vec<_> = fs::read_dir(&temp_dir).unwrap().filter_map(|e| e.ok()).collect();
+        let has_corrupted = files.iter().any(|f| f.file_name().to_string_lossy().contains("corrupted"));
+        assert!(has_corrupted, "Corrupted file must be preserved in quarantine");
 
         let _ = fs::remove_dir_all(temp_dir);
     }
