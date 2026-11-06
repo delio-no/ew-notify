@@ -130,6 +130,7 @@ pub struct ActiveViewer {
     pub track: Arc<TrackLocalStaticSample>,
     pub payload_type: u8,
     pub pc: Arc<dyn PeerConnection>,
+    pub is_connected: Arc<AtomicBool>,
 }
 
 pub struct StreamSession {
@@ -300,6 +301,7 @@ pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<Active
         .spawn(move || {
             run_capture_encode_loop(
                 hwnd,
+                pid,
                 cap_running,
                 cap_viewers_map,
                 cap_viewer_count,
@@ -342,12 +344,25 @@ pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<Active
 /// Screen capture and H.264 encoding loop at 1080p, 30fps (runs in dedicated OS thread)
 fn run_capture_encode_loop(
     hwnd_val: isize,
+    pid: u32,
     running: Arc<AtomicBool>,
     active_viewers: Arc<std::sync::RwLock<HashMap<String, ActiveViewer>>>,
     _viewer_count: Arc<AtomicUsize>,
     force_keyframe: Arc<AtomicBool>,
 ) {
-    info!("Starting 1080p capture & encode loop for HWND: {}", hwnd_val);
+    info!("Starting 1080p capture & encode loop for HWND: {}, PID: {}", hwnd_val, pid);
+
+    #[cfg(windows)]
+    unsafe {
+        use windows::core::w;
+        use windows::Win32::System::StationsAndDesktops::{
+            CloseDesktop, OpenDesktopW, SetThreadDesktop, DESKTOP_CONTROL_FLAGS,
+        };
+        if let Ok(h_desk) = OpenDesktopW(w!("default"), DESKTOP_CONTROL_FLAGS(0), false, 0x01FF) {
+            let _ = SetThreadDesktop(h_desk);
+            let _ = CloseDesktop(h_desk);
+        }
+    }
 
     let api = OpenH264API::from_source();
     let config = EncoderConfig::new()
@@ -372,24 +387,59 @@ fn run_capture_encode_loop(
 
     let mut yuv_buffer = Yuv420Buffer::new(TARGET_WIDTH, TARGET_HEIGHT);
     let mut bgra_buffer = vec![0u8; TARGET_WIDTH * TARGET_HEIGHT * 4];
+    let mut current_hwnd = hwnd_val;
+    let mut last_hwnd_check = Instant::now();
+    let mut total_encoded_frames = 0u64;
+    let mut last_stat_log = Instant::now();
 
     while running.load(Ordering::SeqCst) {
         let frame_start = Instant::now();
 
-        // Get snapshot of active viewers
+        // Get snapshot of CONNECTED active viewers only (DTLS/SRTP established)
         let viewers = {
             let guard = active_viewers.read().unwrap();
-            guard.clone()
+            guard
+                .iter()
+                .filter(|(_, v)| v.is_connected.load(Ordering::SeqCst))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect::<Vec<_>>()
         };
 
-        // If no active viewers, sleep lightly to conserve CPU
+        // If no active connected viewers, sleep lightly to conserve CPU
         if viewers.is_empty() {
-            std::thread::sleep(Duration::from_millis(150));
+            std::thread::sleep(Duration::from_millis(100));
             continue;
         }
 
+        // Validate window handle; if closed/recreated, scan for new HWND for process pid
+        #[cfg(windows)]
+        {
+            use windows::Win32::Foundation::HWND;
+            use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+            if unsafe { !IsWindow(HWND(current_hwnd)).as_bool() } {
+                if last_hwnd_check.elapsed() > Duration::from_secs(1) {
+                    last_hwnd_check = Instant::now();
+                    let windows = crate::screen_capture::find_target_windows("EndlessWar.exe");
+                    if let Some(target) = windows.into_iter().find(|w| w.pid == pid) {
+                        info!(
+                            "Stream HWND updated from {} to new HWND {} for PID {}",
+                            current_hwnd, target.hwnd, pid
+                        );
+                        current_hwnd = target.hwnd;
+                        ACTIVE_STREAM_HWND.store(current_hwnd, Ordering::SeqCst);
+                    } else {
+                        std::thread::sleep(Duration::from_millis(200));
+                        continue;
+                    }
+                } else {
+                    std::thread::sleep(Duration::from_millis(100));
+                    continue;
+                }
+            }
+        }
+
         // Capture 1080p frame from Windows window via GDI StretchBlt
-        let captured = capture_window_1080p_into(hwnd_val, &mut bgra_buffer);
+        let captured = capture_window_1080p_into(current_hwnd, &mut bgra_buffer);
         if !captured {
             std::thread::sleep(Duration::from_millis(100));
             continue;
@@ -421,8 +471,9 @@ fn run_capture_encode_loop(
 
         if let Some(nalu_bytes) = nalu_opt {
             let sample_bytes = bytes::Bytes::from(nalu_bytes);
+            total_encoded_frames += 1;
 
-            for (vid, viewer) in viewers {
+            for (vid, viewer) in &viewers {
                 let sample = Sample {
                     data: sample_bytes.clone(),
                     duration: Duration::from_millis(FRAME_DURATION_MS),
@@ -435,6 +486,14 @@ fn run_capture_encode_loop(
                     }
                 });
             }
+
+            if last_stat_log.elapsed() >= Duration::from_secs(5) {
+                info!(
+                    "Streaming active: encoded {} frames (1080p 30fps), active viewers: {}",
+                    total_encoded_frames, viewers.len()
+                );
+                last_stat_log = Instant::now();
+            }
         }
 
         // Throttle to 30 FPS
@@ -444,7 +503,7 @@ fn run_capture_encode_loop(
         }
     }
 
-    info!("1080p capture loop terminated for HWND: {}", hwnd_val);
+    info!("1080p capture loop terminated for HWND: {}", current_hwnd);
 }
 
 /// Capture game window and scale directly to 1920x1080 BGRA
@@ -454,10 +513,12 @@ fn capture_window_1080p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
     use windows::Win32::Foundation::{HWND, RECT};
     use windows::Win32::Graphics::Gdi::{
         CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
-        ReleaseDC, SelectObject, SetStretchBltMode, StretchBlt, BITMAPINFO, BITMAPINFOHEADER,
+        ReleaseDC, SelectObject, SetStretchBltMode, StretchBlt, BitBlt, BITMAPINFO, BITMAPINFOHEADER,
         BI_RGB, DIB_RGB_COLORS, HALFTONE, HDC, SRCCOPY,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, IsIconic, ShowWindow, SW_SHOWNOACTIVATE};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowRect, IsIconic, ShowWindow, SW_SHOWNOACTIVATE,
+    };
 
     let hwnd = HWND(hwnd_val);
 
@@ -502,7 +563,7 @@ fn capture_window_1080p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
 
         let old_mem = SelectObject(hdc_mem, hbmp_1080p);
 
-        // Capture source window
+        // Capture source window into memory DC
         let hdc_src = CreateCompatibleDC(hdc_screen);
         let hbmp_src = CreateCompatibleBitmap(hdc_screen, src_w, src_h);
         let old_src = SelectObject(hdc_src, hbmp_src);
@@ -512,16 +573,16 @@ fn capture_window_1080p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
             fn PrintWindow(hwnd: HWND, hdc_blt: HDC, n_flags: u32) -> windows::Win32::Foundation::BOOL;
         }
 
-        // PW_RENDERFULLCONTENT = 2
+        // 1st attempt: PrintWindow PW_RENDERFULLCONTENT = 2
         let printed = PrintWindow(hwnd, HDC(hdc_src.0), 2);
         if !printed.as_bool() {
             // Fallback to window DC BitBlt
             let hdc_win = GetDC(hwnd);
             if !hdc_win.is_invalid() {
-                let _ = windows::Win32::Graphics::Gdi::BitBlt(
-                    hdc_src, 0, 0, src_w, src_h, hdc_win, 0, 0, SRCCOPY,
-                );
+                let _ = BitBlt(hdc_src, 0, 0, src_w, src_h, hdc_win, 0, 0, SRCCOPY);
                 ReleaseDC(hwnd, hdc_win);
+            } else {
+                let _ = BitBlt(hdc_src, 0, 0, src_w, src_h, hdc_screen, rect.left, rect.top, SRCCOPY);
             }
         }
 
@@ -559,6 +620,20 @@ fn capture_window_1080p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
             &mut bmi,
             DIB_RGB_COLORS,
         );
+
+        // Check if frame has content; if all black and PrintWindow was used, fallback to screen DC BitBlt
+        let sample_has_content = out_bgra.iter().take(2000).any(|&b| b > 10);
+        if lines > 0 && !sample_has_content && printed.as_bool() {
+            let _ = BitBlt(hdc_src, 0, 0, src_w, src_h, hdc_screen, rect.left, rect.top, SRCCOPY);
+            let _ = StretchBlt(
+                hdc_mem, 0, 0, TARGET_WIDTH as i32, TARGET_HEIGHT as i32,
+                hdc_src, 0, 0, src_w, src_h, SRCCOPY,
+            );
+            let _ = GetDIBits(
+                hdc_mem, hbmp_1080p, 0, TARGET_HEIGHT as u32,
+                Some(out_bgra.as_mut_ptr() as *mut _), &mut bmi, DIB_RGB_COLORS,
+            );
+        }
 
         // Cleanup GDI
         SelectObject(hdc_src, old_src);
@@ -599,11 +674,14 @@ impl PeerConnectionEventHandler for ViewerHandler {
     async fn on_connection_state_change(&self, state: RTCPeerConnectionState) {
         match state {
             RTCPeerConnectionState::Connected => {
+                if let Some(viewer) = self.active_viewers.read().unwrap().get(&self.viewer_id) {
+                    viewer.is_connected.store(true, Ordering::SeqCst);
+                }
                 let current = self.viewers.fetch_add(1, Ordering::SeqCst) + 1;
                 ACTIVE_STREAM_VIEWERS.store(current, Ordering::SeqCst);
                 self.force_keyframe.store(true, Ordering::SeqCst);
                 info!(
-                    "Viewer '{}' CONNECTED! Active viewers: {}",
+                    "Viewer '{}' CONNECTED and ready for RTP streaming! Active viewers: {}",
                     self.viewer_id, current
                 );
             }
@@ -872,7 +950,8 @@ async fn handle_offer_message(
     let _ = tokio::time::timeout(Duration::from_millis(700), gather_complete_rx.recv()).await;
 
     if let Some(local_desc) = pc.local_description().await {
-        // Register viewer in active viewers map
+        // Register viewer in active viewers map (waiting for DTLS Connected state)
+        let is_connected = Arc::new(AtomicBool::new(false));
         {
             let mut map = active_viewers.write().unwrap();
             map.insert(
@@ -881,6 +960,7 @@ async fn handle_offer_message(
                     track: video_track,
                     payload_type: negotiated_pt,
                     pc: pc.clone(),
+                    is_connected,
                 },
             );
         }
