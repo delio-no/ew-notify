@@ -10,8 +10,11 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
 
-use openh264::encoder::Encoder;
+use openh264::encoder::{
+    BitRate, Encoder, EncoderConfig, FrameRate, IntraFramePeriod, SpsPpsStrategy,
+};
 use openh264::formats::YUVSource;
+use openh264::OpenH264API;
 
 use rtc::media::Sample;
 use rtc::media_stream::MediaStreamTrack;
@@ -346,11 +349,24 @@ fn run_capture_encode_loop(
 ) {
     info!("Starting 1080p capture & encode loop for HWND: {}", hwnd_val);
 
-    let mut encoder = match Encoder::new() {
+    let api = OpenH264API::from_source();
+    let config = EncoderConfig::new()
+        .bitrate(BitRate::from_bps(3_000_000))
+        .max_frame_rate(FrameRate::from_hz(TARGET_FPS as f32))
+        .intra_frame_period(IntraFramePeriod::from_num_frames(30))
+        .sps_pps_strategy(SpsPpsStrategy::IncreasingId);
+
+    let mut encoder = match Encoder::with_api_config(api, config) {
         Ok(enc) => enc,
         Err(e) => {
-            error!("Failed to initialize OpenH264 encoder: {}", e);
-            return;
+            error!("Failed to initialize OpenH264 encoder with config: {}. Retrying default...", e);
+            match Encoder::new() {
+                Ok(enc) => enc,
+                Err(e2) => {
+                    error!("Failed to initialize OpenH264 default encoder: {}", e2);
+                    return;
+                }
+            }
         }
     };
 
@@ -382,7 +398,7 @@ fn run_capture_encode_loop(
         // Convert BGRA to planar YUV420p
         bgra_to_yuv420(&bgra_buffer, TARGET_WIDTH, TARGET_HEIGHT, &mut yuv_buffer);
 
-        // Force keyframe if new viewer connected
+        // Force keyframe if requested (new viewer connected)
         if force_keyframe.swap(false, Ordering::SeqCst) {
             encoder.force_intra_frame();
         }
@@ -441,13 +457,15 @@ fn capture_window_1080p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
         ReleaseDC, SelectObject, SetStretchBltMode, StretchBlt, BITMAPINFO, BITMAPINFOHEADER,
         BI_RGB, DIB_RGB_COLORS, HALFTONE, HDC, SRCCOPY,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, IsIconic};
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, IsIconic, ShowWindow, SW_SHOWNOACTIVATE};
 
     let hwnd = HWND(hwnd_val);
 
     unsafe {
         if IsIconic(hwnd).as_bool() {
-            return false;
+            // If window is minimized to taskbar, restore it without taking input focus
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            std::thread::sleep(Duration::from_millis(30));
         }
 
         let mut rect = RECT::default();
