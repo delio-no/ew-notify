@@ -514,6 +514,16 @@
     function forcePlayVideo(e) {
       if (e) e.stopPropagation();
       video.muted = true;
+      if ((!video.srcObject || (video.srcObject.getVideoTracks && video.srcObject.getVideoTracks().length === 0)) && pc) {
+        const receivers = pc.getReceivers ? pc.getReceivers() : [];
+        for (const r of receivers) {
+          if (r.track && r.track.kind === 'video') {
+            console.log('Force play: binding track to video.srcObject');
+            video.srcObject = new MediaStream([r.track]);
+            break;
+          }
+        }
+      }
       video.play().then(() => {
         onStreamPlaying();
       }).catch(err => {
@@ -581,18 +591,18 @@
         ]
       });
 
-      mediaStreamObj = new MediaStream();
       video.muted = true;
-      video.srcObject = mediaStreamObj;
 
       pc.ontrack = (event) => {
-        console.log('Received remote media track:', event.track.kind);
+        console.log('Received remote media track:', event.track.kind, event);
         if (event.track) {
-          mediaStreamObj.addTrack(event.track);
+          event.track.onunmute = () => {
+            console.log('Video track unmuted! Frames arriving.');
+            onStreamPlaying();
+          };
         }
-        if (event.streams && event.streams[0]) {
-          video.srcObject = event.streams[0];
-        }
+        const stream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
+        video.srcObject = stream;
 
         video.play().then(() => {
           onStreamPlaying();
@@ -609,7 +619,20 @@
         console.log('WebRTC connection state:', pc.connectionState);
         if (pc.connectionState === 'connected') {
           isConnectedToHost = true;
-          setStatus('connecting', 'Связь установлена • Ожидание видеокадра...');
+          setStatus('connecting', 'Связь установлена • Приём видео...');
+          setTimeout(() => {
+            if (!video.srcObject || (video.srcObject.getVideoTracks && video.srcObject.getVideoTracks().length === 0)) {
+              const receivers = pc.getReceivers ? pc.getReceivers() : [];
+              for (const r of receivers) {
+                if (r.track && r.track.kind === 'video') {
+                  console.log('Connected fallback: binding receiver track');
+                  video.srcObject = new MediaStream([r.track]);
+                  video.play().catch(e => console.warn(e));
+                  break;
+                }
+              }
+            }
+          }, 300);
         } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
           if (!isConnectedToHost) {
             showError('Трансляция не найдена', 'Стример офлайн или идентификатор окна устарел.');
@@ -627,10 +650,7 @@
       };
 
       // Add recvonly transceiver for 1080p video stream
-      const transceiver = pc.addTransceiver('video', { direction: 'recvonly' });
-      if (transceiver && transceiver.receiver && transceiver.receiver.track) {
-        mediaStreamObj.addTrack(transceiver.receiver.track);
-      }
+      pc.addTransceiver('video', { direction: 'recvonly' });
 
       // Create Offer SDP
       const offer = await pc.createOffer();
