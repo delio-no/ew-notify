@@ -605,9 +605,27 @@
       viewerId = 'v-' + Math.random().toString(36).substring(2, 10);
       const answerTopic = `ew-notify/${targetStreamId}/answer/${viewerId}`;
       const offerTopic = `ew-notify/${targetStreamId}/offer`;
-      const ntfyOfferUrl = `https://ntfy.sh/ew-${targetStreamId}-off`;
-      const ntfyAnswerSseUrl = `https://ntfy.sh/ew-${targetStreamId}-ans-${viewerId}/sse`;
-      const ntfyAnswerWsUrl = `wss://ntfy.sh/ew-${targetStreamId}-ans-${viewerId}/ws`;
+      const cleanStreamId = targetStreamId.replace(/^ew-/, "");
+      const ntfyOfferUrl = `https://ntfy.sh/ew-${cleanStreamId}-off`;
+      const ntfyAnswerSseUrl = `https://ntfy.sh/ew-${cleanStreamId}-ans-${viewerId}/sse`;
+      const ntfyAnswerWsUrl = `wss://ntfy.sh/ew-${cleanStreamId}-ans-${viewerId}/ws`;
+
+      async function parseNtfyPayload(data) {
+        if (!data || data.event !== 'message') return null;
+        let text = data.message;
+        if (data.attachment && data.attachment.url) {
+          try {
+            const resp = await fetch(data.attachment.url);
+            text = await resp.text();
+          } catch(e) {}
+        }
+        if (!text) return null;
+        try {
+          return JSON.parse(text);
+        } catch(e) {
+          return null;
+        }
+      }
 
       let isOfferReady = false;
       let connectedBrokerClient = null;
@@ -679,13 +697,11 @@
         sse.onopen = () => {
           log('Канал HTTPS/443 (SSE) готов к приёму ответа', '#22c55e');
         };
-        sse.onmessage = (event) => {
+        sse.onmessage = async (event) => {
           try {
             const data = JSON.parse(event.data);
-            if (data.event === 'message') {
-              const payload = JSON.parse(data.message);
-              if (payload.sdp) handleRemoteAnswer(payload.sdp, 'HTTPS/443 SSE');
-            }
+            const payload = await parseNtfyPayload(data);
+            if (payload && payload.sdp) handleRemoteAnswer(payload.sdp, 'HTTPS/443 SSE');
           } catch(e) {}
         };
       } catch(e) {
@@ -698,13 +714,11 @@
         ws443.onopen = () => {
           log('Канал WSS/443 подключен', '#22c55e');
         };
-        ws443.onmessage = (event) => {
+        ws443.onmessage = async (event) => {
           try {
             const data = JSON.parse(event.data);
-            if (data.event === 'message') {
-              const payload = JSON.parse(data.message);
-              if (payload.sdp) handleRemoteAnswer(payload.sdp, 'WSS/443');
-            }
+            const payload = await parseNtfyPayload(data);
+            if (payload && payload.sdp) handleRemoteAnswer(payload.sdp, 'WSS/443');
           } catch(e) {}
         };
       } catch(e) {}
@@ -792,7 +806,17 @@
         };
 
         try {
-          pc.addTransceiver('video', { direction: 'recvonly' });
+          const tr = pc.addTransceiver('video', { direction: 'recvonly' });
+          if (typeof RTCRtpReceiver !== 'undefined' && RTCRtpReceiver.getCapabilities) {
+            const caps = RTCRtpReceiver.getCapabilities('video');
+            if (caps && caps.codecs) {
+              const h264 = caps.codecs.filter(c => c.mimeType && c.mimeType.toLowerCase() === 'video/h264');
+              if (h264.length > 0 && tr.setCodecPreferences) {
+                tr.setCodecPreferences(h264);
+                log('H.264 кодек выбран (SDP оптимизирован)', '#22c55e');
+              }
+            }
+          }
         } catch(e) {
           log('addTransceiver: ' + e.message);
         }

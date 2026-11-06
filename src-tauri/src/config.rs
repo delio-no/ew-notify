@@ -156,6 +156,8 @@ pub struct ClickerRule {
     pub start_on_pattern: bool,
     #[serde(default)]
     pub start_patterns: Vec<String>,
+    #[serde(default)]
+    pub single_press: bool,
 }
 
 impl Default for ClickerRule {
@@ -171,6 +173,7 @@ impl Default for ClickerRule {
             stop_patterns: Vec::new(),
             start_on_pattern: false,
             start_patterns: Vec::new(),
+            single_press: false,
         }
     }
 }
@@ -267,6 +270,7 @@ impl ClickerConfig {
                 stop_patterns: self.stop_patterns.clone(),
                 start_on_pattern: false,
                 start_patterns: Vec::new(),
+                single_press: false,
             })
             .collect()
     }

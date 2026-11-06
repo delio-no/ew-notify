@@ -201,11 +201,78 @@ impl ClickerState {
         let filter_ref = filter.clone();
         let proc_ref = proc_name.to_string();
 
+            let single_press = rule.single_press;
         tauri::async_runtime::spawn(async move {
             info!(
-                "Clicker rule '{}' started (Key: '{}', Interval: {}ms, Target: {:?})",
-                rule_name, key, interval_ms, target
+                "Clicker rule '{}' started (Key: '{}', Interval: {}ms, Target: {:?}, SinglePress: {})",
+                rule_name, key, interval_ms, target, single_press
             );
+
+            if single_press {
+                let target_hwnds: Vec<isize> = match &target {
+                    ClickerTarget::Captured => {
+                        if let Some(info) = filter_ref.get_active_or_first_slot() {
+                            #[cfg(windows)]
+                            {
+                                use windows::Win32::Foundation::HWND;
+                                use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+                                if unsafe { IsWindow(HWND(info.hwnd as _)).as_bool() } {
+                                    vec![info.hwnd]
+                                } else {
+                                    Vec::new()
+                                }
+                            }
+                            #[cfg(not(windows))]
+                            vec![info.hwnd]
+                        } else {
+                            Vec::new()
+                        }
+                    }
+                    ClickerTarget::Slot(slot) => {
+                        if let Some(info) = filter_ref.get_slot(*slot) {
+                            #[cfg(windows)]
+                            {
+                                use windows::Win32::Foundation::HWND;
+                                use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+                                if unsafe { IsWindow(HWND(info.hwnd as _)).as_bool() } {
+                                    vec![info.hwnd]
+                                } else {
+                                    Vec::new()
+                                }
+                            }
+                            #[cfg(not(windows))]
+                            vec![info.hwnd]
+                        } else {
+                            let windows = screen_capture::find_target_windows(&proc_ref);
+                            let idx = (*slot as usize).saturating_sub(1);
+                            windows.get(idx).map(|w| vec![w.hwnd]).unwrap_or_default()
+                        }
+                    }
+                    ClickerTarget::All => {
+                        let windows = screen_capture::find_target_windows(&proc_ref);
+                        windows.into_iter().map(|w| w.hwnd).collect()
+                    }
+                };
+
+                if !target_hwnds.is_empty() {
+                    for &hwnd in &target_hwnds {
+                        match input_sender::send_key_background(hwnd, &key, 75).await {
+                            Ok(()) => {
+                                let new_count = count_ref.fetch_add(1, Ordering::SeqCst) + 1;
+                                let _ = app_ref.emit("clicker-tick", new_count);
+                                info!("Rule '{}' single keypress '{}' sent to HWND {}", rule_name, key, hwnd);
+                            }
+                            Err(e) => {
+                                warn!("Rule '{}' failed to send single key '{}': {}", rule_name, key, e);
+                            }
+                        }
+                    }
+                } else {
+                    debug!("Rule '{}': no target window available for single keypress", rule_name);
+                }
+                info!("Rule '{}' single press completed", rule_name);
+                return;
+            }
 
             loop {
                 if !running_ref.load(Ordering::SeqCst) || *rx.borrow() {
@@ -391,7 +458,9 @@ impl ClickerState {
                     if !matches {
                         return false;
                     }
-                    if let Some(ref map) = active_map {
+                    if r.single_press {
+                        true
+                    } else if let Some(ref map) = active_map {
                         !map.contains_key(&r.id)
                     } else {
                         true
@@ -401,10 +470,15 @@ impl ClickerState {
         };
 
         if !rules_to_start.is_empty() {
-            self.running.store(true, Ordering::SeqCst);
             for rule in &rules_to_start {
-                self.spawn_rule_task(rule, &proc_name, app, filter);
-                started_rule_labels.push(format!("'{}' ({})", rule.name, rule.key));
+                if rule.single_press {
+                    self.spawn_rule_task(rule, &proc_name, app, filter);
+                    started_rule_labels.push(format!("'{}' ({}) [1x]", rule.name, rule.key));
+                } else {
+                    self.running.store(true, Ordering::SeqCst);
+                    self.spawn_rule_task(rule, &proc_name, app, filter);
+                    started_rule_labels.push(format!("'{}' ({})", rule.name, rule.key));
+                }
             }
         }
 

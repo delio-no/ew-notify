@@ -43,6 +43,7 @@
         stop_patterns: [...(r.stop_patterns || [])],
         start_on_pattern: r.start_on_pattern ?? false,
         start_patterns: [...(r.start_patterns || [])],
+        single_press: r.single_press ?? false,
       }));
     }
     return [
@@ -57,6 +58,7 @@
         stop_patterns: [],
         start_on_pattern: false,
         start_patterns: [],
+        single_press: false,
       },
     ];
   }
@@ -244,6 +246,7 @@
       stop_patterns: [],
       start_on_pattern: false,
       start_patterns: [],
+      single_press: false,
     };
     rules = [...rules, newRule];
   }
@@ -566,11 +569,38 @@
                 </div>
               </div>
 
+              <!-- Mode Selection (Looping vs Single-shot) -->
+              <div class="form-group mode-form-group">
+                <span class="field-title">
+                  ����� ������
+                  <span class="hint-text">({rule.single_press ? '����������' : '������������'})</span>
+                </span>
+                <div class="mode-toggle-group">
+                  <button
+                    type="button"
+                    class="mode-btn"
+                    class:active={!rule.single_press}
+                    onclick={() => (rule.single_press = false)}
+                  >
+                    ?? ������������
+                  </button>
+                  <button
+                    type="button"
+                    class="mode-btn"
+                    class:active={rule.single_press}
+                    onclick={() => (rule.single_press = true)}
+                  >
+                    ? ��������
+                  </button>
+                </div>
+              </div>
+
+              {#if !rule.single_press}
               <!-- Interval Field -->
               <div class="form-group">
                 <label for="rule-interval-{rule.id}">
-                  Интервал (мс)
-                  <span class="hint-text">({rule.interval_ms} мс = {(rule.interval_ms / 1000).toFixed(1)} с)</span>
+                  �������� (��)
+                  <span class="hint-text">({rule.interval_ms} �� = {(rule.interval_ms / 1000).toFixed(1)} �)</span>
                 </label>
                 <input
                   id="rule-interval-{rule.id}"
@@ -588,11 +618,12 @@
                       class:active={Number(rule.interval_ms) === qi}
                       onclick={() => (rule.interval_ms = qi)}
                     >
-                      {qi} мс
+                      {qi} ��
                     </button>
                   {/each}
                 </div>
               </div>
+              {/if}
             </div>
 
             <!-- Start on Pattern Trigger -->
@@ -1410,5 +1441,37 @@
     justify-content: flex-end;
     padding-top: 8px;
     border-top: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .rule-interval-preview.single {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+  }
+  .mode-toggle-group {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .mode-btn {
+    flex: 1;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--bg-card, #1e293b);
+    border: 1px solid var(--border-color, #334155);
+    color: var(--text-secondary, #94a3b8);
+    transition: all 0.15s ease;
+  }
+  .mode-btn:hover {
+    border-color: var(--primary, #3b82f6);
+    color: var(--text-primary, #f8fafc);
+  }
+  .mode-btn.active {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: var(--primary, #3b82f6);
+    color: #60a5fa;
   }
 </style>

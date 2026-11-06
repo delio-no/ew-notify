@@ -1044,7 +1044,8 @@ async fn run_ntfy_signaling_loop(
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
 
-    let topic_url = format!("https://ntfy.sh/ew-{}-off/json", stream_id);
+    let clean_id = stream_id.strip_prefix("ew-").unwrap_or(&stream_id);
+    let topic_url = format!("https://ntfy.sh/ew-{}-off/json", clean_id);
 
     while running.load(Ordering::SeqCst) {
         info!("Connecting to HTTPS/443 signaling (ntfy.sh) for stream '{}'...", stream_id);
@@ -1066,30 +1067,63 @@ async fn run_ntfy_signaling_loop(
                                     }
                                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
                                         if val["event"].as_str() == Some("message") {
-                                            if let Some(msg_str) = val["message"].as_str() {
-                                                if let Ok(offer_msg) = serde_json::from_str::<OfferMessage>(msg_str) {
-                                                    let active_viewers_clone = active_viewers.clone();
-                                                    let viewer_count_clone = viewer_count.clone();
-                                                    let force_keyframe_clone = force_keyframe.clone();
-                                                    let stream_id_clone = stream_id.clone();
-                                                    let http_client = client.clone();
-
-                                                    tokio::spawn(async move {
-                                                        if let Some((viewer_id, answer_sdp)) = process_offer(
-                                                            offer_msg,
-                                                            active_viewers_clone,
-                                                            viewer_count_clone,
-                                                            force_keyframe_clone,
-                                                        ).await {
-                                                            let answer_url = format!("https://ntfy.sh/ew-{}-ans-{}", stream_id_clone, viewer_id);
-                                                            let payload = serde_json::json!({ "sdp": answer_sdp });
-                                                            if let Err(e) = http_client.post(&answer_url).json(&payload).send().await {
-                                                                warn!("Failed to send WebRTC ANSWER via ntfy.sh: {}", e);
-                                                            } else {
-                                                                info!("Successfully sent WebRTC ANSWER to viewer '{}' via ntfy.sh (port 443)", viewer_id);
-                                                            }
+                                            // Handle both inline text message and ntfy attachment (for >4KB payloads)
+                                            let raw_offer_str: Option<String> = if let Some(att_url) = val["attachment"]["url"].as_str() {
+                                                info!("Received WebRTC offer via ntfy attachment: {}, downloading...", att_url);
+                                                match client.get(att_url).send().await {
+                                                    Ok(att_res) => match att_res.text().await {
+                                                        Ok(body) => Some(body),
+                                                        Err(e) => {
+                                                            warn!("Failed to read attachment body: {}", e);
+                                                            None
                                                         }
-                                                    });
+                                                    },
+                                                    Err(e) => {
+                                                        warn!("Failed to fetch attachment from ntfy: {}", e);
+                                                        None
+                                                    }
+                                                }
+                                            } else {
+                                                val["message"].as_str().map(|s| s.to_string())
+                                            };
+
+                                            if let Some(msg_str) = raw_offer_str {
+                                                match serde_json::from_str::<OfferMessage>(&msg_str) {
+                                                    Ok(offer_msg) => {
+                                                        info!(
+                                                            "Received valid WebRTC OFFER from viewer '{}' via ntfy.sh (port 443, SDP: {} bytes)",
+                                                            offer_msg.viewer_id, offer_msg.sdp.len()
+                                                        );
+                                                        let active_viewers_clone = active_viewers.clone();
+                                                        let viewer_count_clone = viewer_count.clone();
+                                                        let force_keyframe_clone = force_keyframe.clone();
+                                                        let clean_id_clone = clean_id.to_string();
+                                                        let http_client = client.clone();
+
+                                                        tokio::spawn(async move {
+                                                            if let Some((viewer_id, answer_sdp)) = process_offer(
+                                                                offer_msg,
+                                                                active_viewers_clone,
+                                                                viewer_count_clone,
+                                                                force_keyframe_clone,
+                                                            ).await {
+                                                                let answer_url = format!("https://ntfy.sh/ew-{}-ans-{}", clean_id_clone, viewer_id);
+                                                                let payload = serde_json::json!({ "sdp": answer_sdp });
+                                                                if let Err(e) = http_client.post(&answer_url).json(&payload).send().await {
+                                                                    warn!("Failed to send WebRTC ANSWER via ntfy.sh: {}", e);
+                                                                } else {
+                                                                    info!("Successfully sent WebRTC ANSWER to viewer '{}' via ntfy.sh (port 443)", viewer_id);
+                                                                }
+                                                            }
+                                                        });
+                                                    }
+                                                    Err(e) => {
+                                                        warn!(
+                                                            "Failed to parse WebRTC OfferMessage from ntfy.sh: {} | payload prefix: {}",
+                                                            e,
+                                                            &msg_str[..msg_str.len().min(80)]
+                                                        );
+                                                    }
                                                 }
                                             }
                                         }

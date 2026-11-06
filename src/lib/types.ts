@@ -31,6 +31,7 @@ export interface ClickerRule {
   stop_patterns: string[];
   start_on_pattern: boolean;
   start_patterns: string[];
+  single_press?: boolean;
 }
 
 export interface SlotNotificationConfig {
