@@ -297,6 +297,24 @@ pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<Active
         .await;
     });
 
+    // Spawn HTTPS/Port 443 Signaling Task (ntfy.sh - primary for mobile/cellular networks)
+    let ntfy_stream_id = stream_id.clone();
+    let ntfy_running = running.clone();
+    let ntfy_viewers_map = active_viewers.clone();
+    let ntfy_viewer_count = viewer_count.clone();
+    let ntfy_force_keyframe = force_keyframe.clone();
+
+    tokio::spawn(async move {
+        run_ntfy_signaling_loop(
+            ntfy_stream_id,
+            ntfy_running,
+            ntfy_viewers_map,
+            ntfy_viewer_count,
+            ntfy_force_keyframe,
+        )
+        .await;
+    });
+
     // Spawn Screen Capture & H.264 Encoding Loop in dedicated OS thread
     let cap_running = running.clone();
     let cap_viewers_map = active_viewers.clone();
@@ -852,27 +870,17 @@ async fn run_single_mqtt_broker_loop(
     info!("MQTT signaling loop finished on {} for stream: {}", host, stream_id);
 }
 
-/// Handle incoming WebRTC OFFER message from viewer
-async fn handle_offer_message(
-    payload: &[u8],
-    stream_id: &str,
+/// Core logic to handle incoming WebRTC OFFER, set up PeerConnection and generate ANSWER SDP
+async fn process_offer(
+    msg: OfferMessage,
     active_viewers: Arc<std::sync::RwLock<HashMap<String, ActiveViewer>>>,
     viewer_count: Arc<AtomicUsize>,
     force_keyframe: Arc<AtomicBool>,
-    client: AsyncClient,
-) {
-    let msg: OfferMessage = match serde_json::from_slice(payload) {
-        Ok(m) => m,
-        Err(e) => {
-            warn!("Invalid offer payload received via MQTT: {}", e);
-            return;
-        }
-    };
-
+) -> Option<(String, String)> {
     let viewer_id = msg.viewer_id;
     let sdp_str = msg.sdp;
 
-    info!("Received WebRTC OFFER from viewer '{}'", viewer_id);
+    info!("Processing WebRTC OFFER from viewer '{}'", viewer_id);
 
     // Create unique static local video track for this viewer
     let video_codec = create_h264_codec();
@@ -896,14 +904,14 @@ async fn handle_offer_message(
         Ok(t) => Arc::new(t),
         Err(e) => {
             error!("Failed to create TrackLocalStaticSample: {}", e);
-            return;
+            return None;
         }
     };
 
     let mut media_engine = MediaEngine::default();
     if let Err(e) = media_engine.register_codec(video_codec, RtpCodecKind::Video) {
         error!("Failed to register video codec: {}", e);
-        return;
+        return None;
     }
 
     // Configure WebRTC PeerConnection with STUN
@@ -941,7 +949,7 @@ async fn handle_offer_message(
         Ok(p) => Arc::new(p) as Arc<dyn PeerConnection>,
         Err(e) => {
             error!("Failed to build PeerConnection: {}", e);
-            return;
+            return None;
         }
     };
 
@@ -951,7 +959,7 @@ async fn handle_offer_message(
         Ok(s) => s,
         Err(e) => {
             error!("Failed to add track to PeerConnection: {}", e);
-            return;
+            return None;
         }
     };
 
@@ -960,13 +968,13 @@ async fn handle_offer_message(
         Ok(d) => d,
         Err(e) => {
             error!("Failed to parse Offer SDP: {}", e);
-            return;
+            return None;
         }
     };
 
     if let Err(e) = pc.set_remote_description(offer_desc).await {
         error!("Failed to set_remote_description: {}", e);
-        return;
+        return None;
     }
 
     // Generate Answer SDP
@@ -974,13 +982,13 @@ async fn handle_offer_message(
         Ok(a) => a,
         Err(e) => {
             error!("Failed to create_answer: {}", e);
-            return;
+            return None;
         }
     };
 
     if let Err(e) = pc.set_local_description(answer).await {
         error!("Failed to set_local_description: {}", e);
-        return;
+        return None;
     }
 
     // Read dynamically negotiated H.264 payload type from RTP sender parameters
@@ -1002,7 +1010,6 @@ async fn handle_offer_message(
     let _ = tokio::time::timeout(Duration::from_millis(700), gather_complete_rx.recv()).await;
 
     if let Some(local_desc) = pc.local_description().await {
-        // Register viewer in active viewers map (waiting for DTLS Connected state)
         let is_connected = Arc::new(AtomicBool::new(false));
         {
             let mut map = active_viewers.write().unwrap();
@@ -1018,11 +1025,125 @@ async fn handle_offer_message(
         }
 
         force_keyframe.store(true, Ordering::SeqCst);
+        Some((viewer_id, local_desc.sdp))
+    } else {
+        None
+    }
+}
 
-        // Send ANSWER back to viewer through MQTT topic
+/// HTTPS / Port 443 Signaling Loop via ntfy.sh (primary for mobile / cellular networks)
+async fn run_ntfy_signaling_loop(
+    stream_id: String,
+    running: Arc<AtomicBool>,
+    active_viewers: Arc<std::sync::RwLock<HashMap<String, ActiveViewer>>>,
+    viewer_count: Arc<AtomicUsize>,
+    force_keyframe: Arc<AtomicBool>,
+) {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let topic_url = format!("https://ntfy.sh/ew-{}-off/json", stream_id);
+
+    while running.load(Ordering::SeqCst) {
+        info!("Connecting to HTTPS/443 signaling (ntfy.sh) for stream '{}'...", stream_id);
+        match client.get(&topic_url).send().await {
+            Ok(mut res) => {
+                info!("Connected to ntfy.sh signaling (port 443) for stream '{}'!", stream_id);
+                let mut buffer = String::new();
+
+                while running.load(Ordering::SeqCst) {
+                    match res.chunk().await {
+                        Ok(Some(chunk)) => {
+                            if let Ok(text) = std::str::from_utf8(&chunk) {
+                                buffer.push_str(text);
+                                while let Some(pos) = buffer.find('\n') {
+                                    let line = buffer[..pos].trim().to_string();
+                                    buffer = buffer[pos + 1..].to_string();
+                                    if line.is_empty() {
+                                        continue;
+                                    }
+                                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                                        if val["event"].as_str() == Some("message") {
+                                            if let Some(msg_str) = val["message"].as_str() {
+                                                if let Ok(offer_msg) = serde_json::from_str::<OfferMessage>(msg_str) {
+                                                    let active_viewers_clone = active_viewers.clone();
+                                                    let viewer_count_clone = viewer_count.clone();
+                                                    let force_keyframe_clone = force_keyframe.clone();
+                                                    let stream_id_clone = stream_id.clone();
+                                                    let http_client = client.clone();
+
+                                                    tokio::spawn(async move {
+                                                        if let Some((viewer_id, answer_sdp)) = process_offer(
+                                                            offer_msg,
+                                                            active_viewers_clone,
+                                                            viewer_count_clone,
+                                                            force_keyframe_clone,
+                                                        ).await {
+                                                            let answer_url = format!("https://ntfy.sh/ew-{}-ans-{}", stream_id_clone, viewer_id);
+                                                            let payload = serde_json::json!({ "sdp": answer_sdp });
+                                                            if let Err(e) = http_client.post(&answer_url).json(&payload).send().await {
+                                                                warn!("Failed to send WebRTC ANSWER via ntfy.sh: {}", e);
+                                                            } else {
+                                                                info!("Successfully sent WebRTC ANSWER to viewer '{}' via ntfy.sh (port 443)", viewer_id);
+                                                            }
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            warn!("ntfy.sh stream connection closed, reconnecting in 2s...");
+                            break;
+                        }
+                        Err(e) => {
+                            warn!("ntfy.sh stream error: {}, reconnecting in 2s...", e);
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to connect to ntfy.sh: {}, retrying in 3s...", e);
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+
+    info!("ntfy.sh signaling loop finished for stream: {}", stream_id);
+}
+
+/// Handle incoming WebRTC OFFER message from MQTT viewer
+async fn handle_offer_message(
+    payload: &[u8],
+    stream_id: &str,
+    active_viewers: Arc<std::sync::RwLock<HashMap<String, ActiveViewer>>>,
+    viewer_count: Arc<AtomicUsize>,
+    force_keyframe: Arc<AtomicBool>,
+    client: AsyncClient,
+) {
+    let msg: OfferMessage = match serde_json::from_slice(payload) {
+        Ok(m) => m,
+        Err(e) => {
+            warn!("Invalid offer payload received via MQTT: {}", e);
+            return;
+        }
+    };
+
+    if let Some((viewer_id, answer_sdp)) = process_offer(
+        msg,
+        active_viewers,
+        viewer_count,
+        force_keyframe,
+    ).await {
         let answer_topic = format!("ew-notify/{}/answer/{}", stream_id, viewer_id);
         let answer_msg = serde_json::json!({
-            "sdp": local_desc.sdp,
+            "sdp": answer_sdp,
         });
 
         if let Err(e) = client

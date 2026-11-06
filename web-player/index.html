@@ -8,12 +8,7 @@
   <meta http-equiv="Expires" content="0">
   <title>EndlessWar Live Stream</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.5.0/mqtt.min.js"></script>
-  <script>
-    if (typeof mqtt === 'undefined') {
-      document.write('<script src="https://unpkg.com/mqtt@5.5.0/dist/mqtt.min.js"><\/script>');
-    }
-  </script>
+
   <style>
     :root {
       --bg-dark: #0c0f17;
@@ -557,16 +552,26 @@
       }
     }
 
-    window.addEventListener('error', (e) => log('JS Error: ' + e.message, '#ef4444'));
+    window.addEventListener('error', (e) => { if (e.message && e.message !== 'Script error.') log('JS Error: ' + e.message, '#ef4444'); });
     window.addEventListener('unhandledrejection', (e) => log('Promise Error: ' + (e.reason ? (e.reason.message || e.reason) : e), '#ef4444'));
 
     let activeMqttClients = [];
+    let activeEventSources = [];
+    let activeSockets = [];
 
     function cleanupCurrentConnection() {
       if (pc) {
         try { pc.close(); } catch(e) {}
         pc = null;
       }
+      activeEventSources.forEach((s) => {
+        try { s.close(); } catch(e) {}
+      });
+      activeEventSources = [];
+      activeSockets.forEach((s) => {
+        try { s.close(); } catch(e) {}
+      });
+      activeSockets = [];
       activeMqttClients.forEach((c) => {
         try { c.end(true); } catch(e) {}
       });
@@ -600,103 +605,110 @@
       viewerId = 'v-' + Math.random().toString(36).substring(2, 10);
       const answerTopic = `ew-notify/${targetStreamId}/answer/${viewerId}`;
       const offerTopic = `ew-notify/${targetStreamId}/offer`;
+      const ntfyOfferUrl = `https://ntfy.sh/ew-${targetStreamId}-off`;
+      const ntfyAnswerSseUrl = `https://ntfy.sh/ew-${targetStreamId}-ans-${viewerId}/sse`;
+      const ntfyAnswerWsUrl = `wss://ntfy.sh/ew-${targetStreamId}-ans-${viewerId}/ws`;
+
       let isOfferReady = false;
       let connectedBrokerClient = null;
+      let hasReceivedAnswer = false;
 
       log('Старт сессии: ' + targetStreamId + ' (ID зрителя: ' + viewerId + ')');
 
+      async function handleRemoteAnswer(sdpStr, channelName) {
+        if (hasReceivedAnswer || !pc || pc.signalingState === 'closed') return;
+        hasReceivedAnswer = true;
+        log('Получен ANSWER от хоста (' + channelName + ')! Размер SDP: ' + sdpStr.length, '#22c55e');
+        setStatus('connecting', 'Хост ответил • P2P рукопожатие...');
+        placeholderTitle.innerText = 'Хост ответил!';
+        placeholderSubtitle.innerText = 'Установка защищенного P2P соединения...';
+
+        try {
+          await pc.setRemoteDescription(new RTCSessionDescription({
+            type: 'answer',
+            sdp: sdpStr,
+          }));
+          log('Remote SDP применен успешно!');
+        } catch (e) {
+          log('Ошибка применения SDP: ' + e.message, '#ef4444');
+        }
+      }
+
       function tryPublishOffer() {
-        if (!isOfferReady || !connectedBrokerClient || !pc || !pc.localDescription) {
+        if (!isOfferReady || !pc || !pc.localDescription) {
           return;
         }
-        log('Отправка WebRTC OFFER на хост...', '#22c55e');
-        setStatus('connecting', 'Ожидание ответа игры...');
-        placeholderTitle.innerText = 'Запрос отправлен';
-        placeholderSubtitle.innerText = 'Ожидание ответа от игрового клиента...';
 
         const offerPayload = JSON.stringify({
           viewer_id: viewerId,
           sdp: pc.localDescription.sdp,
         });
-        connectedBrokerClient.publish(offerTopic, offerPayload, { qos: 1 }, (err) => {
-          if (err) log('Ошибка публикации OFFER: ' + err.message, '#ef4444');
-          else log('OFFER успешно отправлен! Ждём ответ игры...', '#22c55e');
+
+        // 1. Primary: HTTPS/443 (ntfy.sh) - reliable across all mobile networks
+        log('Отправка WebRTC OFFER по каналу HTTPS/443 (ntfy.sh)...', '#22c55e');
+        setStatus('connecting', 'Ожидание ответа игры...');
+        placeholderTitle.innerText = 'Запрос отправлен';
+        placeholderSubtitle.innerText = 'Ожидание ответа от игрового клиента...';
+
+        fetch(ntfyOfferUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: offerPayload
+        }).then(res => {
+          if (res.ok) {
+            log('OFFER успешно доставлен (HTTPS/443)! Ждём ответ игры...', '#22c55e');
+          } else {
+            log('ntfy POST статус: ' + res.status, '#f59e0b');
+          }
+        }).catch(err => {
+          log('ntfy POST ошибка: ' + err.message, '#f59e0b');
         });
+
+        // 2. Secondary: MQTT if connected
+        if (connectedBrokerClient) {
+          connectedBrokerClient.publish(offerTopic, offerPayload, { qos: 1 }, (err) => {
+            if (!err) log('OFFER также отправлен через MQTT', '#22c55e');
+          });
+        }
       }
 
-      // Parallel race across multiple public MQTT signaling brokers
-      const candidateBrokers = [
-        'wss://broker.emqx.io:8084/mqtt',
-        'wss://broker.hivemq.com:8884/mqtt'
-      ];
-
-      candidateBrokers.forEach((bUrl) => {
-        log('Соединение с ' + bUrl + '...');
-        try {
-          const client = mqtt.connect(bUrl, {
-            clientId: 'ew-web-' + viewerId + '-' + Math.random().toString(36).slice(2, 6),
-            clean: true,
-            connectTimeout: 5000,
-            reconnectPeriod: 3000,
-          });
-          activeMqttClients.push(client);
-
-          client.on('connect', () => {
-            if (!connectedBrokerClient) {
-              connectedBrokerClient = client;
-              mqttClient = client;
-              log('Брокер подключен: ' + bUrl, '#22c55e');
-              setStatus('connecting', 'Связь с брокером OK');
-              placeholderTitle.innerText = 'Связь с брокером установлена';
-              placeholderSubtitle.innerText = 'Сервер: ' + bUrl.replace('wss://', '').split(':')[0];
-
-              client.subscribe(answerTopic, (err) => {
-                if (err) log('Ошибка подписки: ' + err.message, '#ef4444');
-                else {
-                  log('Подписка на ответ активна (' + answerTopic + ')');
-                  tryPublishOffer();
-                }
-              });
-            } else {
-              try { client.end(true); } catch(e) {}
+      // 1. Primary Answer Channel: HTTPS/443 (ntfy.sh via SSE + WebSocket)
+      log('Подключение к каналу HTTPS/443 (ntfy.sh)...');
+      try {
+        const sse = new EventSource(ntfyAnswerSseUrl);
+        activeEventSources.push(sse);
+        sse.onopen = () => {
+          log('Канал HTTPS/443 (SSE) готов к приёму ответа', '#22c55e');
+        };
+        sse.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.event === 'message') {
+              const payload = JSON.parse(data.message);
+              if (payload.sdp) handleRemoteAnswer(payload.sdp, 'HTTPS/443 SSE');
             }
-          });
+          } catch(e) {}
+        };
+      } catch(e) {
+        log('SSE init: ' + e.message, '#f59e0b');
+      }
 
-          client.on('message', async (topic, payload) => {
-            if (topic === answerTopic) {
-              try {
-                const data = JSON.parse(payload.toString());
-                if (data.sdp && pc && pc.signalingState !== 'closed') {
-                  log('Получен ANSWER от хоста! Размер SDP: ' + data.sdp.length, '#22c55e');
-                  setStatus('connecting', 'Хост ответил • P2P рукопожатие...');
-                  placeholderTitle.innerText = 'Хост ответил!';
-                  placeholderSubtitle.innerText = 'Установка защищенного P2P соединения...';
-
-                  await pc.setRemoteDescription(new RTCSessionDescription({
-                    type: 'answer',
-                    sdp: data.sdp,
-                  }));
-                  log('Remote SDP применен успешно!');
-                }
-              } catch (e) {
-                log('Ошибка обработки ответа: ' + e.message, '#ef4444');
-              }
+      try {
+        const ws443 = new WebSocket(ntfyAnswerWsUrl);
+        activeSockets.push(ws443);
+        ws443.onopen = () => {
+          log('Канал WSS/443 подключен', '#22c55e');
+        };
+        ws443.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.event === 'message') {
+              const payload = JSON.parse(data.message);
+              if (payload.sdp) handleRemoteAnswer(payload.sdp, 'WSS/443');
             }
-          });
-
-          client.on('error', (err) => {
-            log('Брокер ' + bUrl + ' ошибка: ' + (err.message || err), '#f59e0b');
-          });
-
-          client.on('close', () => {
-            if (connectedBrokerClient === client) {
-              log('Связь с активным брокером закрыта', '#f59e0b');
-            }
-          });
-        } catch (err) {
-          log('Исключение mqtt.connect: ' + err.message, '#ef4444');
-        }
-      });
+          } catch(e) {}
+        };
+      } catch(e) {}
 
       // Configure WebRTC PeerConnection with STUN
       try {
