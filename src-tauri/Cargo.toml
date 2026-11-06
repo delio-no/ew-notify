@@ -49,6 +49,7 @@ openh264 = "0.9.9"
 webrtc = "0.21.1"
 rtc = "0.21.1"
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+rumqttc = "0.24"
 futures-util = "0.3"
 rand = "0.8"
 bytes = "1"

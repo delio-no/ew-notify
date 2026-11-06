@@ -1,15 +1,13 @@
-//! P2P WebRTC 1080p Window Streamer using OpenH264 & PeerJS signaling.
+//! P2P WebRTC 1080p Window Streamer using OpenH264 & MQTT Signaling (broker.emqx.io / broker.hivemq.com).
 
 use anyhow::{anyhow, Result};
-use futures_util::{SinkExt, StreamExt};
+use rumqttc::{AsyncClient, MqttOptions, QoS};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, Mutex, RwLock};
-use tokio_tungstenite::connect_async;
-use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
 
 use openh264::encoder::Encoder;
@@ -124,6 +122,13 @@ pub struct ActiveStreamInfo {
     pub uptime_secs: u64,
 }
 
+#[derive(Clone)]
+pub struct ActiveViewer {
+    pub track: Arc<TrackLocalStaticSample>,
+    pub payload_type: u8,
+    pub pc: Arc<dyn PeerConnection>,
+}
+
 pub struct StreamSession {
     pub stream_id: String,
     pub hwnd: isize,
@@ -133,6 +138,7 @@ pub struct StreamSession {
     pub viewer_count: Arc<AtomicUsize>,
     pub force_keyframe: Arc<AtomicBool>,
     pub running: Arc<AtomicBool>,
+    pub active_viewers: Arc<std::sync::RwLock<HashMap<String, ActiveViewer>>>,
 }
 
 static ACTIVE_STREAM_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
@@ -183,6 +189,13 @@ pub async fn stop_stream() {
     if let Some(session) = guard.take() {
         info!("Stopping active stream: {}", session.stream_id);
         session.running.store(false, Ordering::SeqCst);
+        let viewers = session.active_viewers.write().unwrap().drain().collect::<Vec<_>>();
+        for (_, viewer) in viewers {
+            let pc = viewer.pc;
+            tokio::spawn(async move {
+                let _ = pc.close().await;
+            });
+        }
     }
 }
 
@@ -232,6 +245,13 @@ pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<Active
     if let Some(old) = guard.take() {
         info!("Stopping previous stream: {}", old.stream_id);
         old.running.store(false, Ordering::SeqCst);
+        let viewers = old.active_viewers.write().unwrap().drain().collect::<Vec<_>>();
+        for (_, viewer) in viewers {
+            let pc = viewer.pc;
+            tokio::spawn(async move {
+                let _ = pc.close().await;
+            });
+        }
     }
 
     // Generate random stream ID e.g. ew-a7b2c9
@@ -246,67 +266,42 @@ pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<Active
     let running = Arc::new(AtomicBool::new(true));
     let viewer_count = Arc::new(AtomicUsize::new(0));
     let force_keyframe = Arc::new(AtomicBool::new(true));
+    let active_viewers = Arc::new(std::sync::RwLock::new(HashMap::new()));
 
-    let video_codec = create_h264_codec();
-
-    // Create single static local video track
-    let video_track = Arc::new(TrackLocalStaticSample::new(
-        Instant::now(),
-        MediaStreamTrack::new(
-            "ew-stream-video".to_string(),
-            "ew-track-video".to_string(),
-            "EndlessWar Video Stream".to_string(),
-            RtpCodecKind::Video,
-            vec![RTCRtpEncodingParameters {
-                rtp_coding_parameters: RTCRtpCodingParameters {
-                    ssrc: Some(SSRC_VIDEO),
-                    ..Default::default()
-                },
-                codec: video_codec.rtp_codec.clone(),
-                ..Default::default()
-            }],
-        ),
-    )?);
-
-    // Peer connections map (client_id -> Arc<dyn PeerConnection>)
-    let peer_connections: Arc<RwLock<HashMap<String, Arc<dyn PeerConnection>>>> =
-        Arc::new(RwLock::new(HashMap::new()));
-
-    // Outgoing WebSocket message sender channel
-    let (ws_out_tx, ws_out_rx) = mpsc::channel::<String>(64);
-
-    // Spawn WebSocket Signaling Task (connect to PeerJS Cloud)
-    let sig_running = running.clone();
+    // Spawn MQTT Signaling Task (connects to EMQX / HiveMQ with failover)
     let sig_stream_id = stream_id.clone();
-    let sig_track = video_track.clone();
-    let sig_pcs = peer_connections.clone();
-    let sig_viewers = viewer_count.clone();
+    let sig_running = running.clone();
+    let sig_viewers_map = active_viewers.clone();
+    let sig_viewer_count = viewer_count.clone();
     let sig_force_keyframe = force_keyframe.clone();
 
     tokio::spawn(async move {
-        run_signaling_loop(
+        run_mqtt_signaling_loop(
             sig_stream_id,
             sig_running,
-            sig_track,
-            sig_pcs,
-            sig_viewers,
+            sig_viewers_map,
+            sig_viewer_count,
             sig_force_keyframe,
-            ws_out_tx,
-            ws_out_rx,
         )
         .await;
     });
 
     // Spawn Screen Capture & H.264 Encoding Loop in dedicated OS thread
     let cap_running = running.clone();
-    let cap_track = video_track.clone();
-    let cap_viewers = viewer_count.clone();
+    let cap_viewers_map = active_viewers.clone();
+    let cap_viewer_count = viewer_count.clone();
     let cap_force_keyframe = force_keyframe.clone();
 
     std::thread::Builder::new()
         .name("ew-1080p-stream-capture".into())
         .spawn(move || {
-            run_capture_encode_loop(hwnd, cap_running, cap_track, cap_viewers, cap_force_keyframe);
+            run_capture_encode_loop(
+                hwnd,
+                cap_running,
+                cap_viewers_map,
+                cap_viewer_count,
+                cap_force_keyframe,
+            );
         })
         .map_err(|e| anyhow!("Failed to spawn stream capture thread: {e}"))?;
 
@@ -323,6 +318,7 @@ pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<Active
         viewer_count: viewer_count.clone(),
         force_keyframe,
         running,
+        active_viewers,
     };
 
     let player_url = format!("https://delio-no.github.io/ew-notify/?s={}", stream_id);
@@ -344,8 +340,8 @@ pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<Active
 fn run_capture_encode_loop(
     hwnd_val: isize,
     running: Arc<AtomicBool>,
-    video_track: Arc<TrackLocalStaticSample>,
-    viewer_count: Arc<AtomicUsize>,
+    active_viewers: Arc<std::sync::RwLock<HashMap<String, ActiveViewer>>>,
+    _viewer_count: Arc<AtomicUsize>,
     force_keyframe: Arc<AtomicBool>,
 ) {
     info!("Starting 1080p capture & encode loop for HWND: {}", hwnd_val);
@@ -364,8 +360,14 @@ fn run_capture_encode_loop(
     while running.load(Ordering::SeqCst) {
         let frame_start = Instant::now();
 
+        // Get snapshot of active viewers
+        let viewers = {
+            let guard = active_viewers.read().unwrap();
+            guard.clone()
+        };
+
         // If no active viewers, sleep lightly to conserve CPU
-        if viewer_count.load(Ordering::SeqCst) == 0 {
+        if viewers.is_empty() {
             std::thread::sleep(Duration::from_millis(150));
             continue;
         }
@@ -402,17 +404,21 @@ fn run_capture_encode_loop(
         };
 
         if let Some(nalu_bytes) = nalu_opt {
-            let writer = video_track.sample_writer(SSRC_VIDEO, PAYLOAD_TYPE_H264);
-            let sample = Sample {
-                data: bytes::Bytes::from(nalu_bytes),
-                duration: Duration::from_millis(FRAME_DURATION_MS),
-                ..Sample::new(Instant::now())
-            };
-            let _ = tauri::async_runtime::block_on(async {
-                if let Err(e) = writer.write_sample(&sample).await {
-                    warn!("WebRTC write_sample error: {}", e);
-                }
-            });
+            let sample_bytes = bytes::Bytes::from(nalu_bytes);
+
+            for (vid, viewer) in viewers {
+                let sample = Sample {
+                    data: sample_bytes.clone(),
+                    duration: Duration::from_millis(FRAME_DURATION_MS),
+                    ..Sample::new(Instant::now())
+                };
+                let writer = viewer.track.sample_writer(SSRC_VIDEO, viewer.payload_type);
+                let _ = tauri::async_runtime::block_on(async {
+                    if let Err(e) = writer.write_sample(&sample).await {
+                        warn!("WebRTC write_sample error for viewer '{}': {}", vid, e);
+                    }
+                });
+            }
         }
 
         // Throttle to 30 FPS
@@ -561,6 +567,7 @@ struct ViewerHandler {
     viewers: Arc<AtomicUsize>,
     force_keyframe: Arc<AtomicBool>,
     viewer_id: String,
+    active_viewers: Arc<std::sync::RwLock<HashMap<String, ActiveViewer>>>,
 }
 
 #[async_trait::async_trait]
@@ -585,6 +592,10 @@ impl PeerConnectionEventHandler for ViewerHandler {
             RTCPeerConnectionState::Disconnected
             | RTCPeerConnectionState::Failed
             | RTCPeerConnectionState::Closed => {
+                {
+                    let mut map = self.active_viewers.write().unwrap();
+                    map.remove(&self.viewer_id);
+                }
                 let prev = self.viewers.load(Ordering::SeqCst);
                 if prev > 0 {
                     let current = self.viewers.fetch_sub(1, Ordering::SeqCst) - 1;
@@ -600,228 +611,285 @@ impl PeerConnectionEventHandler for ViewerHandler {
     }
 }
 
-/// WebSocket signaling connection to PeerJS Cloud (0.peerjs.com)
-async fn run_signaling_loop(
+#[derive(Deserialize)]
+struct OfferMessage {
+    viewer_id: String,
+    sdp: String,
+}
+
+/// MQTT signaling loop with automatic failover between EMQX and HiveMQ
+async fn run_mqtt_signaling_loop(
     stream_id: String,
     running: Arc<AtomicBool>,
-    video_track: Arc<TrackLocalStaticSample>,
-    peer_connections: Arc<RwLock<HashMap<String, Arc<dyn PeerConnection>>>>,
+    active_viewers: Arc<std::sync::RwLock<HashMap<String, ActiveViewer>>>,
     viewer_count: Arc<AtomicUsize>,
     force_keyframe: Arc<AtomicBool>,
-    ws_tx: mpsc::Sender<String>,
-    mut ws_rx: mpsc::Receiver<String>,
 ) {
-    let token = format!("{:x}", rand::random::<u64>());
-    let ws_url = format!(
-        "wss://0.peerjs.com/peerjs?key=peerjs&id={}&token={}",
-        stream_id, token
-    );
+    let brokers = [
+        ("broker.emqx.io", 1883),
+        ("broker.hivemq.com", 1883),
+    ];
 
-    info!("Connecting to PeerJS signaling server: {}", ws_url);
+    let mut broker_idx = 0;
 
-    let (ws_stream, _) = match connect_async(&ws_url).await {
-        Ok(conn) => conn,
+    while running.load(Ordering::SeqCst) {
+        let (host, port) = brokers[broker_idx % brokers.len()];
+        let rand_client_id: String = (0..8)
+            .map(|_| format!("{:x}", rand::random::<u8>() % 16))
+            .collect();
+        let client_id = format!("ew-stream-{}-{}", stream_id, rand_client_id);
+
+        info!(
+            "Connecting to MQTT signaling broker {}:{} for stream '{}'...",
+            host, port, stream_id
+        );
+
+        let mut mqttoptions = MqttOptions::new(&client_id, host, port);
+        mqttoptions.set_keep_alive(Duration::from_secs(15));
+
+        let (client, mut eventloop) = AsyncClient::new(mqttoptions, 64);
+        let offer_topic = format!("ew-notify/{}/offer", stream_id);
+
+        if let Err(e) = client.subscribe(&offer_topic, QoS::AtLeastOnce).await {
+            warn!(
+                "Failed to subscribe to MQTT topic {} on {}: {}. Retrying with next broker...",
+                offer_topic, host, e
+            );
+            broker_idx += 1;
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            continue;
+        }
+
+        info!(
+            "Registered stream ID '{}' with MQTT broker {}! Listening on topic '{}'",
+            stream_id, host, offer_topic
+        );
+
+        while running.load(Ordering::SeqCst) {
+            match eventloop.poll().await {
+                Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(p))) => {
+                    if p.topic == offer_topic {
+                        let payload_bytes = p.payload.to_vec();
+                        let active_viewers_clone = active_viewers.clone();
+                        let viewer_count_clone = viewer_count.clone();
+                        let force_keyframe_clone = force_keyframe.clone();
+                        let stream_id_clone = stream_id.clone();
+                        let client_clone = client.clone();
+
+                        tokio::spawn(async move {
+                            handle_offer_message(
+                                &payload_bytes,
+                                &stream_id_clone,
+                                active_viewers_clone,
+                                viewer_count_clone,
+                                force_keyframe_clone,
+                                client_clone,
+                            )
+                            .await;
+                        });
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    warn!("MQTT eventloop error on {}: {}. Reconnecting...", host, e);
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    break;
+                }
+            }
+        }
+
+        broker_idx += 1;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+
+    info!("MQTT signaling loop finished for stream: {}", stream_id);
+}
+
+/// Handle incoming WebRTC OFFER message from viewer
+async fn handle_offer_message(
+    payload: &[u8],
+    stream_id: &str,
+    active_viewers: Arc<std::sync::RwLock<HashMap<String, ActiveViewer>>>,
+    viewer_count: Arc<AtomicUsize>,
+    force_keyframe: Arc<AtomicBool>,
+    client: AsyncClient,
+) {
+    let msg: OfferMessage = match serde_json::from_slice(payload) {
+        Ok(m) => m,
         Err(e) => {
-            error!("Failed to connect to PeerJS broker: {}", e);
+            warn!("Invalid offer payload received via MQTT: {}", e);
             return;
         }
     };
 
-    let (mut ws_sink, mut ws_stream_rx) = ws_stream.split();
-    info!("Registered stream ID '{}' with PeerJS broker!", stream_id);
+    let viewer_id = msg.viewer_id;
+    let sdp_str = msg.sdp;
 
-    let mut heartbeat_interval = tokio::time::interval(Duration::from_secs(15));
+    info!("Received WebRTC OFFER from viewer '{}'", viewer_id);
 
-    while running.load(Ordering::SeqCst) {
-        tokio::select! {
-            _ = heartbeat_interval.tick() => {
-                let hb = serde_json::json!({ "type": "HEARTBEAT" }).to_string();
-                if let Err(e) = ws_sink.send(WsMessage::Text(hb)).await {
-                    warn!("PeerJS heartbeat send failed: {}", e);
-                    break;
-                }
-            }
-            Some(out_msg) = ws_rx.recv() => {
-                if let Err(e) = ws_sink.send(WsMessage::Text(out_msg)).await {
-                    warn!("Failed to send signaling message: {}", e);
-                    break;
-                }
-            }
-            msg_opt = ws_stream_rx.next() => {
-                match msg_opt {
-                    Some(Ok(WsMessage::Text(text))) => {
-                        handle_peerjs_message(
-                            &text,
-                            &stream_id,
-                            &video_track,
-                            &peer_connections,
-                            &viewer_count,
-                            &force_keyframe,
-                            &ws_tx,
-                        ).await;
-                    }
-                    Some(Ok(WsMessage::Ping(data))) => {
-                        let _ = ws_sink.send(WsMessage::Pong(data)).await;
-                    }
-                    Some(Ok(WsMessage::Close(_))) | None => {
-                        info!("PeerJS signaling connection closed");
-                        break;
-                    }
-                    Some(Err(e)) => {
-                        warn!("PeerJS signaling error: {}", e);
-                        break;
-                    }
-                    _ => {}
-                }
+    // Create unique static local video track for this viewer
+    let video_codec = create_h264_codec();
+    let video_track = match TrackLocalStaticSample::new(
+        Instant::now(),
+        MediaStreamTrack::new(
+            "ew-stream-video".to_string(),
+            format!("ew-track-{}", viewer_id),
+            "EndlessWar Video Stream".to_string(),
+            RtpCodecKind::Video,
+            vec![RTCRtpEncodingParameters {
+                rtp_coding_parameters: RTCRtpCodingParameters {
+                    ssrc: Some(SSRC_VIDEO),
+                    ..Default::default()
+                },
+                codec: video_codec.rtp_codec.clone(),
+                ..Default::default()
+            }],
+        ),
+    ) {
+        Ok(t) => Arc::new(t),
+        Err(e) => {
+            error!("Failed to create TrackLocalStaticSample: {}", e);
+            return;
+        }
+    };
+
+    let mut media_engine = MediaEngine::default();
+    if let Err(e) = media_engine.register_codec(video_codec, RtpCodecKind::Video) {
+        error!("Failed to register video codec: {}", e);
+        return;
+    }
+
+    // Configure WebRTC PeerConnection with STUN
+    let rtc_config = RTCConfigurationBuilder::new()
+        .with_ice_servers(vec![
+            RTCIceServer {
+                urls: vec!["stun:stun.l.google.com:19302".to_string()],
+                ..Default::default()
+            },
+            RTCIceServer {
+                urls: vec!["stun:global.stun.twilio.com:3478".to_string()],
+                ..Default::default()
+            },
+        ])
+        .build();
+
+    let (gather_complete_tx, mut gather_complete_rx) = mpsc::channel::<()>(1);
+    let handler = Arc::new(ViewerHandler {
+        gather_complete_tx,
+        viewers: viewer_count.clone(),
+        force_keyframe: force_keyframe.clone(),
+        viewer_id: viewer_id.clone(),
+        active_viewers: active_viewers.clone(),
+    });
+
+    let pc = match PeerConnectionBuilder::new()
+        .with_configuration(rtc_config)
+        .with_media_engine(media_engine)
+        .with_handler(handler)
+        .with_udp_addrs(vec!["0.0.0.0:0"])
+        .build()
+        .await
+    {
+        Ok(p) => Arc::new(p) as Arc<dyn PeerConnection>,
+        Err(e) => {
+            error!("Failed to build PeerConnection: {}", e);
+            return;
+        }
+    };
+
+    // Add local H.264 video track
+    let track_dyn = Arc::clone(&video_track) as Arc<dyn TrackLocal>;
+    let rtp_sender = match pc.add_track(track_dyn).await {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Failed to add track to PeerConnection: {}", e);
+            return;
+        }
+    };
+
+    // Parse remote Offer SDP and set remote description
+    let offer_desc = match RTCSessionDescription::offer(sdp_str) {
+        Ok(d) => d,
+        Err(e) => {
+            error!("Failed to parse Offer SDP: {}", e);
+            return;
+        }
+    };
+
+    if let Err(e) = pc.set_remote_description(offer_desc).await {
+        error!("Failed to set_remote_description: {}", e);
+        return;
+    }
+
+    // Generate Answer SDP
+    let answer = match pc.create_answer(None).await {
+        Ok(a) => a,
+        Err(e) => {
+            error!("Failed to create_answer: {}", e);
+            return;
+        }
+    };
+
+    if let Err(e) = pc.set_local_description(answer).await {
+        error!("Failed to set_local_description: {}", e);
+        return;
+    }
+
+    // Read dynamically negotiated H.264 payload type from RTP sender parameters
+    let mut negotiated_pt = PAYLOAD_TYPE_H264;
+    if let Ok(params) = rtp_sender.get_parameters().await {
+        for codec in params.rtp_parameters.codecs {
+            if codec.rtp_codec.mime_type.eq_ignore_ascii_case(MIME_TYPE_H264) {
+                negotiated_pt = codec.payload_type;
+                info!(
+                    "Viewer '{}' negotiated H.264 payload type: {}",
+                    viewer_id, negotiated_pt
+                );
+                break;
             }
         }
     }
 
-    info!("Signaling loop finished for stream: {}", stream_id);
-}
+    // Wait briefly for ICE candidates to gather into local_description
+    let _ = tokio::time::timeout(Duration::from_millis(700), gather_complete_rx.recv()).await;
 
-/// Handle messages from PeerJS signaling broker
-async fn handle_peerjs_message(
-    text: &str,
-    my_stream_id: &str,
-    video_track: &Arc<TrackLocalStaticSample>,
-    peer_connections: &Arc<RwLock<HashMap<String, Arc<dyn PeerConnection>>>>,
-    viewer_count: &Arc<AtomicUsize>,
-    force_keyframe: &Arc<AtomicBool>,
-    ws_tx: &mpsc::Sender<String>,
-) {
-    let json: serde_json::Value = match serde_json::from_str(text) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-
-    let msg_type = json.get("type").and_then(|t| t.as_str()).unwrap_or("");
-    let src = json.get("src").and_then(|s| s.as_str()).unwrap_or("");
-
-    match msg_type {
-        "OFFER" => {
-            let payload = match json.get("payload") {
-                Some(p) => p,
-                None => return,
-            };
-            let sdp_val = payload.get("sdp").and_then(|s| s.get("sdp")).and_then(|s| s.as_str());
-            let conn_id = payload.get("connectionId").and_then(|c| c.as_str()).unwrap_or("mc_0");
-
-            if let Some(sdp_str) = sdp_val {
-                info!("Received WebRTC OFFER from viewer: {}", src);
-
-                let video_codec = create_h264_codec();
-                let mut media_engine = MediaEngine::default();
-                if let Err(e) = media_engine.register_codec(video_codec, RtpCodecKind::Video) {
-                    error!("Failed to register video codec: {}", e);
-                    return;
-                }
-
-                // Configure WebRTC PeerConnection with Google STUN
-                let rtc_config = RTCConfigurationBuilder::new()
-                    .with_ice_servers(vec![
-                        RTCIceServer {
-                            urls: vec!["stun:stun.l.google.com:19302".to_string()],
-                            ..Default::default()
-                        },
-                        RTCIceServer {
-                            urls: vec!["stun:global.stun.twilio.com:3478".to_string()],
-                            ..Default::default()
-                        },
-                    ])
-                    .build();
-
-                let (gather_complete_tx, mut gather_complete_rx) = mpsc::channel::<()>(1);
-                let handler = Arc::new(ViewerHandler {
-                    gather_complete_tx,
-                    viewers: viewer_count.clone(),
-                    force_keyframe: force_keyframe.clone(),
-                    viewer_id: src.to_string(),
-                });
-
-                let pc = match PeerConnectionBuilder::new()
-                    .with_configuration(rtc_config)
-                    .with_media_engine(media_engine)
-                    .with_handler(handler)
-                    .with_udp_addrs(vec!["0.0.0.0:0"])
-                    .build()
-                    .await
-                {
-                    Ok(p) => Arc::new(p) as Arc<dyn PeerConnection>,
-                    Err(e) => {
-                        error!("Failed to build PeerConnection: {}", e);
-                        return;
-                    }
-                };
-
-                // Add local H.264 video track
-                let track_dyn = Arc::clone(video_track) as Arc<dyn TrackLocal>;
-                if let Err(e) = pc.add_track(track_dyn).await {
-                    error!("Failed to add track to PeerConnection: {}", e);
-                    return;
-                }
-
-                // Parse Offer SDP and set remote description
-                let offer_desc = match RTCSessionDescription::offer(sdp_str.to_string()) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        error!("Failed to parse Offer SDP: {}", e);
-                        return;
-                    }
-                };
-
-                if let Err(e) = pc.set_remote_description(offer_desc).await {
-                    error!("Failed to set_remote_description: {}", e);
-                    return;
-                }
-
-                // Generate Answer SDP
-                let answer = match pc.create_answer(None).await {
-                    Ok(a) => a,
-                    Err(e) => {
-                        error!("Failed to create_answer: {}", e);
-                        return;
-                    }
-                };
-
-                if let Err(e) = pc.set_local_description(answer).await {
-                    error!("Failed to set_local_description: {}", e);
-                    return;
-                }
-
-                // Wait briefly for ICE candidates to gather into local_description
-                let _ = tokio::time::timeout(Duration::from_millis(600), gather_complete_rx.recv()).await;
-
-                if let Some(local_desc) = pc.local_description().await {
-                    // Send ANSWER back to viewer through PeerJS broker
-                    let answer_msg = serde_json::json!({
-                        "type": "ANSWER",
-                        "src": my_stream_id,
-                        "dst": src,
-                        "payload": {
-                            "sdp": {
-                                "type": "answer",
-                                "sdp": local_desc.sdp
-                            },
-                            "type": "media",
-                            "connectionId": conn_id
-                        }
-                    });
-
-                    let _ = ws_tx.send(answer_msg.to_string()).await;
-                    force_keyframe.store(true, Ordering::SeqCst);
-                }
-
-                // Store PeerConnection
-                {
-                    let mut map = peer_connections.write().await;
-                    map.insert(src.to_string(), pc);
-                }
-            }
+    if let Some(local_desc) = pc.local_description().await {
+        // Register viewer in active viewers map
+        {
+            let mut map = active_viewers.write().unwrap();
+            map.insert(
+                viewer_id.clone(),
+                ActiveViewer {
+                    track: video_track,
+                    payload_type: negotiated_pt,
+                    pc: pc.clone(),
+                },
+            );
         }
-        "OPEN" => {
-            info!("PeerJS registered successfully: {}", my_stream_id);
+
+        force_keyframe.store(true, Ordering::SeqCst);
+
+        // Send ANSWER back to viewer through MQTT topic
+        let answer_topic = format!("ew-notify/{}/answer/{}", stream_id, viewer_id);
+        let answer_msg = serde_json::json!({
+            "sdp": local_desc.sdp,
+        });
+
+        if let Err(e) = client
+            .publish(
+                &answer_topic,
+                QoS::AtLeastOnce,
+                false,
+                answer_msg.to_string().into_bytes(),
+            )
+            .await
+        {
+            warn!("Failed to publish WebRTC ANSWER via MQTT: {}", e);
+        } else {
+            info!(
+                "Successfully sent WebRTC ANSWER to viewer '{}' on MQTT topic '{}'",
+                viewer_id, answer_topic
+            );
         }
-        _ => {}
     }
 }
