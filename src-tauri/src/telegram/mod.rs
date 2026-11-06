@@ -323,6 +323,7 @@ pub async fn start_bot(
                                     first_name: first_name.clone(),
                                     enabled: true,
                                     allow_screenshot: false,
+                                    allow_stream: false,
                                 };
 
                                 {

@@ -12,6 +12,7 @@ export interface RegisteredUser {
   first_name: string | null;
   enabled: boolean;
   allow_screenshot?: boolean;
+  allow_stream?: boolean;
 }
 
 export type ClickerTarget =

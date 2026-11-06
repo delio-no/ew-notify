@@ -780,6 +780,16 @@
     }
   }
 
+  async function toggleStream(chatId: string, allowed: boolean) {
+    try {
+      await api.setUserStreamAllowed(chatId, allowed);
+      await refreshUsers();
+      showStatus(`Стрим ${allowed ? 'разрешён' : 'запрещён'}`);
+    } catch (e) {
+      showStatus(`Ошибка: ${e}`);
+    }
+  }
+
   async function toggleNotifyAll() {
     try {
       await api.setNotifyAllUsers(!config.telegram.notify_all_users);
@@ -1033,6 +1043,7 @@
         onRefresh={refreshUsers}
         onToggleUser={toggleUser}
         onToggleScreenshot={toggleScreenshot}
+        onToggleStream={toggleStream}
         onToggleNotifyAll={toggleNotifyAll}
       />
     {:else if currentPage === 'console'}

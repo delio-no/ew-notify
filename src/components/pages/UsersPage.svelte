@@ -7,12 +7,14 @@
     onRefresh,
     onToggleUser,
     onToggleScreenshot,
+    onToggleStream,
     onToggleNotifyAll,
   }: {
     config: Config;
     onRefresh: () => void;
     onToggleUser: (chatId: string, enabled: boolean) => void;
     onToggleScreenshot: (chatId: string, allowed: boolean) => void;
+    onToggleStream: (chatId: string, allowed: boolean) => void;
     onToggleNotifyAll: () => void;
   } = $props();
 </script>
@@ -74,6 +76,14 @@
                   >
                     📷 Скриншоты: Всегда
                   </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-secondary"
+                    disabled
+                    title="Администратору всегда разрешён стрим"
+                  >
+                    📺 Стрим: Всегда
+                  </button>
                 {:else}
                   <button
                     type="button"
@@ -84,6 +94,16 @@
                     title={user.allow_screenshot ? "Разрешено делать скриншоты (/screen)" : "Запрещено делать скриншоты"}
                   >
                     📷 Скриншоты: {user.allow_screenshot ? 'Вкл' : 'Выкл'}
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm"
+                    class:btn-success={user.allow_stream}
+                    class:btn-secondary={!user.allow_stream}
+                    onclick={() => onToggleStream(user.chat_id, !user.allow_stream)}
+                    title={user.allow_stream ? "Разрешено смотреть стрим (/stream)" : "Запрещено смотреть стрим"}
+                  >
+                    📺 Стрим: {user.allow_stream ? 'Вкл' : 'Выкл'}
                   </button>
                 {/if}
               </div>

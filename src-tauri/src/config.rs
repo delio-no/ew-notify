@@ -321,6 +321,8 @@ pub struct RegisteredUser {
     pub enabled: bool,
     #[serde(default)]
     pub allow_screenshot: bool,
+    #[serde(default)]
+    pub allow_stream: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -765,6 +767,31 @@ pub fn can_user_screenshot(config: &AppConfig, chat_id: &str) -> bool {
         .any(|u| u.chat_id.trim() == clean_id && u.enabled && u.allow_screenshot)
 }
 
+pub fn set_user_stream_allowed(config: &mut AppConfig, chat_id: &str, allowed: bool) {
+    if let Some(user) = config
+        .telegram
+        .registered_users
+        .iter_mut()
+        .find(|u| u.chat_id.trim() == chat_id.trim())
+    {
+        user.allow_stream = allowed;
+    }
+}
+
+pub fn can_user_stream(config: &AppConfig, chat_id: &str) -> bool {
+    let clean_id = chat_id.trim();
+    if !config.telegram.admin_chat_id.trim().is_empty()
+        && config.telegram.admin_chat_id.trim() == clean_id
+    {
+        return true;
+    }
+    config
+        .telegram
+        .registered_users
+        .iter()
+        .any(|u| u.chat_id.trim() == clean_id && u.enabled && u.allow_stream)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -831,6 +858,7 @@ mod tests {
                 first_name: None,
                 enabled: true,
                 allow_screenshot: false,
+                allow_stream: false,
             },
         );
         set_user_enabled(&mut cfg, "1", false);
@@ -849,6 +877,7 @@ mod tests {
                 first_name: None,
                 enabled: true,
                 allow_screenshot: false,
+                allow_stream: false,
             },
         );
 
@@ -866,6 +895,38 @@ mod tests {
         // If user is disabled, cannot screenshot even if allow_screenshot is true
         set_user_enabled(&mut cfg, "200", false);
         assert!(!can_user_screenshot(&cfg, "200"));
+    }
+
+    #[test]
+    fn test_user_stream_permissions() {
+        let mut cfg = AppConfig::default();
+        cfg.telegram.admin_chat_id = "100".into();
+        add_registered_user(
+            &mut cfg,
+            RegisteredUser {
+                chat_id: "200".into(),
+                username: None,
+                first_name: None,
+                enabled: true,
+                allow_screenshot: false,
+                allow_stream: false,
+            },
+        );
+
+        // Admin can always stream
+        assert!(can_user_stream(&cfg, "100"));
+        // Regular user cannot stream by default
+        assert!(!can_user_stream(&cfg, "200"));
+        // Unknown user cannot stream
+        assert!(!can_user_stream(&cfg, "999"));
+
+        // Allow regular user
+        set_user_stream_allowed(&mut cfg, "200", true);
+        assert!(can_user_stream(&cfg, "200"));
+
+        // If user is disabled, cannot stream even if allow_stream is true
+        set_user_enabled(&mut cfg, "200", false);
+        assert!(!can_user_stream(&cfg, "200"));
     }
 
     #[test]
@@ -948,6 +1009,7 @@ mod tests {
             first_name: Some("A".into()),
             enabled: true,
             allow_screenshot: false,
+            allow_stream: false,
         };
         add_registered_user(&mut cfg, u.clone());
         add_registered_user(&mut cfg, u);

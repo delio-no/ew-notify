@@ -31,6 +31,8 @@ export const api = {
   getRegisteredUsers: () => invoke<RegisteredUser[]>('get_registered_users'),
   setUserScreenshotAllowed: (chatId: string, allowed: boolean) =>
     invoke<string>('set_user_screenshot_allowed', { chatId, allowed }),
+  setUserStreamAllowed: (chatId: string, allowed: boolean) =>
+    invoke<string>('set_user_stream_allowed', { chatId, allowed }),
   setUserEnabled: (chatId: string, enabled: boolean) =>
     invoke<string>('set_user_enabled', { chatId, enabled }),
   setNotifyAllUsers: (enabled: boolean) =>
