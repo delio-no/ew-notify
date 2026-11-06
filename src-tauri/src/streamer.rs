@@ -178,7 +178,14 @@ pub async fn get_stream_info() -> Option<ActiveStreamInfo> {
         pid: s.pid,
         title: s.title.clone(),
         viewer_count: s.viewer_count.load(Ordering::SeqCst),
-        player_url: format!("https://delio-no.github.io/ew-notify/?s={}", s.stream_id),
+        player_url: format!(
+            "https://delio-no.github.io/ew-notify/?s={}&_t={}",
+            s.stream_id,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        ),
         uptime_secs: s.start_time.elapsed().as_secs(),
     })
 }
@@ -326,7 +333,14 @@ pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<Active
         active_viewers,
     };
 
-    let player_url = format!("https://delio-no.github.io/ew-notify/?s={}", stream_id);
+    let player_url = format!(
+        "https://delio-no.github.io/ew-notify/?s={}&_t={}",
+        stream_id,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    );
     let info = ActiveStreamInfo {
         stream_id,
         hwnd,

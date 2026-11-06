@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <title>EndlessWar Live Stream</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.5.0/mqtt.min.js"></script>
@@ -579,15 +582,23 @@
           return;
         }
         console.log('Publishing OFFER to topic:', offerTopic);
+        setStatus('connecting', 'Ожидание ответа игры...');
+        placeholderTitle.innerText = 'Запрос отправлен';
+        placeholderSubtitle.innerText = 'Ожидание ответа от игрового клиента...';
+
         const offerPayload = JSON.stringify({
           viewer_id: viewerId,
           sdp: pc.localDescription.sdp,
         });
-        mqttClient.publish(offerTopic, offerPayload, { qos: 1 });
+        mqttClient.publish(offerTopic, offerPayload, { qos: 1 }, (err) => {
+          if (err) console.error('Publish offer error:', err);
+          else console.log('Offer published successfully!');
+        });
       }
 
       const brokerUrl = MQTT_BROKERS[brokerIndex % MQTT_BROKERS.length];
       console.log('Connecting to MQTT signaling broker:', brokerUrl);
+      placeholderSubtitle.innerText = 'Сервер связи: ' + brokerUrl.replace('wss://', '').split(':')[0];
 
       try {
         mqttClient = mqtt.connect(brokerUrl, {
@@ -606,7 +617,9 @@
       mqttClient.on('connect', () => {
         console.log('Connected to MQTT signaling broker!');
         isMqttConnected = true;
-        setStatus('connecting', 'Соединение с игрой...');
+        setStatus('connecting', 'Связь с брокером OK');
+        placeholderTitle.innerText = 'Связь с брокером установлена';
+        placeholderSubtitle.innerText = 'Подготовка видеоканала к хосту ' + targetStreamId + '...';
 
         mqttClient.subscribe(answerTopic, (err) => {
           if (err) {
@@ -623,6 +636,10 @@
             const data = JSON.parse(payload.toString());
             if (data.sdp && pc && pc.signalingState !== 'closed') {
               console.log('Received WebRTC ANSWER via MQTT!');
+              setStatus('connecting', 'Хост ответил • P2P рукопожатие...');
+              placeholderTitle.innerText = 'Хост ответил!';
+              placeholderSubtitle.innerText = 'Установка защищенного P2P соединения...';
+
               await pc.setRemoteDescription(new RTCSessionDescription({
                 type: 'answer',
                 sdp: data.sdp,
@@ -689,7 +706,9 @@
         console.log('WebRTC connection state:', pc.connectionState);
         if (pc.connectionState === 'connected') {
           isConnectedToHost = true;
-          setStatus('connecting', 'Связь установлена • Приём видео...');
+          setStatus('connecting', 'P2P канал открыт • Приём видео...');
+          placeholderTitle.innerText = 'P2P связь установлена!';
+          placeholderSubtitle.innerText = 'Ожидание видеопотока 720p 30fps...';
           setTimeout(() => {
             if (!video.srcObject || (video.srcObject.getVideoTracks && video.srcObject.getVideoTracks().length === 0)) {
               const receivers = pc.getReceivers ? pc.getReceivers() : [];
@@ -759,7 +778,6 @@
             retryBtn.style.display = 'inline-flex';
           }
         }
-      }, 15000);
       }, 15000);
     }
 
