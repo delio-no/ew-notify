@@ -652,8 +652,7 @@
 
         fetch(ntfyOfferUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: offerPayload
+                    body: offerPayload
         }).then(res => {
           if (res.ok) {
             log('OFFER успешно доставлен (HTTPS/443)! Ждём ответ игры...', '#22c55e');
@@ -833,7 +832,7 @@
             placeholderTitle.innerText = 'Видеопоток ожидается';
             placeholderSubtitle.innerText = 'P2P соединение установлено. Убедитесь, что окно игры развернуто на ПК, или нажмите кнопку ниже.';
           } else {
-            showError('Хост не отвечает', 'Проверьте лог диагностики внизу страницы.');
+            showError('Хост не отвечает', 'Убедитесь, что в Telegram-боте нажат «📺 Стрим», выбрано окно игры и открыта самая свежая ссылка из бота.');
             retryBtn.style.display = 'inline-flex';
           }
         }

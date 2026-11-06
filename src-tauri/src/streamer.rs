@@ -1040,7 +1040,7 @@ async fn run_ntfy_signaling_loop(
     force_keyframe: Arc<AtomicBool>,
 ) {
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
+        .connect_timeout(Duration::from_secs(10))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
 
