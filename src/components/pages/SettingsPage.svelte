@@ -34,7 +34,7 @@
     onApplyAndRestartBot?: () => void;
   } = $props();
 
-  let currentAppVersion = $state('v0.3.1');
+  let currentAppVersion = $state('v0.3.3');
   let updateStatus = $state<'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'error'>('idle');
   let updateInfo = $state<UpdateInfo | null>(null);
   let updateError = $state<string | null>(null);
@@ -76,6 +76,47 @@
     } catch (e) {
       updateStatus = 'error';
       updateError = `Ошибка установки обновления: ${e}`;
+    }
+  }
+
+  function renderReleaseNotes(raw: string): string {
+    if (!raw) return '';
+    let s = raw
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    // Markdown links: [text](https://...)
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" class="release-link" target="_blank" rel="noopener">$1</a>');
+
+    // Standalone URLs (not preceded by href=")
+    s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" class="release-link" target="_blank" rel="noopener">$2</a>');
+
+    // Bold: **text**
+    s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+    // Inline code: `code`
+    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // Headers: ## Header or ### Header
+    s = s.replace(/^###?\s+(.+)$/gm, '<div class="rn-header">$1</div>');
+
+    // Bullets: * Item or - Item
+    s = s.replace(/^[*-]\s+(.+)$/gm, '<div class="rn-item"><span class="rn-bullet">•</span> $1</div>');
+
+    // Convert remaining newlines into <br/>
+    s = s.replace(/\n/g, '<br/>');
+    s = s.replace(/<\/div><br\/>/g, '</div>');
+    s = s.replace(/<div class="rn-header">/g, '<div class="rn-header rn-spaced">');
+
+    return s;
+  }
+
+  function handleReleaseNotesClick(e: MouseEvent) {
+    const target = (e.target as HTMLElement).closest('a');
+    if (target && target.href) {
+      e.preventDefault();
+      api.openUrl(target.href).catch((err) => console.error('Failed to open url:', err));
     }
   }
 </script>
@@ -292,7 +333,7 @@
   <div class="card settings-card-updater">
     <div class="card-header update-card-header">
       <h2>Обновление программы</h2>
-      <span class="version-badge">{currentAppVersion || 'v0.3.1'}</span>
+      <span class="version-badge">{currentAppVersion || 'v0.3.3'}</span>
     </div>
     <div class="card-body">
       <div class="form-group">
@@ -356,7 +397,16 @@
           {#if updateInfo.release_notes}
             <div class="release-notes-box">
               <div class="release-notes-title">Что нового в обновлении:</div>
-              <pre class="release-notes-content">{updateInfo.release_notes}</pre>
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+              <div
+                class="release-notes-content"
+                onclick={handleReleaseNotesClick}
+                role="region"
+                aria-label="Заметки к обновлению"
+              >
+                {@html renderReleaseNotes(updateInfo.release_notes)}
+              </div>
             </div>
           {/if}
         </div>
@@ -509,12 +559,57 @@
   .release-notes-content {
     font-family: inherit;
     font-size: 12px;
+    line-height: 1.5;
     color: var(--text-normal, #ddd);
-    white-space: pre-wrap;
     word-break: break-word;
     margin: 0;
     max-height: 160px;
     overflow-y: auto;
+  }
+
+  :global(.release-notes-content a.release-link) {
+    color: var(--accent, #6366f1);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+    transition: color 0.15s ease;
+  }
+
+  :global(.release-notes-content a.release-link:hover) {
+    color: #818cf8;
+  }
+
+  :global(.release-notes-content strong) {
+    color: #fff;
+    font-weight: 600;
+  }
+
+  :global(.release-notes-content .rn-header) {
+    font-weight: 600;
+    color: #fff;
+    margin-top: 4px;
+    margin-bottom: 2px;
+  }
+
+  :global(.release-notes-content .rn-header.rn-spaced) {
+    margin-top: 8px;
+  }
+
+  :global(.release-notes-content .rn-item) {
+    padding-left: 2px;
+    margin: 2px 0;
+  }
+
+  :global(.release-notes-content .rn-bullet) {
+    color: var(--accent, #6366f1);
+    margin-right: 4px;
+  }
+
+  :global(.release-notes-content code) {
+    padding: 1px 4px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    font-size: 11px;
   }
 
   .spinner {
