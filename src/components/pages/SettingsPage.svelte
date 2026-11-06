@@ -36,7 +36,7 @@
     onApplyAndRestartBot?: () => void;
   } = $props();
 
-  let currentAppVersion = $state('v0.3.6');
+  let currentAppVersion = $state('v0.3.7');
   let updateStatus = $state<'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'error'>(
     availableUpdate?.has_update ? 'available' : 'idle'
   );
@@ -311,7 +311,7 @@
   <div class="card settings-card-notify">
     <div class="card-header"><h2>Уведомления</h2></div>
     <div class="card-body">
-      <div class="form-group">
+      <div class="form-group last">
         <label class="checkbox-label">
           <input type="checkbox" bind:checked={config.notifications.tray_enabled} />
           <span>Системные уведомления Windows</span>
@@ -323,18 +323,6 @@
             </button>
           </div>
         {/if}
-      </div>
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" bind:checked={config.notifications.screenshot_on_death} />
-          <span>Отправлять скриншот при гибели персонажа (DEATH)</span>
-        </label>
-      </div>
-      <div class="form-group last">
-        <label class="checkbox-label">
-          <input type="checkbox" bind:checked={config.notifications.actions_enabled} />
-          <span>Разрешить фоновую отправку клавиш в игру</span>
-        </label>
       </div>
     </div>
   </div>
@@ -366,7 +354,7 @@
   <div class="card settings-card-updater">
     <div class="card-header update-card-header">
       <h2>Обновление программы</h2>
-      <span class="version-badge">{currentAppVersion || 'v0.3.6'}</span>
+      <span class="version-badge">{currentAppVersion || 'v0.3.7'}</span>
     </div>
     <div class="card-body">
       <div class="form-group">

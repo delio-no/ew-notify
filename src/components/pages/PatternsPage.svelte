@@ -1,6 +1,5 @@
 <script lang="ts">
   import PageHeader from '../PageHeader.svelte';
-  import KeyRecorder from '../KeyRecorder.svelte';
   import type { Config, Pattern } from '../../lib/types';
 
   let {
@@ -9,9 +8,7 @@
     newPatternBytes = $bindable(''),
     newPatternDesc = $bindable(''),
     newPatternNotifyEnabled = $bindable(true),
-    newPatternActionEnabled = $bindable(false),
-    newPatternActionKey = $bindable('Z'),
-    newPatternActionDelay = $bindable(1000),
+    newPatternScreenshotEnabled = $bindable(true),
     testHexInput = $bindable(''),
     testHexResult = '',
     nameFieldError = null,
@@ -26,19 +23,15 @@
     onExport,
     onImport,
     onTestHex,
-    onSavePatternAction,
-    onToggleActionEnabled,
     onToggleNotify,
-    onTestKey,
+    onToggleScreenshot,
   }: {
     config: Config;
     newPatternName?: string;
     newPatternBytes?: string;
     newPatternDesc?: string;
     newPatternNotifyEnabled?: boolean;
-    newPatternActionEnabled?: boolean;
-    newPatternActionKey?: string;
-    newPatternActionDelay?: number;
+    newPatternScreenshotEnabled?: boolean;
     testHexInput?: string;
     testHexResult?: string;
     nameFieldError?: string | null;
@@ -53,31 +46,9 @@
     onExport: () => void;
     onImport: (replace: boolean) => void;
     onTestHex: () => void;
-    onSavePatternAction?: (pattern: Pattern) => void;
-    onToggleActionEnabled?: (pattern: Pattern, enabled: boolean) => void;
     onToggleNotify?: (pattern: Pattern) => void;
-    onTestKey?: (key: string) => void;
+    onToggleScreenshot?: (pattern: Pattern) => void;
   } = $props();
-
-  let openActionName = $state<string | null>(null);
-
-  function toggleActionEditor(pattern: Pattern) {
-    if (openActionName === pattern.name) {
-      openActionName = null;
-    } else {
-      if (!pattern.action) {
-        pattern.action = { enabled: false, key: 'Z', delay_ms: 1000 };
-      }
-      openActionName = pattern.name;
-    }
-  }
-
-  function handleSaveAction(pattern: Pattern) {
-    if (onSavePatternAction) {
-      onSavePatternAction(pattern);
-    }
-    openActionName = null;
-  }
 </script>
 
 <PageHeader title="Паттерны">
@@ -179,34 +150,10 @@
 
         <div class="form-group action-toggle-group">
           <label class="checkbox-label">
-            <input type="checkbox" bind:checked={newPatternActionEnabled} />
-            <span>⚡ Нажатие клавиши в окно игры при срабатывании</span>
+            <input type="checkbox" bind:checked={newPatternScreenshotEnabled} />
+            <span>📷 Прикреплять скриншот окна к уведомлению</span>
           </label>
         </div>
-
-        {#if newPatternActionEnabled}
-          <div class="form-row action-config-row">
-            <div class="form-group">
-              <span class="field-title">Клавиша</span>
-              <div class="key-recorder-box">
-                <KeyRecorder bind:value={newPatternActionKey} />
-              </div>
-              <p class="field-hint">Кликните и нажмите любую клавишу (Z, F1-F12, Space...)</p>
-            </div>
-            <div class="form-group">
-              <label for="action-delay">Задержка перед нажатием (мс)</label>
-              <input
-                id="action-delay"
-                type="number"
-                class="action-input-delay"
-                bind:value={newPatternActionDelay}
-                min="0"
-                step="100"
-              />
-              <p class="field-hint">1000 мс = 1 сек</p>
-            </div>
-          </div>
-        {/if}
 
         <div class="actions">
           <button class="btn btn-success" onclick={onAdd}>Добавить паттерн</button>
@@ -250,104 +197,39 @@
                   </button>
                   <button
                     type="button"
-                    class="pattern-action-badge"
-                    class:active={pattern.action?.enabled}
-                    onclick={() => toggleActionEditor(pattern)}
-                    title="Нажмите для настройки нажатия клавиши"
+                    class="pattern-screenshot-badge"
+                    class:active={pattern.screenshot_enabled ?? true}
+                    onclick={() => onToggleScreenshot?.(pattern)}
+                    title={pattern.screenshot_enabled ?? true
+                      ? 'Скриншот включен (кликните для отключения)'
+                      : 'Скриншот выключен (кликните для включения)'}
                   >
-                    {#if pattern.action?.enabled}
-                      ⚡ [{pattern.action.key}] через {pattern.action.delay_ms}мс
+                    {#if pattern.screenshot_enabled ?? true}
+                      📷 Скриншот: Вкл
                     {:else}
-                      ⚡ Действие: Выкл
+                      📷 Скриншот: Выкл
                     {/if}
                   </button>
-                  <button
-                    type="button"
-                    class="btn btn-danger btn-sm"
-                    onclick={() => onRemove(pattern.name)}
-                  >
-                    Удалить
-                  </button>
+                  {#if pattern.name === 'DEATH' || pattern.name === 'STOP_FARM'}
+                    <button
+                      type="button"
+                      class="btn btn-secondary btn-sm"
+                      disabled
+                      title="Базовый паттерн нельзя удалить"
+                    >
+                      Удалить
+                    </button>
+                  {:else}
+                    <button
+                      type="button"
+                      class="btn btn-danger btn-sm"
+                      onclick={() => onRemove(pattern.name)}
+                    >
+                      Удалить
+                    </button>
+                  {/if}
                 </div>
               </div>
-
-              {#if openActionName === pattern.name}
-                <div class="pattern-action-editor">
-                  <div class="editor-header">
-                    <strong>⚡ Настройка фонового действия для {pattern.name}</strong>
-                  </div>
-                  <div class="editor-body">
-                    <label class="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={pattern.action?.enabled ?? false}
-                        onchange={async (e) => {
-                          const checked = e.currentTarget.checked;
-                          if (!pattern.action) {
-                            pattern.action = { enabled: false, key: 'Z', delay_ms: 1000 };
-                          }
-                          pattern.action.enabled = checked;
-                          if (onToggleActionEnabled) {
-                            await onToggleActionEnabled(pattern, checked);
-                          }
-                        }}
-                      />
-                      <span>Включить фоновое нажатие клавиши</span>
-                    </label>
-
-                    <div class="editor-inputs">
-                      <div class="form-group inline">
-                        <span class="inline-label">Клавиша:</span>
-                        <KeyRecorder
-                          value={pattern.action?.key ?? 'Z'}
-                          onChange={(k) => {
-                            if (!pattern.action) {
-                              pattern.action = { enabled: false, key: 'Z', delay_ms: 1000 };
-                            }
-                            pattern.action.key = k;
-                          }}
-                        />
-                      </div>
-
-                      <div class="form-group inline">
-                        <label for="edit-delay-{pattern.name}">Задержка (мс):</label>
-                        <input
-                          id="edit-delay-{pattern.name}"
-                          type="number"
-                          class="action-input-delay"
-                          value={pattern.action?.delay_ms ?? 1000}
-                          min="0"
-                          step="100"
-                          oninput={(e) => {
-                            if (!pattern.action) {
-                              pattern.action = { enabled: false, key: 'Z', delay_ms: 1000 };
-                            }
-                            pattern.action.delay_ms = Math.max(0, Number(e.currentTarget.value) || 0);
-                          }}
-                        />
-                      </div>
-
-                      <button
-                        type="button"
-                        class="btn btn-secondary btn-sm"
-                        onclick={() => {
-                          if (onTestKey) onTestKey(pattern.action?.key ?? 'Z');
-                        }}
-                        title="Отправить тестовое нажатие в окно игры прямо сейчас"
-                      >
-                        Тест
-                      </button>
-                      <button
-                        type="button"
-                        class="btn btn-primary btn-sm"
-                        onclick={() => handleSaveAction(pattern)}
-                      >
-                        Сохранить
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              {/if}
             </li>
           {/each}
         </ul>

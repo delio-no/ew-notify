@@ -8,6 +8,7 @@ struct AnalyzerPattern {
     description: String,
     action: Option<crate::config::PatternAction>,
     notify_enabled: bool,
+    screenshot_enabled: bool,
 }
 
 #[derive(Clone)]
@@ -27,6 +28,7 @@ impl PacketAnalyzer {
                         description: p.description,
                         action: p.action,
                         notify_enabled: p.notify_enabled,
+                        screenshot_enabled: p.screenshot_enabled,
                     },
                 );
             }
@@ -43,6 +45,7 @@ impl PacketAnalyzer {
                     description: pattern.description,
                     action: pattern.action,
                     notify_enabled: pattern.notify_enabled,
+                    screenshot_enabled: pattern.screenshot_enabled,
                 },
             );
         }
@@ -61,6 +64,7 @@ impl PacketAnalyzer {
                 description: p.description.clone(),
                 action: p.action.clone(),
                 notify_enabled: p.notify_enabled,
+                screenshot_enabled: p.screenshot_enabled,
             })
             .collect()
     }
@@ -150,6 +154,7 @@ impl PacketAnalyzer {
                     description: p.description.clone(),
                     action: p.action.clone(),
                     notify_enabled: p.notify_enabled,
+                    screenshot_enabled: p.screenshot_enabled,
                 });
             }
         }
@@ -544,6 +549,7 @@ mod tests {
             description: "Персонаж умер".into(),
             action: None,
             notify_enabled: true,
+            screenshot_enabled: true,
         }
     }
 
@@ -554,6 +560,7 @@ mod tests {
             description: "Автофарм остановлен".into(),
             action: None,
             notify_enabled: true,
+            screenshot_enabled: true,
         }
     }
 
@@ -733,6 +740,7 @@ mod tests {
             description: "broken".into(),
             action: None,
             notify_enabled: true,
+            screenshot_enabled: true,
         }]);
         assert!(analyzer.get_patterns().is_empty());
     }
@@ -754,6 +762,16 @@ mod tests {
         let death_pkt = make_ipv4_tcp_packet(&parse_hex("00FE06032C010000").unwrap());
         let matched = analyzer.analyze(&death_pkt).expect("DEATH should match");
         assert!(!matched.notify_enabled);
+    }
+
+    #[test]
+    fn pattern_screenshot_enabled_flag_preserved() {
+        let mut pat = death_pattern();
+        pat.screenshot_enabled = false;
+        let analyzer = PacketAnalyzer::new(vec![pat]);
+        let death_pkt = make_ipv4_tcp_packet(&parse_hex("00FE06032C010000").unwrap());
+        let matched = analyzer.analyze(&death_pkt).expect("DEATH should match");
+        assert!(!matched.screenshot_enabled);
     }
 
     #[test]

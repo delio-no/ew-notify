@@ -10,6 +10,7 @@ export interface Pattern {
   description: string;
   action?: PatternAction;
   notify_enabled?: boolean;
+  screenshot_enabled?: boolean;
 }
 
 export interface RegisteredUser {
@@ -200,16 +201,15 @@ export const defaultConfig = (): Config => ({
         name: 'DEATH',
         bytes: '00FE06032C010000',
         description: 'Персонаж умер',
+        notify_enabled: true,
+        screenshot_enabled: true,
       },
       {
         name: 'STOP_FARM',
         bytes: '4E00FE11006100750074006F006600610072006D000000',
         description: 'Автофарм остановлен',
-        action: {
-          enabled: false,
-          key: 'Z',
-          delay_ms: 1000,
-        },
+        notify_enabled: true,
+        screenshot_enabled: true,
       },
     ],
   },

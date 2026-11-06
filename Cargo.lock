@@ -1065,7 +1065,7 @@ dependencies = [
 
 [[package]]
 name = "ew-notify"
-version = "0.3.1"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "chrono",

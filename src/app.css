@@ -870,6 +870,32 @@ body {
     color: #38bdf8;
   }
 
+  .pattern-screenshot-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-muted);
+    transition: all 0.15s ease;
+  }
+
+  .pattern-screenshot-badge:hover {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+
+  .pattern-screenshot-badge.active {
+    background: rgba(168, 85, 247, 0.15);
+    border-color: rgba(168, 85, 247, 0.4);
+    color: #c084fc;
+  }
+
   .pattern-action-editor {
     width: 100%;
     margin-top: 4px;

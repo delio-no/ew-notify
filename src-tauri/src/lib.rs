@@ -499,7 +499,7 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     .map(|c| c.short_label())
                     .unwrap_or_else(|| "unknown".into());
 
-                let (cooldown_secs, tray_enabled, telegram_enabled, burst_window_ms, screenshot_on_death, actions_enabled) =
+                let (cooldown_secs, tray_enabled, telegram_enabled, burst_window_ms) =
                     rt.block_on(async {
                         let cfg = config.lock().await;
                         (
@@ -507,8 +507,6 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                             cfg.notifications.tray_enabled,
                             cfg.notifications.telegram_enabled,
                             cfg.notifications.burst_dedup_ms,
-                            cfg.notifications.screenshot_on_death,
-                            cfg.notifications.actions_enabled,
                         )
                     });
 
@@ -640,10 +638,10 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     }
 
                     if telegram_enabled {
-                        let send_win = if pattern.name == "DEATH" && !screenshot_on_death {
-                            None
-                        } else {
+                        let send_win = if pattern.screenshot_enabled {
                             target_win.clone()
+                        } else {
+                            None
                         };
 
                         if let Err(e) = rt.block_on(telegram::send_notification(
@@ -668,47 +666,7 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     );
                 }
 
-                if actions_enabled {
-                    if let Some(act) = &pattern.action {
-                        if act.enabled {
-                            if let Some(win) = &target_win {
-                                let hwnd = win.hwnd;
-                                let key = act.key.clone();
-                                let delay_ms = act.delay_ms;
-                                let pattern_name = pattern.name.clone();
-                                let pid = win.pid;
-                                rt.spawn(async move {
-                                    if delay_ms > 0 {
-                                        tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
-                                    }
-                                    match input_sender::send_key_background(hwnd, &key, 75).await {
-                                        Ok(()) => {
-                                            tracing::info!(
-                                                "Action executed for pattern '{}': sent key '{}' in background to window [PID {}]",
-                                                pattern_name,
-                                                key,
-                                                pid
-                                            );
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!(
-                                                "Action failed for pattern '{}' [PID {}]: {}",
-                                                pattern_name,
-                                                pid,
-                                                e
-                                            );
-                                        }
-                                    }
-                                });
-                            } else {
-                                tracing::warn!(
-                                    "Action for pattern '{}' skipped: target window not found",
-                                    pattern.name
-                                );
-                            }
-                        }
-                    }
-                }
+
             }
 
             // End of session: clear slot if ours
@@ -911,12 +869,14 @@ async fn add_pattern(
     description: String,
     action: Option<PatternAction>,
     notify_enabled: Option<bool>,
+    screenshot_enabled: Option<bool>,
 ) -> Result<String, String> {
     info!("Adding pattern: {}", name);
     let mut pattern = Pattern::new(name.clone(), bytes.clone(), description.clone())
         .map_err(|e| e.to_string())?;
     pattern.action = action;
     pattern.notify_enabled = notify_enabled.unwrap_or(true);
+    pattern.screenshot_enabled = screenshot_enabled.unwrap_or(true);
 
     #[cfg(windows)]
     {
@@ -1024,7 +984,39 @@ async fn set_pattern_action(
 }
 
 #[tauri::command]
+async fn set_pattern_screenshot_enabled(
+    state: State<'_, AppState>,
+    name: String,
+    enabled: bool,
+) -> Result<String, String> {
+    let mut config = state.config.lock().await;
+    let Some(pattern) = config.target.patterns.iter_mut().find(|p| p.name == name) else {
+        return Err(format!("Pattern '{name}' not found"));
+    };
+    pattern.screenshot_enabled = enabled;
+    let patterns = config.target.patterns.clone();
+    config::save_config(&config).map_err(|e| e.to_string())?;
+    drop(config);
+
+    #[cfg(windows)]
+    {
+        if let Ok(mut analyzer) = state.analyzer.lock() {
+            *analyzer = PacketAnalyzer::new(patterns);
+        }
+    }
+
+    Ok(format!(
+        "Pattern {} screenshot {}",
+        name,
+        if enabled { "enabled" } else { "disabled" }
+    ))
+}
+
+#[tauri::command]
 async fn remove_pattern(state: State<'_, AppState>, name: String) -> Result<String, String> {
+    if name == "DEATH" || name == "STOP_FARM" {
+        return Err("Базовые паттерны DEATH и STOP_FARM нельзя удалить".to_string());
+    }
     info!("Removing pattern: {}", name);
 
     #[cfg(windows)]
@@ -1337,6 +1329,11 @@ async fn import_patterns(
             } else {
                 config.target.patterns.push(p);
             }
+        }
+    }
+    for def in config::default_patterns() {
+        if !config.target.patterns.iter().any(|p| p.name == def.name) {
+            config.target.patterns.push(def);
         }
     }
     config::ensure_default_patterns(&mut config);
@@ -1848,6 +1845,7 @@ pub fn run() {
             clear_packet_log,
             add_pattern,
             set_pattern_notify_enabled,
+            set_pattern_screenshot_enabled,
             set_pattern_action_enabled,
             set_pattern_action,
             remove_pattern,

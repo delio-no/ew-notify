@@ -452,6 +452,8 @@ pub struct Pattern {
     pub action: Option<PatternAction>,
     #[serde(default = "default_true")]
     pub notify_enabled: bool,
+    #[serde(default = "default_true")]
+    pub screenshot_enabled: bool,
 }
 
 impl Pattern {
@@ -473,6 +475,7 @@ impl Pattern {
             description: description.clone(),
             action: None,
             notify_enabled: true,
+            screenshot_enabled: true,
         }
         .to_bytes()?;
 
@@ -482,6 +485,7 @@ impl Pattern {
             description,
             action: None,
             notify_enabled: true,
+            screenshot_enabled: true,
         })
     }
 
@@ -552,17 +556,15 @@ pub fn default_patterns() -> Vec<Pattern> {
             description: "Персонаж умер".to_string(),
             action: None,
             notify_enabled: true,
+            screenshot_enabled: true,
         },
         Pattern {
             name: "STOP_FARM".to_string(),
             bytes: "4E00FE11006100750074006F006600610072006D000000".to_string(),
             description: "Автофарм остановлен".to_string(),
-            action: Some(PatternAction {
-                enabled: false,
-                key: "Z".to_string(),
-                delay_ms: 1000,
-            }),
+            action: None,
             notify_enabled: true,
+            screenshot_enabled: true,
         },
     ]
 }
@@ -816,7 +818,12 @@ mod tests {
         assert_eq!(cfg.target.tcp_port, Some(7777));
         for p in &cfg.target.patterns {
             assert!(p.to_bytes().is_ok(), "{} hex must parse", p.name);
+            assert!(p.screenshot_enabled, "{} should have screenshot_enabled=true by default", p.name);
         }
+
+        let legacy_json = r#"{"name":"TEST","bytes":"AA","description":"desc"}"#;
+        let p: Pattern = serde_json::from_str(legacy_json).unwrap();
+        assert!(p.screenshot_enabled);
     }
 
     #[test]
@@ -931,6 +938,7 @@ mod tests {
             description: "c".into(),
             action: None,
             notify_enabled: true,
+            screenshot_enabled: true,
         }];
         assert!(!ensure_default_patterns(&mut filled));
         assert_eq!(filled.target.patterns.len(), 1);

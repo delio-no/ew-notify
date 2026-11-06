@@ -18,7 +18,7 @@
     onNavigate: (page: PageId) => void;
   } = $props();
 
-  let appVersion = $state('v0.3.6');
+  let appVersion = $state('v0.3.7');
 
   onMount(async () => {
     try {

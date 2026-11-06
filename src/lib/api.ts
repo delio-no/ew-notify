@@ -49,18 +49,20 @@ export const api = {
     name: string,
     bytes: string,
     description: string,
-    action?: PatternAction,
-    notify_enabled?: boolean
+    notify_enabled?: boolean,
+    screenshot_enabled?: boolean
   ) =>
     invoke('add_pattern', {
       name,
       bytes,
       description,
-      action,
       notifyEnabled: notify_enabled ?? true,
+      screenshotEnabled: screenshot_enabled ?? true,
     }),
   setPatternNotifyEnabled: (name: string, enabled: boolean) =>
     invoke<string>('set_pattern_notify_enabled', { name, enabled }),
+  setPatternScreenshotEnabled: (name: string, enabled: boolean) =>
+    invoke<string>('set_pattern_screenshot_enabled', { name, enabled }),
   setPatternActionEnabled: (name: string, enabled: boolean) =>
     invoke<string>('set_pattern_action_enabled', { name, enabled }),
   setPatternAction: (name: string, action?: PatternAction) =>

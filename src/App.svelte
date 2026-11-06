@@ -77,9 +77,7 @@
   let newPatternBytes = $state('');
   let newPatternDesc = $state('');
   let newPatternNotifyEnabled = $state(true);
-  let newPatternActionEnabled = $state(false);
-  let newPatternActionKey = $state('Z');
-  let newPatternActionDelay = $state(1000);
+  let newPatternScreenshotEnabled = $state(true);
   let patternTouched = $state({ name: false, bytes: false, desc: false });
   let patternSubmitAttempted = $state(false);
   let testHexInput = $state('');
@@ -357,28 +355,19 @@
       return;
     }
     try {
-      const action = newPatternActionEnabled
-        ? {
-            enabled: true,
-            key: newPatternActionKey.trim().toUpperCase() || 'Z',
-            delay_ms: Math.max(0, Number(newPatternActionDelay) || 0),
-          }
-        : undefined;
       await api.addPattern(
         newPatternName.trim(),
         newPatternBytes.trim().replace(/\s+/g, ''),
         newPatternDesc.trim(),
-        action,
-        newPatternNotifyEnabled
+        newPatternNotifyEnabled,
+        newPatternScreenshotEnabled
       );
       config = await api.getConfig();
       newPatternName = '';
       newPatternBytes = '';
       newPatternDesc = '';
       newPatternNotifyEnabled = true;
-      newPatternActionEnabled = false;
-      newPatternActionKey = 'Z';
-      newPatternActionDelay = 1000;
+      newPatternScreenshotEnabled = true;
       patternTouched = { name: false, bytes: false, desc: false };
       patternSubmitAttempted = false;
       showStatus('Паттерн добавлен');
@@ -411,6 +400,30 @@
     }
   }
 
+  async function togglePatternScreenshot(pattern: Pattern) {
+    const next = !(pattern.screenshot_enabled ?? true);
+    pattern.screenshot_enabled = next;
+    try {
+      await api.setPatternScreenshotEnabled(pattern.name, next);
+      showStatus(
+        next
+          ? `Скриншоты для ${pattern.name} включены`
+          : `Скриншоты для ${pattern.name} выключены`
+      );
+    } catch {
+      try {
+        await api.updateConfig(config);
+        showStatus(
+          next
+            ? `Скриншоты для ${pattern.name} включены`
+            : `Скриншоты для ${pattern.name} выключены`
+        );
+      } catch (err) {
+        showStatus(`Ошибка: ${err}`);
+      }
+    }
+  }
+
   async function testSendKey(key: string, target?: ClickerTarget) {
     try {
       const res = await api.testSendKey(key, target);
@@ -429,40 +442,7 @@
     }
   }
 
-  async function togglePatternActionEnabled(pattern: Pattern, enabled: boolean) {
-    if (!pattern.action) {
-      pattern.action = { enabled, key: 'Z', delay_ms: 1000 };
-    } else {
-      pattern.action.enabled = enabled;
-    }
-    const p = config.target.patterns.find((x) => x.name === pattern.name);
-    if (p) {
-      p.action = { ...pattern.action };
-    }
-    try {
-      await api.setPatternActionEnabled(pattern.name, enabled);
-      showStatus(
-        enabled
-          ? `Фоновое нажатие для ${pattern.name} включено`
-          : `Фоновое нажатие для ${pattern.name} выключено`
-      );
-    } catch (e) {
-      showStatus(`Ошибка: ${e}`);
-    }
-  }
 
-  async function savePatternAction(pattern: Pattern) {
-    const p = config.target.patterns.find((x) => x.name === pattern.name);
-    if (p && pattern.action) {
-      p.action = { ...pattern.action };
-    }
-    try {
-      await api.setPatternAction(pattern.name, pattern.action);
-      showStatus(`Настройки действия для ${pattern.name} сохранены`);
-    } catch (e) {
-      showStatus(`Ошибка: ${e}`);
-    }
-  }
 
   async function refreshClickerStatus() {
     try {
@@ -504,6 +484,10 @@
   }
 
   async function removePattern(name: string) {
+    if (name === 'DEATH' || name === 'STOP_FARM') {
+      showStatus('Базовые паттерны DEATH и STOP_FARM нельзя удалить');
+      return;
+    }
     try {
       await api.removePattern(name);
       config = await api.getConfig();
@@ -996,6 +980,7 @@
         bind:newPatternBytes
         bind:newPatternDesc
         bind:newPatternNotifyEnabled
+        bind:newPatternScreenshotEnabled
         bind:testHexInput
         {testHexResult}
         {nameFieldError}
@@ -1004,13 +989,8 @@
         onTouchName={() => (patternTouched.name = true)}
         onTouchBytes={() => (patternTouched.bytes = true)}
         onTouchDesc={() => (patternTouched.desc = true)}
-        bind:newPatternActionEnabled
-        bind:newPatternActionKey
-        bind:newPatternActionDelay
-        onSavePatternAction={savePatternAction}
-        onToggleActionEnabled={togglePatternActionEnabled}
         onToggleNotify={togglePatternNotify}
-        onTestKey={testSendKey}
+        onToggleScreenshot={togglePatternScreenshot}
         onAdd={addPattern}
         onRemove={removePattern}
         onReset={resetPatterns}
