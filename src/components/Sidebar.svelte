@@ -21,7 +21,7 @@
     onDirectUpdate?: () => void;
   } = $props();
 
-  let appVersion = $state('v0.3.11');
+  let appVersion = $state('v0.3.12');
 
   onMount(async () => {
     try {
