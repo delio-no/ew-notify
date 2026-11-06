@@ -38,3 +38,5 @@ node_modules/
 # Uncomment if you prefer not to track driver files:
 # src-tauri/windivert/*.dll
 # src-tauri/windivert/*.sys
+
+*.bak
