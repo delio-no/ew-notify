@@ -40,7 +40,7 @@
     onApplyAndRestartBot?: () => void;
   } = $props();
 
-  let currentAppVersion = $state('v0.3.14');
+  let currentAppVersion = $state('v0.3.15');
   let updateStatus = $state<'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'error'>(
     availableUpdate?.has_update ? 'available' : 'idle'
   );
@@ -361,7 +361,7 @@
   <div class="card settings-card-updater">
     <div class="card-header update-card-header">
       <h2>Обновление программы</h2>
-      <span class="version-badge">{currentAppVersion || 'v0.3.14'}</span>
+      <span class="version-badge">{currentAppVersion || 'v0.3.15'}</span>
     </div>
     <div class="card-body">
       <div class="form-group">

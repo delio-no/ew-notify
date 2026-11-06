@@ -355,16 +355,6 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                 Instant::now().checked_sub(std::time::Duration::from_secs(10)).unwrap_or_else(Instant::now),
             );
 
-            let mut cached_notify_settings = (10u64, true, true, 2000u64);
-            if let Ok(cfg) = config.try_lock() {
-                cached_notify_settings = (
-                    cfg.notifications.cooldown_seconds,
-                    cfg.notifications.tray_enabled,
-                    cfg.notifications.telegram_enabled,
-                    cfg.notifications.burst_dedup_ms,
-                );
-            }
-
             while monitoring.load(Ordering::SeqCst) {
                 let raw_packet = match capture.read_packet() {
                     Ok(p) => p,
@@ -509,15 +499,16 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     .map(|c| c.short_label())
                     .unwrap_or_else(|| "unknown".into());
 
-                if let Ok(cfg) = config.try_lock() {
-                    cached_notify_settings = (
-                        cfg.notifications.cooldown_seconds,
-                        cfg.notifications.tray_enabled,
-                        cfg.notifications.telegram_enabled,
-                        cfg.notifications.burst_dedup_ms,
-                    );
-                }
-                let (cooldown_secs, tray_enabled, telegram_enabled, burst_window_ms) = cached_notify_settings;
+                let (cooldown_secs, tray_enabled, telegram_enabled, burst_window_ms) =
+                    rt.block_on(async {
+                        let cfg = config.lock().await;
+                        (
+                            cfg.notifications.cooldown_seconds,
+                            cfg.notifications.tray_enabled,
+                            cfg.notifications.telegram_enabled,
+                            cfg.notifications.burst_dedup_ms,
+                        )
+                    });
 
                 let now = Instant::now();
 
@@ -663,16 +654,15 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                         let pattern_name_clone = pattern.name.clone();
                         let window_label_clone = window_label.clone();
 
-                        rt.spawn(async move {
-                            if let Err(e) = telegram::send_notification(
+                        std::thread::spawn(move || {
+                            tracing::info!("Sending Telegram notification in background: {}", notify_title_clone);
+                            if let Err(e) = tauri::async_runtime::block_on(telegram::send_notification(
                                 &config_arc,
                                 &notify_title_clone,
                                 &pattern_name_clone,
                                 window_label_clone.as_deref(),
                                 send_win,
-                            )
-                            .await
-                            {
+                            )) {
                                 let msg = format!("Telegram: {e}");
                                 tracing::warn!("{}", msg);
                                 if let Ok(mut err) = last_error_clone.lock() {

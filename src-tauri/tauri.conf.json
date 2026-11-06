@@ -1,6 +1,6 @@
 {
   "productName": "EndlessWar Notifier",
-  "version": "0.3.14",
+  "version": "0.3.15",
   "identifier": "com.ewnotify.app",
   "build": {
     "beforeDevCommand": "npm run dev",

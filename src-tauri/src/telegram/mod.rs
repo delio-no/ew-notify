@@ -20,6 +20,7 @@ pub async fn send_notification(
     window_label: Option<&str>,
     target_win: Option<crate::screen_capture::TargetWindow>,
 ) -> anyhow::Result<()> {
+    tracing::info!("telegram::send_notification started for '{}' (target_win: {})", event_title, target_win.is_some());
     let config_guard = config.lock().await;
 
     if !config_guard.notifications.telegram_enabled {
@@ -135,7 +136,7 @@ pub async fn send_notification(
     if let Some(win) = target_win {
         let bot_edit = bot.clone();
         let final_caption = message.clone();
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             if delay_ms > 0 {
                 tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
             }
