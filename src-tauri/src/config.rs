@@ -389,12 +389,6 @@ pub struct NotificationsConfig {
     /// Delay before capturing screenshot so game finishes animations and updates UI state.
     #[serde(default = "default_screenshot_delay_ms")]
     pub screenshot_delay_ms: u64,
-    /// Send screenshot when DEATH pattern matches.
-    #[serde(default = "default_true")]
-    pub screenshot_on_death: bool,
-    /// Master switch for background keystroke actions on pattern detection.
-    #[serde(default = "default_true")]
-    pub actions_enabled: bool,
 }
 
 impl Default for NotificationsConfig {
@@ -405,8 +399,6 @@ impl Default for NotificationsConfig {
             cooldown_seconds: default_cooldown_seconds(),
             burst_dedup_ms: default_burst_dedup_ms(),
             screenshot_delay_ms: default_screenshot_delay_ms(),
-            screenshot_on_death: true,
-            actions_enabled: true,
         }
     }
 }
@@ -415,44 +407,15 @@ fn default_screenshot_delay_ms() -> u64 {
     1500
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PatternAction {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default = "default_action_key")]
-    pub key: String,
-    #[serde(default = "default_action_delay_ms")]
-    pub delay_ms: u64,
-}
-
-fn default_action_key() -> String {
-    "Z".to_string()
-}
-
-fn default_action_delay_ms() -> u64 {
-    1000
-}
-
-impl Default for PatternAction {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            key: default_action_key(),
-            delay_ms: default_action_delay_ms(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Pattern {
     pub name: String,
     pub bytes: String,
     pub description: String,
-    #[serde(default)]
-    pub action: Option<PatternAction>,
     #[serde(default = "default_true")]
     pub notify_enabled: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub screenshot_enabled: bool,
 }
 
@@ -469,13 +432,13 @@ impl Pattern {
         if bytes.is_empty() {
             return Err(anyhow!("Pattern bytes cannot be empty"));
         }
+        let is_base = name == "DEATH" || name == "STOP_FARM";
         let _ = Self {
             name: name.clone(),
             bytes: bytes.clone(),
             description: description.clone(),
-            action: None,
             notify_enabled: true,
-            screenshot_enabled: true,
+            screenshot_enabled: is_base,
         }
         .to_bytes()?;
 
@@ -483,9 +446,8 @@ impl Pattern {
             name,
             bytes,
             description,
-            action: None,
             notify_enabled: true,
-            screenshot_enabled: true,
+            screenshot_enabled: is_base,
         })
     }
 
@@ -554,7 +516,6 @@ pub fn default_patterns() -> Vec<Pattern> {
             name: "DEATH".to_string(),
             bytes: "00FE06032C010000".to_string(),
             description: "Персонаж умер".to_string(),
-            action: None,
             notify_enabled: true,
             screenshot_enabled: true,
         },
@@ -562,7 +523,6 @@ pub fn default_patterns() -> Vec<Pattern> {
             name: "STOP_FARM".to_string(),
             bytes: "4E00FE11006100750074006F006600610072006D000000".to_string(),
             description: "Автофарм остановлен".to_string(),
-            action: None,
             notify_enabled: true,
             screenshot_enabled: true,
         },
@@ -602,6 +562,30 @@ pub fn migrate_raw_json(mut val: serde_json::Value) -> Result<(serde_json::Value
     if raw_version < 1 {
         val = migrate_legacy_to_v1(val)?;
         migrated = true;
+    }
+
+    // Strip obsolete fields from notifications if present
+    if let Some(notif) = val.get_mut("notifications").and_then(|n| n.as_object_mut()) {
+        if notif.remove("screenshot_on_death").is_some() || notif.remove("actions_enabled").is_some() {
+            migrated = true;
+        }
+    }
+
+    // Strip obsolete action field and ensure base patterns screenshot_enabled default
+    if let Some(patterns) = val.get_mut("target").and_then(|t| t.get_mut("patterns")).and_then(|p| p.as_array_mut()) {
+        for pat in patterns {
+            if let Some(obj) = pat.as_object_mut() {
+                if obj.remove("action").is_some() {
+                    migrated = true;
+                }
+                if let Some(name) = obj.get("name").and_then(|n| n.as_str()) {
+                    if (name == "DEATH" || name == "STOP_FARM") && !obj.contains_key("screenshot_enabled") {
+                        obj.insert("screenshot_enabled".to_string(), serde_json::json!(true));
+                        migrated = true;
+                    }
+                }
+            }
+        }
     }
 
     val["schema_version"] = serde_json::json!(CURRENT_SCHEMA_VERSION);
@@ -821,9 +805,9 @@ mod tests {
             assert!(p.screenshot_enabled, "{} should have screenshot_enabled=true by default", p.name);
         }
 
-        let legacy_json = r#"{"name":"TEST","bytes":"AA","description":"desc"}"#;
-        let p: Pattern = serde_json::from_str(legacy_json).unwrap();
-        assert!(p.screenshot_enabled);
+        let custom_json = r#"{"name":"CUSTOM","bytes":"AA","description":"desc"}"#;
+        let p: Pattern = serde_json::from_str(custom_json).unwrap();
+        assert!(!p.screenshot_enabled, "custom pattern must have screenshot_enabled=false by default");
     }
 
     #[test]
@@ -936,9 +920,8 @@ mod tests {
             name: "CUSTOM".into(),
             bytes: "AA".into(),
             description: "c".into(),
-            action: None,
             notify_enabled: true,
-            screenshot_enabled: true,
+            screenshot_enabled: false,
         }];
         assert!(!ensure_default_patterns(&mut filled));
         assert_eq!(filled.target.patterns.len(), 1);

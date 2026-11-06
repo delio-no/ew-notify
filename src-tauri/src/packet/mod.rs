@@ -6,7 +6,6 @@ use std::collections::HashMap;
 struct AnalyzerPattern {
     bytes: Vec<u8>,
     description: String,
-    action: Option<crate::config::PatternAction>,
     notify_enabled: bool,
     screenshot_enabled: bool,
 }
@@ -26,7 +25,6 @@ impl PacketAnalyzer {
                     AnalyzerPattern {
                         bytes,
                         description: p.description,
-                        action: p.action,
                         notify_enabled: p.notify_enabled,
                         screenshot_enabled: p.screenshot_enabled,
                     },
@@ -43,7 +41,6 @@ impl PacketAnalyzer {
                 AnalyzerPattern {
                     bytes,
                     description: pattern.description,
-                    action: pattern.action,
                     notify_enabled: pattern.notify_enabled,
                     screenshot_enabled: pattern.screenshot_enabled,
                 },
@@ -62,7 +59,6 @@ impl PacketAnalyzer {
                 name: name.clone(),
                 bytes: p.bytes.iter().map(|b| format!("{:02X}", b)).collect(),
                 description: p.description.clone(),
-                action: p.action.clone(),
                 notify_enabled: p.notify_enabled,
                 screenshot_enabled: p.screenshot_enabled,
             })
@@ -152,7 +148,6 @@ impl PacketAnalyzer {
                     name: name.clone(),
                     bytes: p.bytes.iter().map(|b| format!("{:02X}", b)).collect(),
                     description: p.description.clone(),
-                    action: p.action.clone(),
                     notify_enabled: p.notify_enabled,
                     screenshot_enabled: p.screenshot_enabled,
                 });
@@ -547,7 +542,6 @@ mod tests {
             name: "DEATH".into(),
             bytes: "00FE06032C010000".into(),
             description: "Персонаж умер".into(),
-            action: None,
             notify_enabled: true,
             screenshot_enabled: true,
         }
@@ -558,7 +552,6 @@ mod tests {
             name: "STOP_FARM".into(),
             bytes: "4E00FE11006100750074006F006600610072006D000000".into(),
             description: "Автофарм остановлен".into(),
-            action: None,
             notify_enabled: true,
             screenshot_enabled: true,
         }
@@ -738,9 +731,8 @@ mod tests {
             name: "BAD".into(),
             bytes: "ZZ".into(),
             description: "broken".into(),
-            action: None,
             notify_enabled: true,
-            screenshot_enabled: true,
+            screenshot_enabled: false,
         }]);
         assert!(analyzer.get_patterns().is_empty());
     }

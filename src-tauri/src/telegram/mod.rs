@@ -102,7 +102,7 @@ pub async fn send_notification(
             }
         }
     } else {
-        // Plain text message (no screenshot expected, e.g. DEATH with screenshot_on_death=false)
+        // Plain text message (no screenshot expected, e.g. pattern with screenshot_enabled=false)
         for user in &enabled_users {
             let chat_id_num: i64 = user.chat_id.parse().unwrap_or(0);
             if chat_id_num == 0 {
@@ -374,7 +374,13 @@ pub async fn start_bot(
                                 }
                             } else if text_cmd == "/settings" || text_cmd == "⚙️ Настройки" {
                                 let config_guard = config.lock().await;
-                                let on_death = config_guard.notifications.screenshot_on_death;
+                                let on_death = config_guard
+                                    .target
+                                    .patterns
+                                    .iter()
+                                    .find(|p| p.name == "DEATH")
+                                    .map(|p| p.screenshot_enabled)
+                                    .unwrap_or(true);
                                 let delay = config_guard.notifications.screenshot_delay_ms;
                                 drop(config_guard);
 
@@ -594,9 +600,16 @@ pub async fn start_bot(
                             } else if data == "toggle_death_screen" {
                                 let (new_val, delay) = {
                                     let mut config_guard = config.lock().await;
-                                    config_guard.notifications.screenshot_on_death =
-                                        !config_guard.notifications.screenshot_on_death;
-                                    let v = config_guard.notifications.screenshot_on_death;
+                                    let mut v = true;
+                                    if let Some(p) = config_guard
+                                        .target
+                                        .patterns
+                                        .iter_mut()
+                                        .find(|p| p.name == "DEATH")
+                                    {
+                                        p.screenshot_enabled = !p.screenshot_enabled;
+                                        v = p.screenshot_enabled;
+                                    }
                                     let d = config_guard.notifications.screenshot_delay_ms;
                                     let _ = crate::config::save_config(&config_guard);
                                     (v, d)

@@ -7,7 +7,6 @@ import type {
   MonitoringStatus,
   PacketLogEntry,
   Pattern,
-  PatternAction,
   PatternMatchResult,
   RegisteredUser,
   StoredNotification,
@@ -57,16 +56,12 @@ export const api = {
       bytes,
       description,
       notifyEnabled: notify_enabled ?? true,
-      screenshotEnabled: screenshot_enabled ?? true,
+      screenshotEnabled: screenshot_enabled ?? false,
     }),
   setPatternNotifyEnabled: (name: string, enabled: boolean) =>
     invoke<string>('set_pattern_notify_enabled', { name, enabled }),
   setPatternScreenshotEnabled: (name: string, enabled: boolean) =>
     invoke<string>('set_pattern_screenshot_enabled', { name, enabled }),
-  setPatternActionEnabled: (name: string, enabled: boolean) =>
-    invoke<string>('set_pattern_action_enabled', { name, enabled }),
-  setPatternAction: (name: string, action?: PatternAction) =>
-    invoke<string>('set_pattern_action', { name, action }),
   removePattern: (name: string) => invoke('remove_pattern', { name }),
   resetPatterns: () => invoke<Pattern[]>('reset_patterns_to_defaults'),
   exportPatterns: () => invoke<string>('export_patterns'),

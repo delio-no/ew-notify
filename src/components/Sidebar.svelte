@@ -22,7 +22,7 @@
     onDirectUpdate?: () => void;
   } = $props();
 
-  let appVersion = $state('v0.3.8');
+  let appVersion = $state('v0.3.9');
 
   onMount(async () => {
     try {

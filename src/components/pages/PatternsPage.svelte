@@ -8,7 +8,7 @@
     newPatternBytes = $bindable(''),
     newPatternDesc = $bindable(''),
     newPatternNotifyEnabled = $bindable(true),
-    newPatternScreenshotEnabled = $bindable(true),
+    newPatternScreenshotEnabled = $bindable(false),
     testHexInput = $bindable(''),
     testHexResult = '',
     nameFieldError = null,

@@ -16,7 +16,7 @@ pub mod window_filter;
 pub mod notifications;
 pub mod updater;
 
-use config::{AppConfig, CaptureMode, Pattern, PatternAction};
+use config::{AppConfig, CaptureMode, Pattern};
 use packet::{
     build_filter, build_filter_from_endpoints, extract_connection_key, parse_hex, PacketAnalyzer,
     PacketCapture,
@@ -867,16 +867,15 @@ async fn add_pattern(
     name: String,
     bytes: String,
     description: String,
-    action: Option<PatternAction>,
     notify_enabled: Option<bool>,
     screenshot_enabled: Option<bool>,
 ) -> Result<String, String> {
     info!("Adding pattern: {}", name);
     let mut pattern = Pattern::new(name.clone(), bytes.clone(), description.clone())
         .map_err(|e| e.to_string())?;
-    pattern.action = action;
     pattern.notify_enabled = notify_enabled.unwrap_or(true);
-    pattern.screenshot_enabled = screenshot_enabled.unwrap_or(true);
+    let is_base = name == "DEATH" || name == "STOP_FARM";
+    pattern.screenshot_enabled = screenshot_enabled.unwrap_or(is_base);
 
     #[cfg(windows)]
     {
@@ -919,68 +918,6 @@ async fn set_pattern_notify_enabled(
         name,
         if enabled { "enabled" } else { "disabled" }
     ))
-}
-
-#[tauri::command]
-async fn set_pattern_action_enabled(
-    state: State<'_, AppState>,
-    name: String,
-    enabled: bool,
-) -> Result<String, String> {
-    let mut config = state.config.lock().await;
-    let Some(pattern) = config.target.patterns.iter_mut().find(|p| p.name == name) else {
-        return Err(format!("Pattern '{name}' not found"));
-    };
-    if let Some(act) = &mut pattern.action {
-        act.enabled = enabled;
-    } else {
-        pattern.action = Some(PatternAction {
-            enabled,
-            key: "Z".to_string(),
-            delay_ms: 1000,
-        });
-    }
-    let patterns = config.target.patterns.clone();
-    config::save_config(&config).map_err(|e| e.to_string())?;
-    drop(config);
-
-    #[cfg(windows)]
-    {
-        if let Ok(mut analyzer) = state.analyzer.lock() {
-            *analyzer = PacketAnalyzer::new(patterns);
-        }
-    }
-
-    Ok(format!(
-        "Pattern {} action {}",
-        name,
-        if enabled { "enabled" } else { "disabled" }
-    ))
-}
-
-#[tauri::command]
-async fn set_pattern_action(
-    state: State<'_, AppState>,
-    name: String,
-    action: Option<PatternAction>,
-) -> Result<String, String> {
-    let mut config = state.config.lock().await;
-    let Some(pattern) = config.target.patterns.iter_mut().find(|p| p.name == name) else {
-        return Err(format!("Pattern '{name}' not found"));
-    };
-    pattern.action = action;
-    let patterns = config.target.patterns.clone();
-    config::save_config(&config).map_err(|e| e.to_string())?;
-    drop(config);
-
-    #[cfg(windows)]
-    {
-        if let Ok(mut analyzer) = state.analyzer.lock() {
-            *analyzer = PacketAnalyzer::new(patterns);
-        }
-    }
-
-    Ok(format!("Pattern '{name}' action updated"))
 }
 
 #[tauri::command]
@@ -1846,8 +1783,6 @@ pub fn run() {
             add_pattern,
             set_pattern_notify_enabled,
             set_pattern_screenshot_enabled,
-            set_pattern_action_enabled,
-            set_pattern_action,
             remove_pattern,
             reset_patterns_to_defaults,
             export_patterns,
