@@ -34,7 +34,7 @@
     onApplyAndRestartBot?: () => void;
   } = $props();
 
-  let currentAppVersion = $state('v0.2.0');
+  let currentAppVersion = $state('v0.3.1');
   let updateStatus = $state<'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'error'>('idle');
   let updateInfo = $state<UpdateInfo | null>(null);
   let updateError = $state<string | null>(null);
@@ -292,7 +292,7 @@
   <div class="card settings-card-updater">
     <div class="card-header update-card-header">
       <h2>Обновление программы</h2>
-      <span class="version-badge">{currentAppVersion || 'v0.2.0'}</span>
+      <span class="version-badge">{currentAppVersion || 'v0.3.1'}</span>
     </div>
     <div class="card-body">
       <div class="form-group">

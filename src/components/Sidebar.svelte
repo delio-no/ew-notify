@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import type { PageId } from '../lib/types';
   import { api } from '../lib/api';
 
@@ -11,6 +12,19 @@
     isAdmin?: boolean;
     onNavigate: (page: PageId) => void;
   } = $props();
+
+  let appVersion = $state('v0.3.1');
+
+  onMount(async () => {
+    try {
+      const v = await api.getAppVersion();
+      if (v) {
+        appVersion = v.startsWith('v') ? v : `v${v}`;
+      }
+    } catch {
+      // fallback to default
+    }
+  });
 
   const items: { id: PageId; label: string }[] = [
     { id: 'dashboard', label: 'Дашборд' },
@@ -72,7 +86,7 @@
       onclick={openReleases}
       title="Посмотреть релиз на GitHub"
     >
-      v0.1.0
+      {appVersion}
     </button>
   </div>
 </aside>
