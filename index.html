@@ -141,6 +141,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
+      cursor: pointer;
     }
 
     video {
@@ -242,7 +243,7 @@
     .placeholder-subtitle {
       color: var(--text-dim);
       font-size: 0.9rem;
-      max-width: 400px;
+      max-width: 420px;
       line-height: 1.5;
     }
 
@@ -389,10 +390,10 @@
   </header>
 
   <main>
-    <div class="player-container" id="playerContainer">
-      <video id="videoPlayer" playsinline autoplay muted></video>
+    <div class="player-container" id="playerContainer" onclick="handlePlayerClick()">
+      <video id="videoPlayer" playsinline webkit-playsinline autoplay muted></video>
 
-      <div id="unmuteBanner" class="unmute-banner" onclick="unmuteAudio()">
+      <div id="unmuteBanner" class="unmute-banner" onclick="unmuteAudio(event)">
         <span>🔊</span>
         <span>Нажмите для включения звука</span>
       </div>
@@ -401,20 +402,23 @@
         <div id="loadingSpinner" class="spinner"></div>
         <h2 id="placeholderTitle" class="placeholder-title">Подключение к трансляции</h2>
         <p id="placeholderSubtitle" class="placeholder-subtitle">Ожидание подключения к хосту игры...</p>
-        <button id="retryBtn" class="btn" style="display: none;" onclick="initConnection()">
+        <button id="playBtn" class="btn" style="display: none;" onclick="forcePlayVideo(event)">
+          <span>▶</span> Запустить видео
+        </button>
+        <button id="retryBtn" class="btn" style="display: none;" onclick="initConnection(event)">
           <span>🔄</span> Повторить подключение
         </button>
       </div>
 
       <div class="player-overlay">
         <div class="overlay-top">
-          <button class="control-btn" onclick="togglePiP()" title="Картинка в картинке">⧉ PiP</button>
-          <button class="control-btn" onclick="toggleFullscreen()" title="Полный экран">⛶ Экран</button>
+          <button class="control-btn" onclick="togglePiP(event)" title="Картинка в картинке">⧉ PiP</button>
+          <button class="control-btn" onclick="toggleFullscreen(event)" title="Полный экран">⛶ Экран</button>
         </div>
         <div class="overlay-bottom">
           <div style="display: flex; gap: 8px;">
-            <button class="control-btn" id="playPauseBtn" onclick="togglePlay()">⏸</button>
-            <button class="control-btn" id="muteBtn" onclick="toggleMute()">🔇</button>
+            <button class="control-btn" id="playPauseBtn" onclick="togglePlay(event)">⏸</button>
+            <button class="control-btn" id="muteBtn" onclick="toggleMute(event)">🔇</button>
           </div>
           <span style="font-size: 0.8rem; color: var(--text-dim); background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px;">1080p 30fps WebRTC</span>
         </div>
@@ -443,6 +447,7 @@
     let targetStreamId = '';
     let viewerId = '';
     let isConnectedToHost = false;
+    let mediaStreamObj = null;
 
     const MQTT_BROKERS = [
       'wss://broker.emqx.io:8084/mqtt',
@@ -455,6 +460,7 @@
     const placeholderTitle = document.getElementById('placeholderTitle');
     const placeholderSubtitle = document.getElementById('placeholderSubtitle');
     const loadingSpinner = document.getElementById('loadingSpinner');
+    const playBtn = document.getElementById('playBtn');
     const retryBtn = document.getElementById('retryBtn');
     const statusBadge = document.getElementById('statusBadge');
     const statusText = document.getElementById('statusText');
@@ -472,12 +478,47 @@
       statusText.innerText = message;
     }
 
+    function onStreamPlaying() {
+      if (placeholder.classList.contains('hidden')) return;
+      placeholder.classList.add('hidden');
+      loadingSpinner.style.display = 'none';
+      playBtn.style.display = 'none';
+      retryBtn.style.display = 'none';
+      setStatus('live', 'В ЭФИРЕ • 1080p');
+    }
+
+    // Bind all video events to show stream as soon as first frame arrives
+    video.addEventListener('loadeddata', onStreamPlaying);
+    video.addEventListener('loadedmetadata', onStreamPlaying);
+    video.addEventListener('canplay', onStreamPlaying);
+    video.addEventListener('playing', onStreamPlaying);
+    video.addEventListener('timeupdate', () => {
+      if (video.currentTime > 0) onStreamPlaying();
+    });
+
     function showError(title, subtitle) {
       placeholder.classList.remove('hidden');
       loadingSpinner.style.display = 'none';
+      playBtn.style.display = 'none';
       retryBtn.style.display = 'inline-flex';
       placeholderTitle.innerText = title;
       placeholderSubtitle.innerText = subtitle;
+    }
+
+    function handlePlayerClick() {
+      if (!placeholder.classList.contains('hidden') && isConnectedToHost) {
+        forcePlayVideo();
+      }
+    }
+
+    function forcePlayVideo(e) {
+      if (e) e.stopPropagation();
+      video.muted = true;
+      video.play().then(() => {
+        onStreamPlaying();
+      }).catch(err => {
+        console.warn('Manual play failed:', err);
+      });
     }
 
     function cleanupCurrentConnection() {
@@ -490,9 +531,11 @@
         mqttClient = null;
       }
       isConnectedToHost = false;
+      mediaStreamObj = null;
     }
 
-    async function initConnection() {
+    async function initConnection(e) {
+      if (e) e.stopPropagation();
       cleanupCurrentConnection();
 
       if (!targetStreamId) {
@@ -507,6 +550,7 @@
       setStatus('connecting', 'Подключение к брокеру...');
       placeholder.classList.remove('hidden');
       loadingSpinner.style.display = 'block';
+      playBtn.style.display = 'none';
       retryBtn.style.display = 'none';
       placeholderTitle.innerText = 'Установка P2P соединения...';
       placeholderSubtitle.innerText = 'Подключение к хосту ' + targetStreamId;
@@ -529,7 +573,7 @@
         return;
       }
 
-      // Configure WebRTC PeerConnection
+      // Configure WebRTC PeerConnection with STUN
       pc = new RTCPeerConnection({
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
@@ -537,23 +581,27 @@
         ]
       });
 
+      mediaStreamObj = new MediaStream();
+      video.muted = true;
+      video.srcObject = mediaStreamObj;
+
       pc.ontrack = (event) => {
         console.log('Received remote media track:', event.track.kind);
+        if (event.track) {
+          mediaStreamObj.addTrack(event.track);
+        }
         if (event.streams && event.streams[0]) {
           video.srcObject = event.streams[0];
-        } else {
-          video.srcObject = new MediaStream([event.track]);
         }
 
         video.play().then(() => {
           onStreamPlaying();
         }).catch((err) => {
-          console.warn('Autoplay prevented:', err);
-          video.muted = true;
-          video.play().then(() => {
-            onStreamPlaying();
-            unmuteBanner.style.display = 'flex';
-          });
+          console.warn('Autoplay prevented on mobile:', err);
+          loadingSpinner.style.display = 'none';
+          playBtn.style.display = 'inline-flex';
+          placeholderTitle.innerText = 'Трансляция готова';
+          placeholderSubtitle.innerText = 'Нажмите кнопку ниже для запуска воспроизведения';
         });
       };
 
@@ -561,18 +609,28 @@
         console.log('WebRTC connection state:', pc.connectionState);
         if (pc.connectionState === 'connected') {
           isConnectedToHost = true;
-          setStatus('live', 'В ЭФИРЕ • 1080p');
+          setStatus('connecting', 'Связь установлена • Ожидание видеокадра...');
         } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
           if (!isConnectedToHost) {
-            showError('Трансляция не найдена', 'Стример офлайн или окно игры закрыто.');
+            showError('Трансляция не найдена', 'Стример офлайн или идентификатор окна устарел.');
           } else {
             showError('Связь прервана', 'Соединение с хостом было разорвано.');
           }
         }
       };
 
+      pc.oniceconnectionstatechange = () => {
+        console.log('ICE connection state:', pc.iceConnectionState);
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+          isConnectedToHost = true;
+        }
+      };
+
       // Add recvonly transceiver for 1080p video stream
-      pc.addTransceiver('video', { direction: 'recvonly' });
+      const transceiver = pc.addTransceiver('video', { direction: 'recvonly' });
+      if (transceiver && transceiver.receiver && transceiver.receiver.track) {
+        mediaStreamObj.addTrack(transceiver.receiver.track);
+      }
 
       // Create Offer SDP
       const offer = await pc.createOffer();
@@ -640,17 +698,19 @@
         brokerIndex++;
       });
 
-      // 15 seconds timeout if no video received
+      // 15 seconds check
       setTimeout(() => {
-        if (!isConnectedToHost && placeholder.classList.contains('hidden') === false) {
-          showError('Хост не отвечает', 'Проверьте, что в ew-notify запущен стрим этого окна.');
+        if (!placeholder.classList.contains('hidden')) {
+          if (isConnectedToHost) {
+            loadingSpinner.style.display = 'none';
+            playBtn.style.display = 'inline-flex';
+            placeholderTitle.innerText = 'Видеопоток ожидается';
+            placeholderSubtitle.innerText = 'P2P соединение установлено. Убедитесь, что окно игры развернуто на ПК, или нажмите кнопку ниже.';
+          } else {
+            showError('Хост не отвечает', 'Проверьте, что в ew-notify запущен стрим этого окна.');
+          }
         }
       }, 15000);
-    }
-
-    function onStreamPlaying() {
-      placeholder.classList.add('hidden');
-      setStatus('live', 'В ЭФИРЕ • 1080p');
     }
 
     function onManualConnect() {
@@ -670,17 +730,20 @@
       });
     }
 
-    function unmuteAudio() {
+    function unmuteAudio(e) {
+      if (e) e.stopPropagation();
       video.muted = false;
       unmuteBanner.style.display = 'none';
     }
 
-    function toggleMute() {
+    function toggleMute(e) {
+      if (e) e.stopPropagation();
       video.muted = !video.muted;
       document.getElementById('muteBtn').innerText = video.muted ? '🔇' : '🔊';
     }
 
-    function togglePlay() {
+    function togglePlay(e) {
+      if (e) e.stopPropagation();
       if (video.paused) {
         video.play();
         document.getElementById('playPauseBtn').innerText = '⏸';
@@ -690,7 +753,8 @@
       }
     }
 
-    function toggleFullscreen() {
+    function toggleFullscreen(e) {
+      if (e) e.stopPropagation();
       const container = document.getElementById('playerContainer');
       if (!document.fullscreenElement) {
         container.requestFullscreen?.() || container.webkitRequestFullscreen?.();
@@ -699,7 +763,8 @@
       }
     }
 
-    function togglePiP() {
+    function togglePiP(e) {
+      if (e) e.stopPropagation();
       if (document.pictureInPictureElement) {
         document.exitPictureInPicture();
       } else if (video.requestPictureInPicture) {
