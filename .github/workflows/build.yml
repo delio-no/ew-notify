@@ -74,7 +74,6 @@ jobs:
 
           Compress-Archive -Path artifacts/ew-notify/* -DestinationPath artifacts/ew-notify.zip -Force
           Remove-Item -Recurse -Force artifacts/ew-notify
-          Copy-Item $exe.FullName artifacts/ew-notify.exe
 
           # Generate SHA256 hashes
           Set-Location artifacts

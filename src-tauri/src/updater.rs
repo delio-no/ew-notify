@@ -97,16 +97,22 @@ pub async fn check_update() -> Result<UpdateInfo> {
 
     let has_update = latest_ver > current_ver;
 
-    // Pick best asset: prefer raw ew-notify.exe, fallback to ew-notify.zip
+    // Pick best asset: prefer ew-notify.zip (complete portable package), fallback to any .zip, fallback to .exe
     let best_asset = release
         .assets
         .iter()
-        .find(|a| a.name.eq_ignore_ascii_case("ew-notify.exe"))
+        .find(|a| a.name.eq_ignore_ascii_case("ew-notify.zip"))
         .or_else(|| {
             release
                 .assets
                 .iter()
-                .find(|a| a.name.eq_ignore_ascii_case("ew-notify.zip"))
+                .find(|a| a.name.ends_with(".zip"))
+        })
+        .or_else(|| {
+            release
+                .assets
+                .iter()
+                .find(|a| a.name.eq_ignore_ascii_case("ew-notify.exe"))
         });
 
     let (download_url, asset_name) = match best_asset {
@@ -204,6 +210,15 @@ pub async fn download_and_install_update(
             .ok_or_else(|| anyhow!("ew-notify.exe not found inside update archive"))?;
 
         fs::copy(&found_exe, &new_exe_path)?;
+
+        // Ensure WinDivert DLL and drivers are present/updated in the application directory
+        for dep in ["WinDivert.dll", "WinDivert64.sys", "WinDivert32.sys"] {
+            if let Some(src_path) = find_file_recursive(&extracted_dir, dep) {
+                let target_path = exe_dir.join(dep);
+                let _ = fs::copy(&src_path, &target_path);
+            }
+        }
+
         let _ = fs::remove_dir_all(&extracted_dir);
     } else {
         // Direct .exe binary
