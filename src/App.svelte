@@ -67,6 +67,24 @@
   let packetLines = $state<PacketLogEntry[]>([]);
   let showBotToken = $state(false);
   let availableUpdate = $state<UpdateInfo | null>(null);
+  let isUpdating = $state(false);
+  let updateError = $state<string | null>(null);
+
+  async function handleDirectUpdate() {
+    if (!availableUpdate || !availableUpdate.download_url || isUpdating) return;
+    isUpdating = true;
+    updateError = null;
+    showPage('settings');
+    showStatus(`Скачивание обновления ${availableUpdate.latest_version}...`);
+    try {
+      await api.installUpdate(availableUpdate.download_url, availableUpdate.asset_name);
+    } catch (e) {
+      isUpdating = false;
+      const msg = `Ошибка установки обновления: ${e}`;
+      updateError = msg;
+      showStatus(msg);
+    }
+  }
   let lastError = $state('');
   let lastPollAt = $state('—');
   let pollErrors = $state(0);
@@ -919,7 +937,9 @@
     {isAdmin}
     hasUpdate={!!availableUpdate?.has_update}
     updateVersion={availableUpdate?.latest_version || ''}
+    {isUpdating}
     onNavigate={showPage}
+    onDirectUpdate={handleDirectUpdate}
   />
 
   <main class="content">
@@ -964,6 +984,8 @@
         {isTokenChanged}
         bind:showBotToken
         bind:availableUpdate
+        bind:isUpdating
+        bind:updateError
         onSave={saveConfig}
         onReset={resetConfig}
         onTestTelegram={testTelegram}

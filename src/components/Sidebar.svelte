@@ -9,16 +9,20 @@
     isAdmin = false,
     hasUpdate = false,
     updateVersion = '',
+    isUpdating = false,
     onNavigate,
+    onDirectUpdate,
   }: {
     currentPage: PageId;
     isAdmin?: boolean;
     hasUpdate?: boolean;
     updateVersion?: string;
+    isUpdating?: boolean;
     onNavigate: (page: PageId) => void;
+    onDirectUpdate?: () => void;
   } = $props();
 
-  let appVersion = $state('v0.3.7');
+  let appVersion = $state('v0.3.8');
 
   onMount(async () => {
     try {
@@ -78,15 +82,22 @@
       <button
         type="button"
         class="sidebar-update-btn"
-        onclick={() => onNavigate('settings')}
-        title="Доступно обновление! Нажмите, чтобы перейти в настройки"
+        class:is-updating={isUpdating}
+        disabled={isUpdating}
+        onclick={onDirectUpdate}
+        title={isUpdating ? 'Идёт скачивание и установка обновления...' : 'Скачать и установить обновление сразу'}
       >
-        <svg class="update-btn-icon" viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true">
-          <path d="M8 1a7 7 0 1 0 7 7A7 7 0 0 0 8 1zm0 12.5A5.5 5.5 0 1 1 13.5 8 5.5 5.5 0 0 1 8 13.5zm.75-8.25a.75.75 0 0 0-1.5 0v3.69L5.53 7.22a.75.75 0 0 0-1.06 1.06l3 3a.75.75 0 0 0 1.06 0l3-3a.75.75 0 1 0-1.06-1.06L8.75 8.94z"/>
-        </svg>
-        <span>Обновить</span>
-        {#if updateVersion}
-          <span class="update-ver-chip">{updateVersion}</span>
+        {#if isUpdating}
+          <div class="sidebar-update-spinner"></div>
+          <span>Обновление...</span>
+        {:else}
+          <svg class="update-btn-icon" viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true">
+            <path d="M8 1a7 7 0 1 0 7 7A7 7 0 0 0 8 1zm0 12.5A5.5 5.5 0 1 1 13.5 8 5.5 5.5 0 0 1 8 13.5zm.75-8.25a.75.75 0 0 0-1.5 0v3.69L5.53 7.22a.75.75 0 0 0-1.06 1.06l3 3a.75.75 0 0 0 1.06 0l3-3a.75.75 0 1 0-1.06-1.06L8.75 8.94z"/>
+          </svg>
+          <span>Обновить</span>
+          {#if updateVersion}
+            <span class="update-ver-chip">{updateVersion}</span>
+          {/if}
         {/if}
       </button>
     {/if}
@@ -147,11 +158,34 @@
     overflow: hidden;
   }
 
-  .sidebar-update-btn:hover {
+  .sidebar-update-btn:hover:not(:disabled) {
     background: linear-gradient(135deg, rgba(37, 99, 235, 0.45) 0%, rgba(99, 102, 241, 0.5) 100%);
     border-color: #818cf8;
     box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
     transform: translateY(-1px);
+  }
+
+  .sidebar-update-btn.is-updating {
+    cursor: wait;
+    opacity: 0.9;
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.5) 0%, rgba(99, 102, 241, 0.55) 100%);
+    border-color: #818cf8;
+  }
+
+  .sidebar-update-spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #ffffff;
+    border-radius: 50%;
+    animation: sidebar-spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes sidebar-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .sidebar-update-btn:active {

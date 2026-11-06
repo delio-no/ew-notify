@@ -11,6 +11,8 @@
     isTokenChanged = false,
     showBotToken = $bindable(false),
     availableUpdate = $bindable<UpdateInfo | null>(null),
+    isUpdating = $bindable(false),
+    updateError = $bindable<string | null>(null),
     onSave,
     onReset,
     onTestTelegram,
@@ -26,6 +28,8 @@
     isTokenChanged?: boolean;
     showBotToken?: boolean;
     availableUpdate?: UpdateInfo | null;
+    isUpdating?: boolean;
+    updateError?: string | null;
     onSave: () => void;
     onReset: () => void;
     onTestTelegram: () => void;
@@ -36,16 +40,17 @@
     onApplyAndRestartBot?: () => void;
   } = $props();
 
-  let currentAppVersion = $state('v0.3.7');
+  let currentAppVersion = $state('v0.3.8');
   let updateStatus = $state<'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'error'>(
     availableUpdate?.has_update ? 'available' : 'idle'
   );
   let updateInfo = $state<UpdateInfo | null>(availableUpdate ?? null);
-  let updateError = $state<string | null>(null);
   let lastCheckedTime = $state<string | null>(availableUpdate ? new Date().toLocaleTimeString() : null);
 
   $effect(() => {
-    if (availableUpdate?.has_update && updateStatus !== 'downloading') {
+    if (isUpdating) {
+      updateStatus = 'downloading';
+    } else if (availableUpdate?.has_update && updateStatus !== 'downloading') {
       updateInfo = availableUpdate;
       updateStatus = 'available';
     }
@@ -87,13 +92,15 @@
   }
 
   async function installUpdate() {
-    if (!updateInfo || !updateInfo.download_url) return;
+    if (!updateInfo || !updateInfo.download_url || isUpdating) return;
     updateStatus = 'downloading';
+    isUpdating = true;
     updateError = null;
     try {
       await api.installUpdate(updateInfo.download_url, updateInfo.asset_name);
     } catch (e) {
       updateStatus = 'error';
+      isUpdating = false;
       updateError = `Ошибка установки обновления: ${e}`;
     }
   }
@@ -354,7 +361,7 @@
   <div class="card settings-card-updater">
     <div class="card-header update-card-header">
       <h2>Обновление программы</h2>
-      <span class="version-badge">{currentAppVersion || 'v0.3.7'}</span>
+      <span class="version-badge">{currentAppVersion || 'v0.3.8'}</span>
     </div>
     <div class="card-body">
       <div class="form-group">
