@@ -14,6 +14,7 @@
     type Pattern,
     type StoredNotification,
     type TargetWindow,
+    type UpdateInfo,
     type WindowFilterMode,
   } from './lib/types';
   import Sidebar from './components/Sidebar.svelte';
@@ -65,6 +66,7 @@
   let packetLogEnabled = $state(false);
   let packetLines = $state<PacketLogEntry[]>([]);
   let showBotToken = $state(false);
+  let availableUpdate = $state<UpdateInfo | null>(null);
   let lastError = $state('');
   let lastPollAt = $state('—');
   let pollErrors = $state(0);
@@ -857,6 +859,7 @@
             try {
               const update = await api.checkForUpdates();
               if (update.has_update) {
+                availableUpdate = update;
                 showStatus(`Доступно обновление: ${update.latest_version}`);
               }
             } catch {
@@ -927,7 +930,7 @@
 </script>
 
 <div class="app-container">
-  <Sidebar {currentPage} {isAdmin} onNavigate={showPage} />
+  <Sidebar {currentPage} {isAdmin} hasUpdate={!!availableUpdate?.has_update} onNavigate={showPage} />
 
   <main class="content">
     {#if !configLoaded}
@@ -970,6 +973,7 @@
         {isCaptureAuto}
         {isTokenChanged}
         bind:showBotToken
+        bind:availableUpdate
         onSave={saveConfig}
         onReset={resetConfig}
         onTestTelegram={testTelegram}

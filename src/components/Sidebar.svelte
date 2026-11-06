@@ -6,14 +6,16 @@
   let {
     currentPage,
     isAdmin = false,
+    hasUpdate = false,
     onNavigate,
   }: {
     currentPage: PageId;
     isAdmin?: boolean;
+    hasUpdate?: boolean;
     onNavigate: (page: PageId) => void;
   } = $props();
 
-  let appVersion = $state('v0.3.3');
+  let appVersion = $state('v0.3.4');
 
   onMount(async () => {
     try {
@@ -62,6 +64,9 @@
         onclick={() => onNavigate(item.id)}
       >
         <span>{item.label}</span>
+        {#if item.id === 'settings' && hasUpdate}
+          <span class="nav-update-dot" title="Доступно обновление"></span>
+        {/if}
       </button>
     {/each}
   </nav>
@@ -87,6 +92,9 @@
       title="Посмотреть релиз на GitHub"
     >
       {appVersion}
+      {#if hasUpdate}
+        <span class="update-badge-mini" title="Доступно обновление">NEW</span>
+      {/if}
     </button>
   </div>
 </aside>

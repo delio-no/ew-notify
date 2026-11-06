@@ -10,6 +10,7 @@
     isCaptureAuto = true,
     isTokenChanged = false,
     showBotToken = $bindable(false),
+    availableUpdate = $bindable<UpdateInfo | null>(null),
     onSave,
     onReset,
     onTestTelegram,
@@ -24,6 +25,7 @@
     isCaptureAuto?: boolean;
     isTokenChanged?: boolean;
     showBotToken?: boolean;
+    availableUpdate?: UpdateInfo | null;
     onSave: () => void;
     onReset: () => void;
     onTestTelegram: () => void;
@@ -34,17 +36,33 @@
     onApplyAndRestartBot?: () => void;
   } = $props();
 
-  let currentAppVersion = $state('v0.3.3');
-  let updateStatus = $state<'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'error'>('idle');
-  let updateInfo = $state<UpdateInfo | null>(null);
+  let currentAppVersion = $state('v0.3.4');
+  let updateStatus = $state<'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'error'>(
+    availableUpdate?.has_update ? 'available' : 'idle'
+  );
+  let updateInfo = $state<UpdateInfo | null>(availableUpdate ?? null);
   let updateError = $state<string | null>(null);
-  let lastCheckedTime = $state<string | null>(null);
+  let lastCheckedTime = $state<string | null>(availableUpdate ? new Date().toLocaleTimeString() : null);
+
+  $effect(() => {
+    if (availableUpdate?.has_update && updateStatus !== 'downloading') {
+      updateInfo = availableUpdate;
+      updateStatus = 'available';
+    }
+  });
 
   onMount(async () => {
     try {
       currentAppVersion = await api.getAppVersion();
     } catch {
       // ignore
+    }
+
+    if (availableUpdate?.has_update) {
+      updateInfo = availableUpdate;
+      updateStatus = 'available';
+    } else if (config.updater?.check_on_startup !== false && updateStatus === 'idle') {
+      void checkUpdates();
     }
   });
 
@@ -54,6 +72,7 @@
     try {
       const info = await api.checkForUpdates();
       updateInfo = info;
+      availableUpdate = info;
       lastCheckedTime = new Date().toLocaleTimeString();
       if (info.has_update) {
         updateStatus = 'available';
@@ -128,9 +147,23 @@
     <div class="card-header"><h2>Telegram</h2></div>
     <div class="card-body">
       <div class="form-group">
-        <label>Bot Token</label>
+        <div class="form-label-row">
+          <label for="bot-token-input">Bot Token</label>
+          <button
+            type="button"
+            class="botfather-link-btn"
+            onclick={() => api.openUrl('https://t.me/BotFather')}
+            title="Открыть диалог с @BotFather в Telegram"
+          >
+            <svg class="tg-icon" viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/>
+            </svg>
+            <span>Получить токен (@BotFather)</span>
+          </button>
+        </div>
         <div class="token-row">
           <input
+            id="bot-token-input"
             type={showBotToken ? 'text' : 'password'}
             bind:value={config.telegram.bot_token}
             placeholder="123456789:ABCdef…"
@@ -333,7 +366,7 @@
   <div class="card settings-card-updater">
     <div class="card-header update-card-header">
       <h2>Обновление программы</h2>
-      <span class="version-badge">{currentAppVersion || 'v0.3.3'}</span>
+      <span class="version-badge">{currentAppVersion || 'v0.3.4'}</span>
     </div>
     <div class="card-body">
       <div class="form-group">
@@ -426,6 +459,43 @@
 </div>
 
 <style>
+  .form-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+
+  .form-label-row label {
+    margin-bottom: 0;
+  }
+
+  .botfather-link-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(36, 161, 222, 0.12);
+    border: 1px solid rgba(36, 161, 222, 0.35);
+    border-radius: 4px;
+    color: #38bdf8;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 8px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .botfather-link-btn:hover {
+    background: rgba(36, 161, 222, 0.25);
+    border-color: #38bdf8;
+    color: #fff;
+    transform: translateY(-1px);
+  }
+
+  .botfather-link-btn .tg-icon {
+    flex-shrink: 0;
+  }
+
   .token-notice {
     display: flex;
     align-items: center;
