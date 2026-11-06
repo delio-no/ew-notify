@@ -332,8 +332,18 @@ impl ClickerState {
         filter: &WindowFilterState,
         rt: &tokio::runtime::Handle,
     ) {
-        let cfg = rt.block_on(async { config_arc.lock().await.clone() });
+        let cfg = match config_arc.try_lock() {
+            Ok(g) => g.clone(),
+            Err(_) => rt.block_on(async { config_arc.lock().await.clone() }),
+        };
         let rules = cfg.clicker.get_rules();
+
+        let any_stop = self.is_running() && rules.iter().any(|r| r.enabled && r.stop_on_pattern);
+        let any_start = rules.iter().any(|r| r.enabled && r.start_on_pattern);
+        if !any_stop && !any_start {
+            return;
+        }
+
         let proc_name = cfg.target.process_name.clone();
         let pattern_lower = pattern_name.to_lowercase();
 

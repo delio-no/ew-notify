@@ -355,6 +355,16 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                 Instant::now().checked_sub(std::time::Duration::from_secs(10)).unwrap_or_else(Instant::now),
             );
 
+            let mut cached_notify_settings = (10u64, true, true, 2000u64);
+            if let Ok(cfg) = config.try_lock() {
+                cached_notify_settings = (
+                    cfg.notifications.cooldown_seconds,
+                    cfg.notifications.tray_enabled,
+                    cfg.notifications.telegram_enabled,
+                    cfg.notifications.burst_dedup_ms,
+                );
+            }
+
             while monitoring.load(Ordering::SeqCst) {
                 let raw_packet = match capture.read_packet() {
                     Ok(p) => p,
@@ -499,16 +509,15 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     .map(|c| c.short_label())
                     .unwrap_or_else(|| "unknown".into());
 
-                let (cooldown_secs, tray_enabled, telegram_enabled, burst_window_ms) =
-                    rt.block_on(async {
-                        let cfg = config.lock().await;
-                        (
-                            cfg.notifications.cooldown_seconds,
-                            cfg.notifications.tray_enabled,
-                            cfg.notifications.telegram_enabled,
-                            cfg.notifications.burst_dedup_ms,
-                        )
-                    });
+                if let Ok(cfg) = config.try_lock() {
+                    cached_notify_settings = (
+                        cfg.notifications.cooldown_seconds,
+                        cfg.notifications.tray_enabled,
+                        cfg.notifications.telegram_enabled,
+                        cfg.notifications.burst_dedup_ms,
+                    );
+                }
+                let (cooldown_secs, tray_enabled, telegram_enabled, burst_window_ms) = cached_notify_settings;
 
                 let now = Instant::now();
 
@@ -629,12 +638,15 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     }
 
                     if tray_enabled {
+                        let tray_title = notify_title.clone();
                         let tray_body = if let Some(lbl) = &window_label {
                             format!("{}\n{}", pattern.name, lbl)
                         } else {
                             pattern.name.clone()
                         };
-                        notifications::show_system_notification(&notify_title, &tray_body);
+                        std::thread::spawn(move || {
+                            notifications::show_system_notification(&tray_title, &tray_body);
+                        });
                     }
 
                     if telegram_enabled {
@@ -644,20 +656,31 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                             None
                         };
 
-                        if let Err(e) = rt.block_on(telegram::send_notification(
-                            &config,
-                            &notify_title,
-                            &pattern.name,
-                            window_label.as_deref(),
-                            send_win,
-                        )) {
-                            let msg = format!("Telegram: {e}");
-                            tracing::warn!("{}", msg);
-                            if let Ok(mut err) = last_error.lock() {
-                                *err = msg.clone();
+                        let config_arc = config.clone();
+                        let app_notify_clone = app_notify.clone();
+                        let last_error_clone = last_error.clone();
+                        let notify_title_clone = notify_title.clone();
+                        let pattern_name_clone = pattern.name.clone();
+                        let window_label_clone = window_label.clone();
+
+                        rt.spawn(async move {
+                            if let Err(e) = telegram::send_notification(
+                                &config_arc,
+                                &notify_title_clone,
+                                &pattern_name_clone,
+                                window_label_clone.as_deref(),
+                                send_win,
+                            )
+                            .await
+                            {
+                                let msg = format!("Telegram: {e}");
+                                tracing::warn!("{}", msg);
+                                if let Ok(mut err) = last_error_clone.lock() {
+                                    *err = msg.clone();
+                                }
+                                let _ = app_notify_clone.emit("bot-error", msg);
                             }
-                            let _ = app_notify.emit("bot-error", msg);
-                        }
+                        });
                     }
                 } else {
                     tracing::info!(
