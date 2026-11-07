@@ -806,7 +806,7 @@
         <div class="panel-body">
           {#if rtmpStreamStatus}
             <div class="live-status-details">
-              🎮 Окно: <strong>{rtmpStreamStatus.title}</strong> (PID {rtmpStreamStatus.pid}) | 🚀 720p HD 30 FPS (без звука)
+              🎮 Окно: <strong>{rtmpStreamStatus.title}</strong> (PID {rtmpStreamStatus.pid}) | 🚀 1080p Full HD 30 FPS (без звука)
             </div>
             <button
               type="button"

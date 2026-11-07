@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-const TARGET_WIDTH: usize = 1280;
-const TARGET_HEIGHT: usize = 720;
+const TARGET_WIDTH: usize = 1920;
+const TARGET_HEIGHT: usize = 1080;
 const TARGET_FPS: u64 = 30;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -254,11 +254,11 @@ pub async fn start_rtmp_stream(
         "-tune",
         "zerolatency",
         "-b:v",
-        "2500k",
+        "4500k",
         "-maxrate",
-        "3000k",
+        "5000k",
         "-bufsize",
-        "6000k",
+        "9000k",
         "-pix_fmt",
         "yuv420p",
         "-g",
@@ -360,8 +360,8 @@ pub async fn start_rtmp_stream(
                     }
                 }
 
-                // Capture window frame scaled directly to 720p BGRA
-                let captured = crate::streamer::capture_window_720p_into(current_hwnd, &mut bgra_buffer);
+                // Capture window frame scaled directly to 1080p BGRA
+                let captured = crate::streamer::capture_window_scaled_into(current_hwnd, TARGET_WIDTH, TARGET_HEIGHT, &mut bgra_buffer);
                 if !captured {
                     // Window might be minimized or occluded temporarily, maintain stream with blank/black frame
                     bgra_buffer.fill(0);

@@ -664,9 +664,14 @@ fn run_capture_encode_loop(
     info!("720p capture loop terminated for HWND: {}", current_hwnd);
 }
 
-/// Capture game window and scale directly to 1280x720 BGRA
+/// Capture game window and scale directly to target resolution BGRA
 #[cfg(windows)]
-pub(crate) fn capture_window_720p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
+pub(crate) fn capture_window_scaled_into(
+    hwnd_val: isize,
+    target_w: usize,
+    target_h: usize,
+    out_bgra: &mut [u8],
+) -> bool {
     use std::mem::{size_of, zeroed};
     use windows::Win32::Foundation::{HWND, RECT};
     use windows::Win32::Graphics::Gdi::{
@@ -702,15 +707,15 @@ pub(crate) fn capture_window_720p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> 
         }
 
         let hdc_mem = CreateCompatibleDC(hdc_screen);
-        let hbmp_720p = CreateCompatibleBitmap(
+        let hbmp_target = CreateCompatibleBitmap(
             hdc_screen,
-            TARGET_WIDTH as i32,
-            TARGET_HEIGHT as i32,
+            target_w as i32,
+            target_h as i32,
         );
 
-        if hdc_mem.is_invalid() || hbmp_720p.is_invalid() {
-            if !hbmp_720p.is_invalid() {
-                DeleteObject(hbmp_720p);
+        if hdc_mem.is_invalid() || hbmp_target.is_invalid() {
+            if !hbmp_target.is_invalid() {
+                DeleteObject(hbmp_target);
             }
             if !hdc_mem.is_invalid() {
                 DeleteDC(hdc_mem);
@@ -719,7 +724,7 @@ pub(crate) fn capture_window_720p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> 
             return false;
         }
 
-        let old_mem = SelectObject(hdc_mem, hbmp_720p);
+        let old_mem = SelectObject(hdc_mem, hbmp_target);
 
         // Capture source window into memory DC
         let hdc_src = CreateCompatibleDC(hdc_screen);
@@ -754,8 +759,8 @@ pub(crate) fn capture_window_720p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> 
             hdc_mem,
             0,
             0,
-            TARGET_WIDTH as i32,
-            TARGET_HEIGHT as i32,
+            target_w as i32,
+            target_h as i32,
             hdc_src,
             0,
             0,
@@ -767,17 +772,17 @@ pub(crate) fn capture_window_720p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> 
         // Retrieve raw BGRA pixels
         let mut bmi: BITMAPINFO = zeroed();
         bmi.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
-        bmi.bmiHeader.biWidth = TARGET_WIDTH as i32;
-        bmi.bmiHeader.biHeight = -(TARGET_HEIGHT as i32); // Top-down
+        bmi.bmiHeader.biWidth = target_w as i32;
+        bmi.bmiHeader.biHeight = -(target_h as i32); // Top-down
         bmi.bmiHeader.biPlanes = 1;
         bmi.bmiHeader.biBitCount = 32;
         bmi.bmiHeader.biCompression = BI_RGB.0 as u32;
 
         let lines = GetDIBits(
             hdc_mem,
-            hbmp_720p,
+            hbmp_target,
             0,
-            TARGET_HEIGHT as u32,
+            target_h as u32,
             Some(out_bgra.as_mut_ptr() as *mut _),
             &mut bmi,
             DIB_RGB_COLORS,
@@ -793,11 +798,11 @@ pub(crate) fn capture_window_720p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> 
         if lines > 0 && !sample_has_content {
             let _ = BitBlt(hdc_src, 0, 0, src_w, src_h, hdc_screen, rect.left, rect.top, SRCCOPY);
             let _ = StretchBlt(
-                hdc_mem, 0, 0, TARGET_WIDTH as i32, TARGET_HEIGHT as i32,
+                hdc_mem, 0, 0, target_w as i32, target_h as i32,
                 hdc_src, 0, 0, src_w, src_h, SRCCOPY,
             );
             let _ = GetDIBits(
-                hdc_mem, hbmp_720p, 0, TARGET_HEIGHT as u32,
+                hdc_mem, hbmp_target, 0, target_h as u32,
                 Some(out_bgra.as_mut_ptr() as *mut _), &mut bmi, DIB_RGB_COLORS,
             );
         }
@@ -808,7 +813,7 @@ pub(crate) fn capture_window_720p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> 
         DeleteDC(hdc_src);
 
         SelectObject(hdc_mem, old_mem);
-        DeleteObject(hbmp_720p);
+        DeleteObject(hbmp_target);
         DeleteDC(hdc_mem);
         ReleaseDC(HWND(0), hdc_screen);
 
@@ -816,9 +821,16 @@ pub(crate) fn capture_window_720p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> 
     }
 }
 
-#[cfg(not(windows))]
-pub(crate) fn capture_window_720p_into(_hwnd: isize, _out: &mut [u8]) -> bool {
-    false
+pub(crate) fn capture_window_720p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
+    #[cfg(windows)]
+    {
+        capture_window_scaled_into(hwnd_val, TARGET_WIDTH, TARGET_HEIGHT, out_bgra)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (hwnd_val, out_bgra);
+        false
+    }
 }
 
 /// PeerConnection event handler for tracking viewer connection state & ICE

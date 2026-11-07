@@ -1,4 +1,5 @@
 
+#[allow(dead_code)]
 fn mask_stream_key(key: &str) -> String {
     let trimmed = key.trim();
     if trimmed.is_empty() {
@@ -600,10 +601,9 @@ pub async fn start_bot(
                                         "📡 Сейчас активна трансляция в Telegram:\n\n\
                                          🎮 Окно: «{}» (PID {})\n\
                                          ⏱ В эфире: {} сек\n\
-                                         🚀 Параметры: 720p HD, 30 FPS, битрейт 2500k\n\
-                                         📍 Сервер: {}{}\n\n\
+                                         🚀 Параметры: 1080p Full HD, 30 FPS, битрейт 4500k{}\n\n\
                                          Нажмите кнопку ниже для перехода в канал:",
-                                        active.title, active.pid, active.uptime_secs, active.rtmp_url, chan_line
+                                        active.title, active.pid, active.uptime_secs, chan_line
                                     );
                                     let mut kb = InlineKeyboardMarkup::default();
                                     if let Some(ref c) = rtmp_chan {
@@ -668,14 +668,15 @@ pub async fn start_bot(
                                             InlineKeyboardButton::callback("🔑 Изменить ключ", "rtmp_setup_help"),
                                             InlineKeyboardButton::callback("❌ Отмена", "rtmp_cancel"),
                                         ]);
+                                        let chan_line = if let Some(ref c) = rtmp_chan {
+                                            format!("\n📢 Канал: {}\n", c)
+                                        } else {
+                                            String::new()
+                                        };
                                         let prompt = format!(
-                                            "📡 Прямая RTMP-трансляция в Telegram (720p HD, 30 FPS)\n\n\
-                                             📍 Сервер: {}\n\
-                                             🔑 Ключ: {}\n\n\
-                                             Трансляция передается прямо в ваш Telegram-канал без посредников.\n\
+                                            "📡 Прямая RTMP-трансляция в Telegram (1080p Full HD, 30 FPS)\n{}\n\
                                              Выберите окно для начала эфира:",
-                                            rtmp_url,
-                                            mask_stream_key(&rtmp_key)
+                                            chan_line
                                         );
                                         let _ = bot
                                             .send_message(ChatId(chat_id), prompt)
@@ -720,18 +721,11 @@ pub async fn start_bot(
                                         } else {
                                             cfg.streamer.rtmp_key = parts[0].to_string();
                                         }
-                                        let saved_url = cfg.streamer.rtmp_url.clone();
-                                        let masked = mask_stream_key(&cfg.streamer.rtmp_key);
                                         let _ = crate::config::save_config(&cfg);
                                         drop(cfg);
 
-                                        let resp = format!(
-                                            "✅ Настройки RTMP успешно сохранены!\n\n\
-                                             📍 Сервер: {}\n\
-                                             🔑 Ключ: {}\n\n\
-                                             Теперь отправьте /rtmp или нажмите 📡 RTMP для запуска трансляции.",
-                                            saved_url, masked
-                                        );
+                                        let resp = "✅ Настройки RTMP успешно сохранены!\n\n\
+Теперь отправьте /rtmp или нажмите 📡 RTMP для запуска трансляции.";
                                         let _ = bot
                                             .send_message(ChatId(chat_id), resp)
                                             .reply_markup(make_user_keyboard(is_admin))
@@ -1264,8 +1258,8 @@ pub async fn start_bot(
                                                     };
 
                                                     let success_msg = format!(
-                                                        "📡 Трансляция в канал Telegram запущена!\n\n                                                         🎮 Окно: «{}» (PID {})\n                                                         ⏱ Только что запущена\n                                                         🚀 Качество: 720p HD, 30 FPS (H.264 / AAC Mute)\n                                                         📍 Сервер: {}{}",
-                                                        info.title, info.pid, info.rtmp_url, chan_note
+                                                        "📡 Трансляция в канал Telegram запущена!\n\n🎮 Окно: «{}» (PID {})\n⏱ Только что запущена\n🚀 Качество: 1080p Full HD, 30 FPS (H.264 / AAC Mute){}",
+                                                        info.title, info.pid, chan_note
                                                     );
                                                     let mut kb = InlineKeyboardMarkup::default();
                                                     if let Some(ref c) = chan_opt {
@@ -1349,8 +1343,8 @@ pub async fn start_bot(
                                         {
                                             Ok(info) => {
                                                 let success_msg = format!(
-                                                    "📡 Трансляция в канал Telegram запущена!\n\n                                                     🎮 Окно: «{}» (PID {})\n                                                     ⏱ Только что запущена\n                                                     🚀 Качество: 720p HD, 30 FPS (H.264 / AAC Mute)\n                                                     📍 Сервер: {}\n\n                                                     👉 Перейдите в ваш канал Telegram и включите видеотрансляцию (эфир появится автоматически)!",
-                                                    info.title, info.pid, info.rtmp_url
+                                                    "📡 Трансляция в канал Telegram запущена!\n\n🎮 Окно: «{}» (PID {})\n⏱ Только что запущена\n🚀 Качество: 1080p Full HD, 30 FPS (H.264 / AAC Mute)\n\n👉 Перейдите в ваш канал Telegram и включите видеотрансляцию (эфир появится автоматически)!",
+                                                    info.title, info.pid
                                                 );
                                                 let kb = InlineKeyboardMarkup::default().append_row(vec![
                                                     InlineKeyboardButton::callback("🔄 Обновить статус", "rtmp_refresh"),
@@ -1404,9 +1398,17 @@ pub async fn start_bot(
                                         .send()
                                         .await;
 
+                                    let cfg_guard = config.lock().await;
+                                    let chan_line = if let Some(ref c) = cfg_guard.streamer.rtmp_channel_url {
+                                        format!("\n📢 Канал: {}", c)
+                                    } else {
+                                        String::new()
+                                    };
+                                    drop(cfg_guard);
+
                                     let info_msg = format!(
-                                        "📡 Сейчас активна трансляция в Telegram:\n\n                                         🎮 Окно: «{}» (PID {})\n                                         ⏱ В эфире: {} сек\n                                         🚀 Параметры: 720p HD, 30 FPS (H.264 / AAC Mute)\n                                         📍 Сервер: {}\n\n                                         Откройте ваш Telegram-канал для просмотра прямого эфира.",
-                                        active.title, active.pid, active.uptime_secs, active.rtmp_url
+                                        "📡 Сейчас активна трансляция в Telegram:\n\n🎮 Окно: «{}» (PID {})\n⏱ В эфире: {} сек\n🚀 Параметры: 1080p Full HD, 30 FPS (H.264 / AAC Mute){}\n\nОткройте ваш Telegram-канал для просмотра прямого эфира.",
+                                        active.title, active.pid, active.uptime_secs, chan_line
                                     );
                                     let kb = InlineKeyboardMarkup::default().append_row(vec![
                                         InlineKeyboardButton::callback("🔄 Обновить статус", "rtmp_refresh"),
@@ -1445,8 +1447,6 @@ pub async fn start_bot(
 
                                 let config_guard = config.lock().await;
                                 let process_name = config_guard.target.process_name.clone();
-                                let rtmp_url = config_guard.streamer.rtmp_url.clone();
-                                let rtmp_key = config_guard.streamer.rtmp_key.clone();
                                 drop(config_guard);
 
                                 let windows = crate::screen_capture::find_target_windows(&process_name);
@@ -1480,11 +1480,7 @@ pub async fn start_bot(
                                         InlineKeyboardButton::callback("🔑 Изменить ключ", "rtmp_setup_help"),
                                         InlineKeyboardButton::callback("❌ Отмена", "rtmp_cancel"),
                                     ]);
-                                    let prompt = format!(
-                                        "📡 Выберите окно игры для начала RTMP-вещания в Telegram:\n\n                                         📍 Сервер: {}\n                                         🔑 Ключ: {}",
-                                        rtmp_url,
-                                        mask_stream_key(&rtmp_key)
-                                    );
+                                    let prompt = "📡 Выберите окно игры для начала RTMP-вещания в Telegram (1080p Full HD, 30 FPS):".to_string();
                                     let _ = bot
                                         .edit_message_text(message.chat().id, message.id(), prompt)
                                         .reply_markup(kb)
