@@ -29,8 +29,8 @@ use rtc::rtp_transceiver::rtp_sender::{
 use webrtc::media_stream::track_local::static_sample::TrackLocalStaticSample;
 use webrtc::media_stream::track_local::TrackLocal;
 use webrtc::peer_connection::{
-    PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCIceGatheringState,
-    RTCPeerConnectionState,
+    PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCIceConnectionState,
+    RTCIceGatheringState, RTCPeerConnectionState,
 };
 
 const TARGET_WIDTH: usize = 1280;
@@ -247,6 +247,18 @@ fn create_h264_codec() -> RTCRtpCodecParameters {
     }
 }
 
+fn url_encode(input: &str) -> String {
+    let mut out = String::new();
+    for b in input.bytes() {
+        if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
+}
+
 /// Start a new 1080p stream for the given game window
 pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<ActiveStreamInfo> {
     let mgr = get_manager();
@@ -351,7 +363,8 @@ pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<Active
         active_viewers,
     };
 
-    let player_url = format!(
+    let streamer_cfg = crate::config::load_config().map(|c| c.streamer).unwrap_or_default();
+    let mut player_url = format!(
         "https://delio-no.github.io/ew-notify/?s={}&_t={}",
         stream_id,
         std::time::SystemTime::now()
@@ -359,6 +372,18 @@ pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<Active
             .map(|d| d.as_secs())
             .unwrap_or(0)
     );
+
+    if let Some(turn_url) = streamer_cfg.turn_server.as_ref().filter(|s| !s.trim().is_empty()) {
+        let tu = streamer_cfg.turn_username.as_deref().unwrap_or("");
+        let tp = streamer_cfg.turn_password.as_deref().unwrap_or("");
+        player_url.push_str(&format!(
+            "&turn={}&tu={}&tp={}",
+            url_encode(turn_url),
+            url_encode(tu),
+            url_encode(tp)
+        ));
+    }
+
     let info = ActiveStreamInfo {
         stream_id,
         hwnd,
@@ -708,10 +733,22 @@ struct ViewerHandler {
 
 #[async_trait::async_trait]
 impl PeerConnectionEventHandler for ViewerHandler {
+    async fn on_ice_candidate(&self, evt: webrtc::peer_connection::RTCPeerConnectionIceEvent) {
+        let cand = evt.candidate.to_json().map(|j| j.candidate).unwrap_or_default();
+        if !cand.is_empty() {
+            info!("Host gathered candidate for viewer '{}': {}", self.viewer_id, cand);
+        }
+    }
+
     async fn on_ice_gathering_state_change(&self, state: RTCIceGatheringState) {
+        info!("Viewer '{}' ICE gathering state changed: {:?}", self.viewer_id, state);
         if state == RTCIceGatheringState::Complete {
             let _ = self.gather_complete_tx.try_send(());
         }
+    }
+
+    async fn on_ice_connection_state_change(&self, state: RTCIceConnectionState) {
+        info!("Viewer '{}' ICE connection state changed: {:?}", self.viewer_id, state);
     }
 
     async fn on_connection_state_change(&self, state: RTCPeerConnectionState) {
@@ -914,19 +951,40 @@ async fn process_offer(
         return None;
     }
 
-    // Configure WebRTC PeerConnection with STUN
+    // Configure WebRTC PeerConnection with STUN and optional TURN
+    let streamer_cfg = crate::config::load_config().map(|c| c.streamer).unwrap_or_default();
+
+    let mut ice_servers = vec![
+        RTCIceServer {
+            urls: vec![
+                "stun:stun.cloudflare.com:3478".to_string(),
+                "stun:stun.l.google.com:19302".to_string(),
+                "stun:stun1.l.google.com:19302".to_string(),
+                "stun:global.stun.twilio.com:3478".to_string(),
+            ],
+            ..Default::default()
+        },
+    ];
+
+    if let Some(turn_raw) = streamer_cfg.turn_server.as_ref().filter(|s| !s.trim().is_empty()) {
+        for url_part in turn_raw.split(',') {
+            let mut u = url_part.trim().to_string();
+            if !u.is_empty() {
+                if !u.starts_with("turn:") && !u.starts_with("turns:") {
+                    u = format!("turn:{}", u);
+                }
+                ice_servers.push(RTCIceServer {
+                    urls: vec![u.clone()],
+                    username: streamer_cfg.turn_username.clone().unwrap_or_default(),
+                    credential: streamer_cfg.turn_password.clone().unwrap_or_default(),
+                });
+                info!("Added TURN server to host WebRTC config: {}", u);
+            }
+        }
+    }
+
     let rtc_config = RTCConfigurationBuilder::new()
-        .with_ice_servers(vec![
-            RTCIceServer {
-                urls: vec![
-                    "stun:stun.cloudflare.com:3478".to_string(),
-                    "stun:stun.l.google.com:19302".to_string(),
-                    "stun:stun1.l.google.com:19302".to_string(),
-                    "stun:global.stun.twilio.com:3478".to_string(),
-                ],
-                ..Default::default()
-            },
-        ])
+        .with_ice_servers(ice_servers)
         .build();
 
     let (gather_complete_tx, mut gather_complete_rx) = mpsc::channel::<()>(1);
@@ -938,7 +996,7 @@ async fn process_offer(
         active_viewers: active_viewers.clone(),
     });
 
-    let bind_addrs = get_preferred_bind_addrs();
+    let bind_addrs = get_preferred_bind_addrs(streamer_cfg.udp_port);
     let setting_engine = rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder::new()
         .with_ice_timeouts(
             Some(Duration::from_secs(15)),
@@ -1017,7 +1075,12 @@ async fn process_offer(
     }
 
     // Wait briefly for ICE candidates to gather into local_description
-    let _ = tokio::time::timeout(Duration::from_millis(700), gather_complete_rx.recv()).await;
+    let gather_timeout = if streamer_cfg.turn_server.is_some() {
+        Duration::from_millis(1500)
+    } else {
+        Duration::from_millis(800)
+    };
+    let _ = tokio::time::timeout(gather_timeout, gather_complete_rx.recv()).await;
 
     if let Some(local_desc) = pc.local_description().await {
         let is_connected = Arc::new(AtomicBool::new(false));
@@ -1212,7 +1275,8 @@ async fn handle_offer_message(
 /// Determine the best local IPv4 address(es) to bind WebRTC UDP sockets to.
 /// Avoids virtual adapters (VMware, Hyper-V) which cause WSAENETUNREACH (os error 10051),
 /// and VPN/proxy tunnels (e.g. Happ/Xray) that break direct P2P NAT traversal.
-pub fn get_preferred_bind_addrs() -> Vec<String> {
+pub fn get_preferred_bind_addrs(udp_port: Option<u16>) -> Vec<String> {
+    let port = udp_port.unwrap_or(0);
     let mut candidates: Vec<(std::net::Ipv4Addr, i32)> = Vec::new();
 
     if let Ok(ifs) = rtc::shared::ifaces::ifaces() {
@@ -1265,13 +1329,13 @@ pub fn get_preferred_bind_addrs() -> Vec<String> {
 
     if let Some(&(best_ip, score)) = candidates.first() {
         if score > 0 {
-            info!("Selected primary WebRTC local bind IP: {} (score: {})", best_ip, score);
-            return vec![format!("{}:0", best_ip)];
+            info!("Selected primary WebRTC local bind IP: {}:{} (score: {})", best_ip, port, score);
+            return vec![format!("{}:{}", best_ip, port)];
         }
     }
 
-    warn!("No ideal LAN interface found for WebRTC; falling back to 0.0.0.0:0");
-    vec!["0.0.0.0:0".to_string()]
+    warn!("No ideal LAN interface found for WebRTC; falling back to 0.0.0.0:{}", port);
+    vec![format!("0.0.0.0:{}", port)]
 }
 
 #[cfg(test)]
@@ -1280,9 +1344,12 @@ mod tests {
 
     #[test]
     fn test_preferred_bind_addrs() {
-        let addrs = get_preferred_bind_addrs();
+        let addrs = get_preferred_bind_addrs(None);
         println!("Selected bind addrs: {:?}", addrs);
         assert!(!addrs.is_empty());
-        assert_eq!(addrs[0], "192.168.10.233:0");
+        assert!(addrs[0].ends_with(":0"));
+
+        let addrs_port = get_preferred_bind_addrs(Some(50000));
+        assert!(addrs_port[0].ends_with(":50000"));
     }
 }

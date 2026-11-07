@@ -25,6 +25,8 @@ pub struct AppConfig {
     pub clicker: ClickerConfig,
     #[serde(default)]
     pub updater: UpdaterConfig,
+    #[serde(default)]
+    pub streamer: StreamerConfig,
 }
 
 impl Default for AppConfig {
@@ -37,8 +39,21 @@ impl Default for AppConfig {
             startup: StartupConfig::default(),
             clicker: ClickerConfig::default(),
             updater: UpdaterConfig::default(),
+            streamer: StreamerConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct StreamerConfig {
+    #[serde(default)]
+    pub udp_port: Option<u16>,
+    #[serde(default)]
+    pub turn_server: Option<String>,
+    #[serde(default)]
+    pub turn_username: Option<String>,
+    #[serde(default)]
+    pub turn_password: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
