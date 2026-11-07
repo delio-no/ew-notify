@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { listen } from '@tauri-apps/api/event';
   import PageHeader from '../PageHeader.svelte';
   import { api } from '../../lib/api';
-  import type { Config, UpdateInfo, FFmpegInfo, ActiveRtmpInfo, TargetWindow } from '../../lib/types';
+  import type { Config, UpdateInfo, FFmpegInfo, ActiveRtmpInfo, TargetWindow, FFmpegDownloadProgress } from '../../lib/types';
 
   let {
     config = $bindable(),
@@ -55,6 +56,41 @@
   let rtmpStreamStatus = $state<ActiveRtmpInfo | null>(null);
   let isStartingRtmp = $state(false);
   let rtmpActionError = $state<string | null>(null);
+  let ffmpegDownload = $state<FFmpegDownloadProgress | null>(null);
+  let isDownloadingFfmpeg = $state(false);
+
+  async function startFfmpegDownload() {
+    isDownloadingFfmpeg = true;
+    ffmpegDownload = {
+      downloaded_bytes: 0,
+      total_bytes: null,
+      percent: 0,
+      stage: 'downloading',
+      message: 'Подключение к официальному репозиторию FFmpeg...',
+    };
+    try {
+      await api.downloadFFmpeg();
+      ffmpegInfo = await api.getFFmpegInfo();
+    } catch (e) {
+      if (ffmpegDownload) {
+        ffmpegDownload.stage = 'error';
+        ffmpegDownload.message = 'Ошибка загрузки: ' + String(e);
+      }
+    } finally {
+      isDownloadingFfmpeg = false;
+    }
+  }
+
+  async function removeFfmpeg() {
+    if (!confirm('Удалить файл ffmpeg.exe из папки программы и освободить место на диске?')) return;
+    try {
+      await api.deleteFFmpeg();
+      ffmpegInfo = await api.getFFmpegInfo();
+    } catch (e) {
+      alert(String(e));
+    }
+  }
+
 
   let ffmpegVersionShort = $derived.by(() => {
     if (!ffmpegInfo.version) return '';
@@ -162,6 +198,17 @@
       ffmpegInfo = await api.getFFmpegInfo();
       rtmpStreamStatus = await api.getRtmpStatus();
       await refreshWindows();
+      const unlistenDl = await listen<FFmpegDownloadProgress>(
+        'ffmpeg-download-progress',
+        (event) => {
+          ffmpegDownload = event.payload;
+          if (event.payload.stage === 'done') {
+            void api.getFFmpegInfo().then((info) => {
+              ffmpegInfo = info;
+            });
+          }
+        }
+      );
     } catch {
       // ignore
     }
@@ -466,12 +513,22 @@
       <div class="streamer-header-row">
         <h2>Видеотрансляции в Telegram (RTMP)</h2>
         {#if ffmpegInfo.installed}
-          <span class="streamer-badge badge-success" title={ffmpegInfo.path ?? ''}>
-            <span class="badge-dot dot-success"></span> FFmpeg {ffmpegVersionShort || 'готов'}
-          </span>
+          <div class="installed-row">
+            <span class="streamer-badge badge-success" title={ffmpegInfo.path ?? ''}>
+              <span class="badge-dot dot-success"></span> FFmpeg {ffmpegVersionShort || 'готов'}
+            </span>
+            <button
+              type="button"
+              class="btn-text-danger-sm"
+              onclick={removeFfmpeg}
+              title="Удалить ffmpeg.exe и освободить ~200 МБ диска"
+            >
+              🗑 Удалить
+            </button>
+          </div>
         {:else}
           <span class="streamer-badge badge-warning">
-            <span class="badge-dot dot-warning"></span> FFmpeg не найден
+            <span class="badge-dot dot-warning"></span> FFmpeg не установлен
           </span>
         {/if}
       </div>
@@ -479,29 +536,61 @@
     <div class="card-body">
       {#if !ffmpegInfo.installed}
         <div class="ffmpeg-alert-box">
-          <div class="alert-title">⚠️ <strong>FFmpeg не обнаружен на компьютере:</strong></div>
-          <div class="alert-desc">Для кодирования видеопотока игры в реальном времени требуется <code>ffmpeg.exe</code>.</div>
-          {#if ffmpegInstallMsg}
-            <div class="install-msg">{ffmpegInstallMsg}</div>
-          {/if}
-          <div class="alert-actions">
-            <button
-              type="button"
-              class="btn btn-sm btn-primary"
-              disabled={isInstallingFfmpeg}
-              onclick={installFfmpegViaWinget}
-            >
-              {isInstallingFfmpeg ? 'Установка...' : '⚡ Установить через winget'}
-            </button>
-            <button
-              type="button"
-              class="btn btn-sm btn-outline"
-              onclick={() => api.openUrl('https://www.gyan.dev/ffmpeg/builds/')}
-            >
-              🌐 Скачать вручную с Gyan.dev
-            </button>
+          <div class="alert-title">⚠️ <strong>FFmpeg не установлен:</strong> требуется для видеовещания в реальном времени.</div>
+          <div class="alert-desc">
+            Чтобы не раздувать размер релиза программы (более 200 МБ), FFmpeg не включен в дистрибутив по умолчанию и скачивается в 1 клик только теми, кому нужна трансляция.
           </div>
-          <div class="alert-hint">Либо просто поместите файл <code>ffmpeg.exe</code> в папку с программой <code>ew-notify</code>.</div>
+
+          {#if isDownloadingFfmpeg && ffmpegDownload}
+            <div class="dl-progress-box">
+              <div class="dl-progress-header">
+                <span class="dl-status-text">
+                  {#if ffmpegDownload.stage === 'extracting'}
+                    📦 Распаковка ffmpeg.exe из архива...
+                  {:else}
+                    ⬇️ {ffmpegDownload.message}
+                  {/if}
+                </span>
+                <span class="dl-percent">{Math.round(ffmpegDownload.percent)}%</span>
+              </div>
+              <div class="dl-progress-track">
+                <div class="dl-progress-bar" style="width: {ffmpegDownload.percent}%"></div>
+              </div>
+            </div>
+          {:else}
+            {#if ffmpegDownload?.stage === 'error'}
+              <div class="dl-error-msg">❌ {ffmpegDownload.message}</div>
+            {/if}
+            {#if ffmpegInstallMsg}
+              <div class="install-msg">{ffmpegInstallMsg}</div>
+            {/if}
+            <div class="alert-actions">
+              <button
+                type="button"
+                class="btn btn-sm btn-primary btn-dl-ffmpeg"
+                disabled={isDownloadingFfmpeg || isInstallingFfmpeg}
+                onclick={startFfmpegDownload}
+              >
+                ⬇️ Скачать FFmpeg (~87 МБ)
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm btn-outline"
+                disabled={isDownloadingFfmpeg || isInstallingFfmpeg}
+                onclick={installFfmpegViaWinget}
+              >
+                ⚡ Winget
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm btn-outline"
+                onclick={() => api.openUrl('https://www.gyan.dev/ffmpeg/builds/')}
+              >
+                🌐 Gyan.dev
+              </button>
+            </div>
+          {/if}
+          <div class="alert-hint">Файл <code>ffmpeg.exe</code> будет сохранен прямо в папку приложения и сразу готов к работе.</div>
         </div>
       {/if}
 
@@ -1188,5 +1277,77 @@
 
   .guide-list li {
     margin-bottom: 4px;
+  }
+  .installed-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .dl-progress-box {
+    margin-top: 10px;
+    margin-bottom: 10px;
+    padding: 10px 12px;
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    border-radius: 6px;
+  }
+
+  .dl-progress-header {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #38bdf8;
+    margin-bottom: 6px;
+    font-weight: 500;
+  }
+
+  .dl-percent {
+    font-weight: 700;
+    color: #4ade80;
+  }
+
+  .dl-progress-track {
+    width: 100%;
+    height: 8px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .dl-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #38bdf8, #22c55e);
+    transition: width 0.2s ease;
+  }
+
+  .dl-error-msg {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #f87171;
+  }
+
+  .btn-dl-ffmpeg {
+    font-weight: 600;
+    background: #0284c7;
+  }
+
+  .btn-dl-ffmpeg:hover {
+    background: #0369a1;
+  }
+
+  .btn-text-danger-sm {
+    background: none;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #f87171;
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .btn-text-danger-sm:hover {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: #ef4444;
   }
 </style>

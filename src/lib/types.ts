@@ -1,3 +1,11 @@
+export interface FFmpegDownloadProgress {
+  downloaded_bytes: number;
+  total_bytes: number | null;
+  percent: number;
+  stage: 'downloading' | 'extracting' | 'done' | 'error';
+  message: string;
+}
+
 export interface FFmpegInfo {
   installed: boolean;
   path: string | null;

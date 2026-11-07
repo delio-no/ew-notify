@@ -1621,6 +1621,19 @@ async fn install_ffmpeg_winget() -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn download_ffmpeg(app: AppHandle) -> Result<String, String> {
+    crate::rtmp_streamer::download_and_install_ffmpeg(&app)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_ffmpeg() -> Result<String, String> {
+    crate::rtmp_streamer::delete_ffmpeg_binary()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn start_rtmp_stream_ui(
     state: State<'_, AppState>,
     hwnd: isize,
@@ -1943,6 +1956,8 @@ pub fn run() {
             get_app_version,
             get_ffmpeg_info,
             install_ffmpeg_winget,
+            download_ffmpeg,
+            delete_ffmpeg,
             start_rtmp_stream_ui,
             stop_rtmp_stream_ui,
             get_rtmp_stream_ui_status,

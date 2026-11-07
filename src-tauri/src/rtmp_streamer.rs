@@ -423,3 +423,191 @@ pub async fn get_last_rtmp_errors() -> Vec<String> {
     }
     Vec::new()
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FFmpegDownloadProgress {
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub percent: f32,
+    pub stage: String,
+    pub message: String,
+}
+
+/// Download official Gyan Essentials FFmpeg release archive, extract ffmpeg.exe, and place in app directory
+pub async fn download_and_install_ffmpeg(app: &tauri::AppHandle) -> Result<String> {
+    use tauri::Emitter;
+
+    let exe_dir = std::env::current_exe()?
+        .parent()
+        .ok_or_else(|| anyhow!("Не удалось определить папку программы"))?
+        .to_path_buf();
+
+    let target_ffmpeg = exe_dir.join("ffmpeg.exe");
+
+    // Official Gyan FFmpeg release essentials build hosted on GitHub CDN
+    let download_url = "https://github.com/GyanD/codexffmpeg/releases/download/7.1/ffmpeg-7.1-essentials_build.zip";
+    info!("Starting FFmpeg download from {}...", download_url);
+
+    let client = reqwest::Client::builder()
+        .user_agent("ew-notify-downloader")
+        .timeout(Duration::from_secs(600))
+        .build()?;
+
+    let mut resp = client
+        .get(download_url)
+        .send()
+        .await
+        .map_err(|e| anyhow!("Ошибка подключения к серверу загрузки FFmpeg: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(anyhow!("Сервер вернул статус ошибки: {}", resp.status()));
+    }
+
+    let total_bytes = resp.content_length();
+    let temp_zip = exe_dir.join("ffmpeg.download.tmp.zip");
+    let mut file = std::fs::File::create(&temp_zip)
+        .map_err(|e| anyhow!("Не удалось создать временный файл: {e}"))?;
+
+    let mut downloaded_bytes: u64 = 0;
+    let mut last_emit = Instant::now();
+
+    let _ = app.emit(
+        "ffmpeg-download-progress",
+        &FFmpegDownloadProgress {
+            downloaded_bytes: 0,
+            total_bytes,
+            percent: 0.0,
+            stage: "downloading".to_string(),
+            message: "Начало загрузки архива FFmpeg...".to_string(),
+        },
+    );
+
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| anyhow!("Ошибка скачивания данных: {e}"))?
+    {
+        file.write_all(&chunk)
+            .map_err(|e| anyhow!("Ошибка записи во временный файл: {e}"))?;
+        downloaded_bytes += chunk.len() as u64;
+
+        if last_emit.elapsed() >= Duration::from_millis(150) {
+            let percent = if let Some(total) = total_bytes {
+                if total > 0 {
+                    (downloaded_bytes as f32 / total as f32) * 100.0
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
+
+            let _ = app.emit(
+                "ffmpeg-download-progress",
+                &FFmpegDownloadProgress {
+                    downloaded_bytes,
+                    total_bytes,
+                    percent,
+                    stage: "downloading".to_string(),
+                    message: format!(
+                        "Скачивание: {:.1} МБ / {:.1} МБ ({:.0}%)",
+                        downloaded_bytes as f64 / 1_048_576.0,
+                        total_bytes.unwrap_or(0) as f64 / 1_048_576.0,
+                        percent
+                    ),
+                },
+            );
+            last_emit = Instant::now();
+        }
+    }
+
+    drop(file);
+
+    let _ = app.emit(
+        "ffmpeg-download-progress",
+        &FFmpegDownloadProgress {
+            downloaded_bytes,
+            total_bytes,
+            percent: 100.0,
+            stage: "extracting".to_string(),
+            message: "Распаковка ffmpeg.exe из архива...".to_string(),
+        },
+    );
+
+    let extract_dir = exe_dir.join("ffmpeg.extract.tmp");
+    if extract_dir.exists() {
+        let _ = std::fs::remove_dir_all(&extract_dir);
+    }
+    std::fs::create_dir_all(&extract_dir)?;
+
+    let tar_status = std::process::Command::new("tar")
+        .args([
+            "-xf",
+            temp_zip.to_str().unwrap(),
+            "-C",
+            extract_dir.to_str().unwrap(),
+        ])
+        .output();
+
+    let extracted_ok = match tar_status {
+        Ok(out) if out.status.success() => true,
+        _ => {
+            let ps_cmd = format!(
+                "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                temp_zip.display(),
+                extract_dir.display()
+            );
+            let ps_status = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-Command", &ps_cmd])
+                .status();
+            matches!(ps_status, Ok(s) if s.success())
+        }
+    };
+
+    let _ = std::fs::remove_file(&temp_zip);
+
+    if !extracted_ok {
+        let _ = std::fs::remove_dir_all(&extract_dir);
+        return Err(anyhow!("Не удалось распаковать архив FFmpeg (tar/powershell)"));
+    }
+
+    let found_ffmpeg = crate::updater::find_file_recursive(&extract_dir, "ffmpeg.exe")
+        .ok_or_else(|| anyhow!("ffmpeg.exe не найден внутри архива"))?;
+
+    std::fs::copy(&found_ffmpeg, &target_ffmpeg)
+        .map_err(|e| anyhow!("Не удалось сохранить ffmpeg.exe в папку программы: {e}"))?;
+
+    let _ = std::fs::remove_dir_all(&extract_dir);
+
+    info!("FFmpeg successfully installed to {:?}", target_ffmpeg);
+
+    let _ = app.emit(
+        "ffmpeg-download-progress",
+        &FFmpegDownloadProgress {
+            downloaded_bytes,
+            total_bytes,
+            percent: 100.0,
+            stage: "done".to_string(),
+            message: "FFmpeg успешно установлен!".to_string(),
+        },
+    );
+
+    Ok(format!("FFmpeg успешно установлен в {:?}", target_ffmpeg))
+}
+
+/// Delete ffmpeg.exe binary from application folder to free disk space
+pub fn delete_ffmpeg_binary() -> Result<String> {
+    let exe_dir = std::env::current_exe()?
+        .parent()
+        .ok_or_else(|| anyhow!("Не удалось определить папку программы"))?
+        .to_path_buf();
+
+    let target = exe_dir.join("ffmpeg.exe");
+    if target.is_file() {
+        std::fs::remove_file(&target)
+            .map_err(|e| anyhow!("Не удалось удалить ffmpeg.exe: {e}"))?;
+        Ok("Файл ffmpeg.exe удален, место на диске освобождено.".to_string())
+    } else {
+        Ok("Файл ffmpeg.exe не найден в папке программы.".to_string())
+    }
+}

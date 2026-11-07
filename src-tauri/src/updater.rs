@@ -307,7 +307,7 @@ pub async fn download_and_install_update(
     Ok(())
 }
 
-fn find_file_recursive(dir: &Path, filename: &str) -> Option<PathBuf> {
+pub(crate) fn find_file_recursive(dir: &Path, filename: &str) -> Option<PathBuf> {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
