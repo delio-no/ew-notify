@@ -199,6 +199,24 @@ pub async fn start_rtmp_stream(
         format!("{}/{}", clean_server, clean_key)
     };
 
+    // Validate target window before launching stream
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, IsWindow};
+        if unsafe { !IsWindow(HWND(hwnd)).as_bool() } {
+            return Err(anyhow!("Выбранное окно игры (HWND {}) закрыто или не существует. Обновите список окон.", hwnd));
+        }
+        let mut rect = windows::Win32::Foundation::RECT::default();
+        unsafe { GetWindowRect(HWND(hwnd), &mut rect); }
+        let w = rect.right - rect.left;
+        let h = rect.bottom - rect.top;
+        if w <= 100 || h <= 100 {
+            return Err(anyhow!("Окно игры свернуто или имеет некорректный размер ({}x{}). Разверните окно игры перед запуском эфира.", w, h));
+        }
+        info!("Target window verified: HWND {}, size {}x{}", hwnd, w, h);
+    }
+
     let masked_target = if full_target.len() > 15 {
         format!("{}...****", &full_target[..full_target.len().saturating_sub(6)])
     } else {

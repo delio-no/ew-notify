@@ -147,24 +147,36 @@
   }
 
   async function startDesktopRtmp() {
-    if (selectedHwnd === null || selectedHwnd === undefined || selectedHwnd === '') {
-      rtmpActionError = 'Выберите окно игры для трансляции в списке.';
-      return;
-    }
-    const win = targetWindows.find(w => String(w.hwnd) === String(selectedHwnd));
-    if (!win) {
-      rtmpActionError = 'Выбранное окно не найдено. Нажмите 🔄 для обновления списка окон.';
-      return;
-    }
-    const key = (config.streamer?.rtmp_key ?? '').trim();
-    if (!key) {
-      rtmpActionError = 'Введите «Ключ трансляции» (Stream Key) из настроек Telegram.';
-      return;
-    }
-    const url = (config.streamer?.rtmp_url ?? '').trim();
     isStartingRtmp = true;
     rtmpActionError = null;
     try {
+      // Re-query target windows immediately to discard closed processes
+      try {
+        const fresh = await api.getTargetWindows();
+        if (fresh && fresh.length > 0) {
+          targetWindows = fresh;
+        }
+      } catch (err) {
+        console.warn('Auto refresh windows failed:', err);
+      }
+
+      if (targetWindows.length === 0) {
+        rtmpActionError = 'Окна игры EndlessWar не найдены. Запустите игру и нажмите 🔄.';
+        return;
+      }
+
+      let win = targetWindows.find(w => String(w.hwnd) === String(selectedHwnd));
+      if (!win) {
+        win = targetWindows[0];
+        selectedHwnd = win.hwnd;
+      }
+
+      const key = (config.streamer?.rtmp_key ?? '').trim();
+      if (!key) {
+        rtmpActionError = 'Введите «Ключ трансляции» (Stream Key) из настроек видеотрансляции в Telegram.';
+        return;
+      }
+      const url = (config.streamer?.rtmp_url ?? '').trim();
       rtmpStreamStatus = await api.startRtmpStream(win.hwnd, win.pid, win.title, url, key);
     } catch (e) {
       rtmpActionError = String(e);
