@@ -134,14 +134,38 @@
     }
   }
 
+  async function pasteRtmpUrlFromClipboard() {
+    try {
+      const clipText = await navigator.clipboard.readText();
+      if (clipText && clipText.trim()) {
+        if (!config.streamer) config.streamer = { rtmp_url: '', rtmp_key: '' };
+        config.streamer.rtmp_url = clipText.trim();
+      }
+    } catch (e) {
+      console.warn('Clipboard read failed:', e);
+    }
+  }
+
   async function startDesktopRtmp() {
-    if (!selectedHwnd) return;
-    const win = targetWindows.find(w => w.hwnd === selectedHwnd);
-    if (!win) return;
+    if (selectedHwnd === null || selectedHwnd === undefined || selectedHwnd === '') {
+      rtmpActionError = 'Выберите окно игры для трансляции в списке.';
+      return;
+    }
+    const win = targetWindows.find(w => String(w.hwnd) === String(selectedHwnd));
+    if (!win) {
+      rtmpActionError = 'Выбранное окно не найдено. Нажмите 🔄 для обновления списка окон.';
+      return;
+    }
+    const key = (config.streamer?.rtmp_key ?? '').trim();
+    if (!key) {
+      rtmpActionError = 'Введите «Ключ трансляции» (Stream Key) из настроек Telegram.';
+      return;
+    }
+    const url = (config.streamer?.rtmp_url ?? '').trim();
     isStartingRtmp = true;
     rtmpActionError = null;
     try {
-      rtmpStreamStatus = await api.startRtmpStream(win.hwnd, win.pid, win.title);
+      rtmpStreamStatus = await api.startRtmpStream(win.hwnd, win.pid, win.title, url, key);
     } catch (e) {
       rtmpActionError = String(e);
     } finally {
@@ -596,18 +620,27 @@
 
       <!-- RTMP URL Input -->
       <div class="form-group">
-        <label for="rtmp-url">Сервер трансляции Telegram (RTMP URL)</label>
+        <div class="form-label-row">
+          <label for="rtmp-url">Сервер трансляции Telegram (RTMP URL)</label>
+          <button
+            type="button"
+            class="btn-text-sm"
+            onclick={pasteRtmpUrlFromClipboard}
+          >
+            📋 Вставить
+          </button>
+        </div>
         <input
           id="rtmp-url"
           type="text"
-          value={config.streamer?.rtmp_url ?? 'rtmps://live.me.t.me/live'}
+          value={config.streamer?.rtmp_url ?? ''}
           oninput={(e) => {
-            if (!config.streamer) config.streamer = { rtmp_url: 'rtmps://live.me.t.me/live', rtmp_key: '' };
+            if (!config.streamer) config.streamer = { rtmp_url: '', rtmp_key: '' };
             config.streamer.rtmp_url = (e.target as HTMLInputElement).value;
           }}
-          placeholder="rtmps://live.me.t.me/live"
+          placeholder="rtmps://dc4-1.rtmp.t.me/s/ (или rtmps://live.me.t.me/live)"
         />
-        <span class="hint">Сервер видеотрансляций Telegram (по умолчанию: <code>rtmps://live.me.t.me/live</code>)</span>
+        <span class="hint">Скопируйте «URL сервера» из настроек видеотрансляции канала в Telegram (если пусто — используется по умолчанию)</span>
       </div>
 
       <!-- RTMP Key Input with Show/Hide and Paste -->
@@ -681,7 +714,7 @@
                 disabled={targetWindows.length === 0}
               >
                 {#if targetWindows.length === 0}
-                  <option value={null}>Окна игры не найдены (запустите EndlessWar)</option>
+                  <option value="">Окна игры не найдены (запустите EndlessWar)</option>
                 {:else}
                   {#each targetWindows as win, idx}
                     <option value={win.hwnd}>
@@ -713,13 +746,17 @@
 
       <!-- Quick Setup Guide -->
       <div class="streamer-guide">
-        <div class="guide-header">📖 <strong>Как настроить трансляцию в канал Telegram:</strong></div>
+        <div class="guide-header">📖 <strong>Пошаговая инструкция по запуску трансляции в Telegram:</strong></div>
         <ol class="guide-list">
-          <li>Создайте закрытый канал или группу в Telegram для просмотра игры.</li>
-          <li>В Telegram откройте меню канала ➔ <strong>«Видеотрансляция»</strong> ➔ <strong>«Трансляция с помощью стороннего ПО»</strong>.</li>
-          <li>Скопируйте <strong>«Ключ трансляции» (Stream Key)</strong> и нажмите <strong>«📋 Вставить»</strong> выше.</li>
-          <li>Нажмите <strong>«Сохранить настройки»</strong> внизу страницы. Ключ постоянный и вводится один раз.</li>
-          <li>Запустите эфир кнопкой <strong>«▶️ Начать эфир»</strong> здесь или кнопкой <strong>📡 RTMP</strong> в Telegram-боте!</li>
+          <li>Создайте закрытый канал или группу в Telegram (куда будет идти трансляция).</li>
+          <li>В Telegram нажмите на меню канала ➔ <strong>«Видеотрансляция»</strong> (или «Прямой эфир») ➔ <strong>«Трансляция с помощью стороннего ПО»</strong>.</li>
+          <li>Telegram выдаст два параметра:
+            <br/>• <strong>URL сервера:</strong> скопируйте и нажмите <strong>«📋 Вставить»</strong> в поле «Сервер трансляции» выше.
+            <br/>• <strong>Ключ трансляции:</strong> скопируйте и нажмите <strong>«📋 Вставить»</strong> в поле «Ключ трансляции» выше.
+          </li>
+          <li>Нажмите <strong>«Сохранить настройки»</strong> внизу страницы (ключ постоянный и сохраняется навсегда).</li>
+          <li>Выберите окно игры выше и нажмите <strong>«▶️ Начать эфир в Telegram»</strong> (или нажмите кнопку <strong>📡 RTMP</strong> в Telegram-боте).</li>
+          <li><strong>ВАЖНО:</strong> в окне видеотрансляции канала в Telegram нажмите синюю кнопку <strong>«Начать трансляцию»</strong> — после этого прямой эфир игры появится на экране!</li>
         </ol>
       </div>
     </div>

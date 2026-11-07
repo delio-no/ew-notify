@@ -113,8 +113,20 @@ export const api = {
   installFFmpegWinget: () => invoke<string>('install_ffmpeg_winget'),
   downloadFFmpeg: () => invoke<string>('download_ffmpeg'),
   deleteFFmpeg: () => invoke<string>('delete_ffmpeg'),
-  startRtmpStream: (hwnd: number, pid: number, title: string) =>
-    invoke<ActiveRtmpInfo>('start_rtmp_stream_ui', { hwnd, pid, title }),
+  startRtmpStream: (
+    hwnd: number,
+    pid: number,
+    title: string,
+    customUrl?: string,
+    customKey?: string
+  ) =>
+    invoke<ActiveRtmpInfo>('start_rtmp_stream_ui', {
+      hwnd,
+      pid,
+      title,
+      customUrl: customUrl || null,
+      customKey: customKey || null,
+    }),
   stopRtmpStream: () => invoke<void>('stop_rtmp_stream_ui'),
   getRtmpStatus: () => invoke<ActiveRtmpInfo | null>('get_rtmp_stream_ui_status'),
 };

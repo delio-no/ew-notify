@@ -1639,14 +1639,23 @@ async fn start_rtmp_stream_ui(
     hwnd: isize,
     pid: u32,
     title: String,
+    custom_url: Option<String>,
+    custom_key: Option<String>,
 ) -> Result<crate::rtmp_streamer::ActiveRtmpInfo, String> {
-    let cfg = state.config.lock().await;
+    let mut cfg = state.config.lock().await;
+    if let Some(u) = custom_url.filter(|s| !s.trim().is_empty()) {
+        cfg.streamer.rtmp_url = u.trim().to_string();
+    }
+    if let Some(k) = custom_key.filter(|s| !s.trim().is_empty()) {
+        cfg.streamer.rtmp_key = k.trim().to_string();
+    }
     let url = cfg.streamer.rtmp_url.clone();
     let key = cfg.streamer.rtmp_key.clone();
+    let _ = crate::config::save_config(&cfg);
     drop(cfg);
 
     if key.trim().is_empty() {
-        return Err("Ключ трансляции (Stream Key) не настроен. Введите его в настройках.".into());
+        return Err("Ключ трансляции (Stream Key) не заполнен. Введите ключ из настроек Telegram.".into());
     }
 
     crate::rtmp_streamer::start_rtmp_stream(hwnd, pid, title, url, key)

@@ -181,16 +181,31 @@ pub async fn start_rtmp_stream(
         .ok_or_else(|| anyhow!("FFmpeg не найден на компьютере! Поместите ffmpeg.exe в папку программы."))?;
     info!("Using FFmpeg binary at: {:?}", ffmpeg_path);
 
-    // Build destination RTMP URL
-    let full_target = if rtmp_key.trim().is_empty() {
-        rtmp_url.trim().to_string()
-    } else if rtmp_key.starts_with("rtmp://") || rtmp_key.starts_with("rtmps://") {
-        rtmp_key.trim().to_string()
+    let clean_key = rtmp_key.trim();
+    if clean_key.is_empty() {
+        return Err(anyhow!("Ключ трансляции (Stream Key) не заполнен."));
+    }
+
+    let full_target = if clean_key.starts_with("rtmp://") || clean_key.starts_with("rtmps://") {
+        clean_key.to_string()
     } else {
-        format!("{}/{}", rtmp_url.trim_end_matches('/'), rtmp_key.trim())
+        let mut server = rtmp_url.trim().to_string();
+        if server.is_empty() {
+            server = "rtmps://live.me.t.me/live".to_string();
+        }
+        if !server.starts_with("rtmp://") && !server.starts_with("rtmps://") {
+            server = format!("rtmps://{}", server);
+        }
+        let clean_server = server.trim_end_matches('/');
+        format!("{}/{}", clean_server, clean_key)
     };
 
-    info!("Spawning FFmpeg for RTMP stream to destination: {}...", rtmp_url);
+    let masked_target = if full_target.len() > 15 {
+        format!("{}...****", &full_target[..full_target.len().saturating_sub(6)])
+    } else {
+        "***".to_string()
+    };
+    info!("Spawning FFmpeg for RTMP stream to target: {}", masked_target);
 
     let mut cmd = Command::new(ffmpeg_path);
     #[cfg(windows)]
@@ -241,7 +256,8 @@ pub async fn start_rtmp_stream(
         "128k",
         "-ar",
         "44100",
-        "-shortest",
+        "-flvflags",
+        "no_duration_filesize",
         "-f",
         "flv",
         &full_target,
@@ -340,6 +356,7 @@ pub async fn start_rtmp_stream(
                     warn!("FFmpeg stdin pipe broken ({}), terminating RTMP capture loop", e);
                     break;
                 }
+                let _ = child_stdin.flush();
 
                 total_frames += 1;
                 if last_log.elapsed() >= Duration::from_secs(10) {
