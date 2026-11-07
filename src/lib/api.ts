@@ -1,9 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  ActiveRtmpInfo,
   ClickerConfig,
   ClickerStatus,
   ClickerTarget,
   Config,
+  FFmpegInfo,
   MonitoringStatus,
   PacketLogEntry,
   Pattern,
@@ -105,4 +107,12 @@ export const api = {
   installUpdate: (downloadUrl: string, assetName: string) =>
     invoke<string>('install_update', { downloadUrl, assetName }),
   getAppVersion: () => invoke<string>('get_app_version'),
+
+  // RTMP & FFmpeg
+  getFFmpegInfo: () => invoke<FFmpegInfo>('get_ffmpeg_info'),
+  installFFmpegWinget: () => invoke<string>('install_ffmpeg_winget'),
+  startRtmpStream: (hwnd: number, pid: number, title: string) =>
+    invoke<ActiveRtmpInfo>('start_rtmp_stream_ui', { hwnd, pid, title }),
+  stopRtmpStream: () => invoke<void>('stop_rtmp_stream_ui'),
+  getRtmpStatus: () => invoke<ActiveRtmpInfo | null>('get_rtmp_stream_ui_status'),
 };

@@ -1,3 +1,17 @@
+export interface FFmpegInfo {
+  installed: boolean;
+  path: string | null;
+  version: string | null;
+}
+
+export interface ActiveRtmpInfo {
+  hwnd: number;
+  pid: number;
+  title: string;
+  rtmp_url: string;
+  uptime_secs: number;
+}
+
 export interface Pattern {
   name: string;
   bytes: string;

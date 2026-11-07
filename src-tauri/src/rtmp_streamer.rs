@@ -92,6 +92,50 @@ pub fn find_ffmpeg() -> Option<PathBuf> {
     None
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FFmpegInfo {
+    pub installed: bool,
+    pub path: Option<String>,
+    pub version: Option<String>,
+}
+
+pub fn get_ffmpeg_version(path: &std::path::Path) -> Option<String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        if let Ok(output) = Command::new(path)
+            .arg("-version")
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .output()
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if let Some(first_line) = stdout.lines().next() {
+                    return Some(first_line.trim().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+pub fn check_ffmpeg_info() -> FFmpegInfo {
+    if let Some(path) = find_ffmpeg() {
+        let version = get_ffmpeg_version(&path);
+        FFmpegInfo {
+            installed: true,
+            path: Some(path.to_string_lossy().to_string()),
+            version,
+        }
+    } else {
+        FFmpegInfo {
+            installed: false,
+            path: None,
+            version: None,
+        }
+    }
+}
+
 /// Check if RTMP streaming is currently active
 pub fn is_rtmp_running() -> bool {
     RTMP_RUNNING_FLAG.load(Ordering::Relaxed)

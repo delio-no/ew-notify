@@ -1594,6 +1594,66 @@ async fn install_update(
 }
 
 #[tauri::command]
+async fn get_ffmpeg_info() -> Result<crate::rtmp_streamer::FFmpegInfo, String> {
+    Ok(crate::rtmp_streamer::check_ffmpeg_info())
+}
+
+#[tauri::command]
+async fn install_ffmpeg_winget() -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let output = std::process::Command::new("winget.exe")
+            .args(["install", "Gyan.FFmpeg", "--accept-source-agreements", "--accept-package-agreements"])
+            .creation_flags(0x08000000)
+            .output()
+            .map_err(|e| format!("Не удалось запустить winget: {e}"))?;
+        if output.status.success() {
+            Ok("FFmpeg успешно установлен через winget!".to_string())
+        } else {
+            let err = String::from_utf8_lossy(&output.stderr);
+            let out = String::from_utf8_lossy(&output.stdout);
+            Err(format!("Ошибка установки: {}\n{}", out, err))
+        }
+    }
+    #[cfg(not(windows))]
+    Err("Поддерживается только на Windows".into())
+}
+
+#[tauri::command]
+async fn start_rtmp_stream_ui(
+    state: State<'_, AppState>,
+    hwnd: isize,
+    pid: u32,
+    title: String,
+) -> Result<crate::rtmp_streamer::ActiveRtmpInfo, String> {
+    let cfg = state.config.lock().await;
+    let url = cfg.streamer.rtmp_url.clone();
+    let key = cfg.streamer.rtmp_key.clone();
+    drop(cfg);
+
+    if key.trim().is_empty() {
+        return Err("Ключ трансляции (Stream Key) не настроен. Введите его в настройках.".into());
+    }
+
+    crate::rtmp_streamer::start_rtmp_stream(hwnd, pid, title, url, key)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn stop_rtmp_stream_ui() -> Result<(), String> {
+    crate::rtmp_streamer::stop_rtmp_stream()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_rtmp_stream_ui_status() -> Result<Option<crate::rtmp_streamer::ActiveRtmpInfo>, String> {
+    Ok(crate::rtmp_streamer::get_rtmp_info().await)
+}
+
+#[tauri::command]
 fn get_app_version() -> String {
     format!("v{}", updater::APP_VERSION)
 }
@@ -1881,6 +1941,11 @@ pub fn run() {
             check_for_updates,
             install_update,
             get_app_version,
+            get_ffmpeg_info,
+            install_ffmpeg_winget,
+            start_rtmp_stream_ui,
+            stop_rtmp_stream_ui,
+            get_rtmp_stream_ui_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

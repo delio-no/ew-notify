@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import PageHeader from '../PageHeader.svelte';
   import { api } from '../../lib/api';
-  import type { Config, UpdateInfo } from '../../lib/types';
+  import type { Config, UpdateInfo, FFmpegInfo, ActiveRtmpInfo, TargetWindow } from '../../lib/types';
 
   let {
     config = $bindable(),
@@ -46,6 +46,102 @@
   );
   let updateInfo = $state<UpdateInfo | null>(availableUpdate ?? null);
   let lastCheckedTime = $state<string | null>(availableUpdate ? new Date().toLocaleTimeString() : null);
+  let ffmpegInfo = $state<FFmpegInfo>({ installed: false, path: null, version: null });
+  let isInstallingFfmpeg = $state(false);
+  let ffmpegInstallMsg = $state<string | null>(null);
+  let showRtmpKey = $state(false);
+  let targetWindows = $state<TargetWindow[]>([]);
+  let selectedHwnd = $state<number | null>(null);
+  let rtmpStreamStatus = $state<ActiveRtmpInfo | null>(null);
+  let isStartingRtmp = $state(false);
+  let rtmpActionError = $state<string | null>(null);
+
+  let ffmpegVersionShort = $derived.by(() => {
+    if (!ffmpegInfo.version) return '';
+    const match = ffmpegInfo.version.match(/version\s+([0-9a-zA-Z._-]+)/i);
+    return match ? match[1] : ffmpegInfo.version.split(' ')[0] || '';
+  });
+
+  $effect(() => {
+    if (rtmpStreamStatus) {
+      const interval = setInterval(async () => {
+        try {
+          rtmpStreamStatus = await api.getRtmpStatus();
+        } catch {
+          // ignore
+        }
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  });
+
+  async function refreshWindows() {
+    try {
+      targetWindows = await api.getTargetWindows();
+      if (targetWindows.length > 0 && (!selectedHwnd || !targetWindows.some(w => w.hwnd === selectedHwnd))) {
+        selectedHwnd = targetWindows[0].hwnd;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  async function pasteRtmpKeyFromClipboard() {
+    try {
+      const clipText = await navigator.clipboard.readText();
+      if (clipText && clipText.trim()) {
+        if (!config.streamer) config.streamer = { rtmp_url: 'rtmps://live.me.t.me/live', rtmp_key: '' };
+        config.streamer.rtmp_key = clipText.trim();
+      }
+    } catch (e) {
+      console.warn('Clipboard read failed:', e);
+    }
+  }
+
+  async function startDesktopRtmp() {
+    if (!selectedHwnd) return;
+    const win = targetWindows.find(w => w.hwnd === selectedHwnd);
+    if (!win) return;
+    isStartingRtmp = true;
+    rtmpActionError = null;
+    try {
+      rtmpStreamStatus = await api.startRtmpStream(win.hwnd, win.pid, win.title);
+    } catch (e) {
+      rtmpActionError = String(e);
+    } finally {
+      isStartingRtmp = false;
+    }
+  }
+
+  async function stopDesktopRtmp() {
+    try {
+      await api.stopRtmpStream();
+      rtmpStreamStatus = null;
+    } catch (e) {
+      rtmpActionError = String(e);
+    }
+  }
+
+  async function installFfmpegViaWinget() {
+    isInstallingFfmpeg = true;
+    ffmpegInstallMsg = 'Запуск установки Gyan.FFmpeg через winget... Подождите.';
+    try {
+      const res = await api.installFFmpegWinget();
+      ffmpegInstallMsg = res;
+      ffmpegInfo = await api.getFFmpegInfo();
+    } catch (e) {
+      ffmpegInstallMsg = 'Ошибка: ' + String(e);
+    } finally {
+      isInstallingFfmpeg = false;
+    }
+  }
+
+  function formatUptime(secs: number): string {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  }
+
 
   $effect(() => {
     if (isUpdating) {
@@ -59,6 +155,13 @@
   onMount(async () => {
     try {
       currentAppVersion = await api.getAppVersion();
+    } catch {
+      // ignore
+    }
+    try {
+      ffmpegInfo = await api.getFFmpegInfo();
+      rtmpStreamStatus = await api.getRtmpStatus();
+      await refreshWindows();
     } catch {
       // ignore
     }
@@ -359,8 +462,50 @@
   </div>
 
   <div class="card settings-card-streamer">
-    <div class="card-header"><h2>Видеотрансляции (RTMP / Telegram)</h2></div>
+    <div class="card-header streamer-card-header">
+      <div class="streamer-header-row">
+        <h2>Видеотрансляции в Telegram (RTMP)</h2>
+        {#if ffmpegInfo.installed}
+          <span class="streamer-badge badge-success" title={ffmpegInfo.path ?? ''}>
+            <span class="badge-dot dot-success"></span> FFmpeg {ffmpegVersionShort || 'готов'}
+          </span>
+        {:else}
+          <span class="streamer-badge badge-warning">
+            <span class="badge-dot dot-warning"></span> FFmpeg не найден
+          </span>
+        {/if}
+      </div>
+    </div>
     <div class="card-body">
+      {#if !ffmpegInfo.installed}
+        <div class="ffmpeg-alert-box">
+          <div class="alert-title">⚠️ <strong>FFmpeg не обнаружен на компьютере:</strong></div>
+          <div class="alert-desc">Для кодирования видеопотока игры в реальном времени требуется <code>ffmpeg.exe</code>.</div>
+          {#if ffmpegInstallMsg}
+            <div class="install-msg">{ffmpegInstallMsg}</div>
+          {/if}
+          <div class="alert-actions">
+            <button
+              type="button"
+              class="btn btn-sm btn-primary"
+              disabled={isInstallingFfmpeg}
+              onclick={installFfmpegViaWinget}
+            >
+              {isInstallingFfmpeg ? 'Установка...' : '⚡ Установить через winget'}
+            </button>
+            <button
+              type="button"
+              class="btn btn-sm btn-outline"
+              onclick={() => api.openUrl('https://www.gyan.dev/ffmpeg/builds/')}
+            >
+              🌐 Скачать вручную с Gyan.dev
+            </button>
+          </div>
+          <div class="alert-hint">Либо просто поместите файл <code>ffmpeg.exe</code> в папку с программой <code>ew-notify</code>.</div>
+        </div>
+      {/if}
+
+      <!-- RTMP URL Input -->
       <div class="form-group">
         <label for="rtmp-url">Сервер трансляции Telegram (RTMP URL)</label>
         <input
@@ -373,24 +518,120 @@
           }}
           placeholder="rtmps://live.me.t.me/live"
         />
-        <span class="hint">Адрес сервера трансляций Telegram (по умолчанию: rtmps://live.me.t.me/live)</span>
+        <span class="hint">Сервер видеотрансляций Telegram (по умолчанию: <code>rtmps://live.me.t.me/live</code>)</span>
       </div>
+
+      <!-- RTMP Key Input with Show/Hide and Paste -->
       <div class="form-group">
-        <label for="rtmp-key">Ключ трансляции Telegram (Stream Key)</label>
+        <div class="form-label-row">
+          <label for="rtmp-key">Ключ трансляции Telegram (Stream Key)</label>
+          <div class="rtmp-key-buttons">
+            <button
+              type="button"
+              class="btn-text-sm"
+              onclick={() => showRtmpKey = !showRtmpKey}
+            >
+              {showRtmpKey ? '🙈 Скрыть' : '👁 Показать'}
+            </button>
+            <button
+              type="button"
+              class="btn-text-sm"
+              onclick={pasteRtmpKeyFromClipboard}
+            >
+              📋 Вставить
+            </button>
+          </div>
+        </div>
         <input
           id="rtmp-key"
-          type="password"
+          type={showRtmpKey ? 'text' : 'password'}
           value={config.streamer?.rtmp_key ?? ''}
           oninput={(e) => {
             if (!config.streamer) config.streamer = { rtmp_url: 'rtmps://live.me.t.me/live', rtmp_key: '' };
             config.streamer.rtmp_key = (e.target as HTMLInputElement).value;
           }}
-          placeholder="123456789:ABCdef..."
+          placeholder="123456789:ABCdefGHIjklMNO..."
         />
-        <span class="hint">Ключ из настроек видеотрансляции вашего закрытого канала или группы в Telegram</span>
+        <span class="hint">Ключ из меню вашего канала Telegram: «Видеотрансляция» ➔ «Трансляция с помощью...» ➔ «Ключ трансляции»</span>
       </div>
-      <div class="streamer-note">
-        💡 <strong>Прямой эфир через RTMP:</strong> позволяет бесплатно и безлимитно транслировать окно игры в закрытый Telegram-канал без посредников. Запуск трансляции можно выполнять прямо из бота кнопкой <strong>📡 RTMP</strong> или командой <code>/rtmp</code>.
+
+      <!-- Live Stream Control directly inside ew-notify Desktop UI -->
+      <div class="rtmp-control-panel">
+        <div class="panel-header">
+          <span class="panel-title">Управление прямым эфиром из приложения</span>
+          {#if rtmpStreamStatus}
+            <span class="live-pill">
+              <span class="live-indicator"></span> В ЭФИРЕ ({formatUptime(rtmpStreamStatus.uptime_secs)})
+            </span>
+          {:else}
+            <span class="idle-pill">Остановлено</span>
+          {/if}
+        </div>
+
+        {#if rtmpActionError}
+          <div class="rtmp-error-msg">⚠️ {rtmpActionError}</div>
+        {/if}
+
+        <div class="panel-body">
+          {#if rtmpStreamStatus}
+            <div class="live-status-details">
+              🎮 Окно: <strong>{rtmpStreamStatus.title}</strong> (PID {rtmpStreamStatus.pid}) | 🚀 720p HD 30 FPS (без звука)
+            </div>
+            <button
+              type="button"
+              class="btn btn-danger btn-sm"
+              onclick={stopDesktopRtmp}
+            >
+              🛑 Остановить вещание в Telegram
+            </button>
+          {:else}
+            <div class="launch-row">
+              <select
+                class="window-select"
+                bind:value={selectedHwnd}
+                disabled={targetWindows.length === 0}
+              >
+                {#if targetWindows.length === 0}
+                  <option value={null}>Окна игры не найдены (запустите EndlessWar)</option>
+                {:else}
+                  {#each targetWindows as win, idx}
+                    <option value={win.hwnd}>
+                      🎮 Окно #{idx + 1} — {win.title} (PID {win.pid}){win.is_minimized ? ' [Свёрнуто]' : ''}
+                    </option>
+                  {/each}
+                {/if}
+              </select>
+              <button
+                type="button"
+                class="btn btn-refresh-sm"
+                onclick={refreshWindows}
+                title="Обновить список окон"
+              >
+                🔄
+              </button>
+              <button
+                type="button"
+                class="btn btn-primary btn-sm"
+                disabled={!selectedHwnd || !ffmpegInfo.installed || !config.streamer?.rtmp_key || isStartingRtmp}
+                onclick={startDesktopRtmp}
+              >
+                {isStartingRtmp ? 'Запуск...' : '▶️ Начать эфир в Telegram'}
+              </button>
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <!-- Quick Setup Guide -->
+      <div class="streamer-guide">
+        <div class="guide-header">📖 <strong>Как настроить трансляцию в канал Telegram:</strong></div>
+        <ol class="guide-list">
+          <li>Создайте закрытый канал или группу в Telegram для просмотра игры.</li>
+          <li>В Telegram откройте меню канала ➔ <strong>«Видеотрансляция»</strong> ➔ <strong>«Трансляция с помощью стороннего ПО»</strong>.</li>
+          <li>Скопируйте <strong>«Ключ трансляции» (Stream Key)</strong> и нажмите <strong>«📋 Вставить»</strong> выше.</li>
+          <li>Нажмите <strong>«Сохранить настройки»</strong> внизу страницы. Ключ постоянный и вводится один раз.</li>
+          <li>Запустите эфир кнопкой <strong>«▶️ Начать эфир»</strong> здесь или кнопкой <strong>📡 RTMP</strong> в Telegram-боте!</li>
+        </ol>
       </div>
     </div>
   </div>
@@ -729,23 +970,223 @@
       transform: rotate(360deg);
     }
   }
-  .streamer-note {
-    margin-top: 12px;
-    padding: 10px 14px;
-    background: rgba(56, 189, 248, 0.08);
-    border: 1px solid rgba(56, 189, 248, 0.2);
+
+  .streamer-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .streamer-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 999px;
+  }
+
+  .streamer-badge.badge-success {
+    background: rgba(34, 197, 94, 0.15);
+    border: 1px solid rgba(34, 197, 94, 0.35);
+    color: #4ade80;
+  }
+
+  .streamer-badge.badge-warning {
+    background: rgba(234, 179, 8, 0.15);
+    border: 1px solid rgba(234, 179, 8, 0.35);
+    color: #facc15;
+  }
+
+  .badge-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+  }
+
+  .badge-dot.dot-success {
+    background: #22c55e;
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+  }
+
+  .badge-dot.dot-warning {
+    background: #eab308;
+    box-shadow: 0 0 6px rgba(234, 179, 8, 0.6);
+  }
+
+  .ffmpeg-alert-box {
+    margin-bottom: 16px;
+    padding: 12px 14px;
+    background: rgba(234, 179, 8, 0.08);
+    border: 1px solid rgba(234, 179, 8, 0.25);
     border-radius: 6px;
     font-size: 13px;
-    line-height: 1.5;
-    color: #bae6fd;
+    color: #fef08a;
   }
-  .streamer-note strong {
+
+  .alert-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    margin-bottom: 8px;
+  }
+
+  .alert-hint {
+    font-size: 11px;
+    opacity: 0.8;
+  }
+
+  .install-msg {
+    margin-top: 6px;
+    font-size: 12px;
     color: #38bdf8;
   }
-  .streamer-note code {
-    background: rgba(0, 0, 0, 0.3);
-    padding: 2px 6px;
+
+  .rtmp-key-buttons {
+    display: flex;
+    gap: 8px;
+  }
+
+  .btn-text-sm {
+    background: none;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #38bdf8;
+    font-size: 11px;
+    padding: 2px 7px;
     border-radius: 4px;
-    color: #7dd3fc;
+    cursor: pointer;
+  }
+
+  .btn-text-sm:hover {
+    background: rgba(56, 189, 248, 0.15);
+    border-color: #38bdf8;
+  }
+
+  .rtmp-control-panel {
+    margin-top: 16px;
+    margin-bottom: 16px;
+    padding: 14px;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    border-radius: 8px;
+  }
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .panel-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #e2e8f0;
+  }
+
+  .live-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #f87171;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+
+  .live-indicator {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #ef4444;
+    box-shadow: 0 0 6px #ef4444;
+    animation: pulse-live 1.5s infinite;
+  }
+
+  @keyframes pulse-live {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.85); }
+  }
+
+  .idle-pill {
+    font-size: 11px;
+    color: #94a3b8;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+
+  .launch-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .window-select {
+    flex: 1;
+    background: #0f172a;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    padding: 6px 10px;
+    color: #f8fafc;
+    font-size: 13px;
+  }
+
+  .btn-refresh-sm {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    padding: 6px 10px;
+    cursor: pointer;
+  }
+
+  .btn-refresh-sm:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
+
+  .live-status-details {
+    font-size: 13px;
+    color: #cbd5e1;
+    margin-bottom: 10px;
+  }
+
+  .rtmp-error-msg {
+    padding: 6px 10px;
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 4px;
+    color: #fca5a5;
+    font-size: 12px;
+    margin-bottom: 10px;
+  }
+
+  .streamer-guide {
+    padding: 12px 14px;
+    background: rgba(56, 189, 248, 0.06);
+    border: 1px solid rgba(56, 189, 248, 0.18);
+    border-radius: 6px;
+    font-size: 12px;
+    color: #bae6fd;
+    line-height: 1.5;
+  }
+
+  .guide-header {
+    margin-bottom: 6px;
+    color: #38bdf8;
+    font-size: 13px;
+  }
+
+  .guide-list {
+    margin: 0;
+    padding-left: 20px;
+  }
+
+  .guide-list li {
+    margin-bottom: 4px;
   }
 </style>
