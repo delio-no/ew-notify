@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use rumqttc::{AsyncClient, MqttOptions, QoS};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex};
@@ -127,11 +127,14 @@ pub struct ActiveStreamInfo {
 
 #[derive(Clone)]
 pub struct ActiveViewer {
+    pub session_id: u64,
     pub track: Arc<TrackLocalStaticSample>,
     pub payload_type: u8,
     pub pc: Arc<dyn PeerConnection>,
     pub is_connected: Arc<AtomicBool>,
 }
+
+static VIEWER_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 pub struct StreamSession {
     pub stream_id: String,
@@ -797,6 +800,7 @@ fn capture_window_720p_into(_hwnd: isize, _out: &mut [u8]) -> bool {
 
 /// PeerConnection event handler for tracking viewer connection state & ICE
 struct ViewerHandler {
+    session_id: u64,
     gather_complete_tx: mpsc::Sender<()>,
     viewers: Arc<AtomicUsize>,
     force_keyframe: Arc<AtomicBool>,
@@ -828,32 +832,50 @@ impl PeerConnectionEventHandler for ViewerHandler {
         match state {
             RTCPeerConnectionState::Connected => {
                 if let Some(viewer) = self.active_viewers.read().unwrap().get(&self.viewer_id) {
-                    viewer.is_connected.store(true, Ordering::SeqCst);
+                    if viewer.session_id == self.session_id {
+                        viewer.is_connected.store(true, Ordering::SeqCst);
+                    }
                 }
                 let current = self.viewers.fetch_add(1, Ordering::SeqCst) + 1;
                 ACTIVE_STREAM_VIEWERS.store(current, Ordering::SeqCst);
                 self.force_keyframe.store(true, Ordering::SeqCst);
                 info!(
-                    "Viewer '{}' CONNECTED and ready for RTP streaming! Active viewers: {}",
-                    self.viewer_id, current
+                    "Viewer '{}' (session {}) CONNECTED and ready for RTP streaming! Active viewers: {}",
+                    self.viewer_id, self.session_id, current
                 );
             }
-            RTCPeerConnectionState::Disconnected
-            | RTCPeerConnectionState::Failed
+            RTCPeerConnectionState::Failed
             | RTCPeerConnectionState::Closed => {
-                {
+                let removed = {
                     let mut map = self.active_viewers.write().unwrap();
-                    map.remove(&self.viewer_id);
+                    if let Some(v) = map.get(&self.viewer_id) {
+                        if v.session_id == self.session_id {
+                            map.remove(&self.viewer_id);
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                };
+                if removed {
+                    let prev = self.viewers.load(Ordering::SeqCst);
+                    if prev > 0 {
+                        let current = self.viewers.fetch_sub(1, Ordering::SeqCst) - 1;
+                        ACTIVE_STREAM_VIEWERS.store(current, Ordering::SeqCst);
+                        info!(
+                            "Viewer '{}' (session {}) closed/failed. Active viewers: {}",
+                            self.viewer_id, self.session_id, current
+                        );
+                    }
                 }
-                let prev = self.viewers.load(Ordering::SeqCst);
-                if prev > 0 {
-                    let current = self.viewers.fetch_sub(1, Ordering::SeqCst) - 1;
-                    ACTIVE_STREAM_VIEWERS.store(current, Ordering::SeqCst);
-                    info!(
-                        "Viewer '{}' disconnected. Active viewers: {}",
-                        self.viewer_id, current
-                    );
-                }
+            }
+            RTCPeerConnectionState::Disconnected => {
+                info!(
+                    "Viewer '{}' (session {}) temporarily disconnected, awaiting reconnect or fail...",
+                    self.viewer_id, self.session_id
+                );
             }
             _ => {}
         }
@@ -990,7 +1012,22 @@ async fn process_offer(
     let viewer_id = msg.viewer_id;
     let sdp_str = msg.sdp;
 
-    info!("Processing WebRTC OFFER from viewer '{}'", viewer_id);
+    // Reject duplicate offers if viewer is already connected and streaming
+    {
+        let guard = active_viewers.read().unwrap();
+        if let Some(existing) = guard.get(&viewer_id) {
+            if existing.is_connected.load(Ordering::SeqCst) {
+                info!(
+                    "Viewer '{}' already has an active, connected session; ignoring duplicate offer",
+                    viewer_id
+                );
+                return None;
+            }
+        }
+    }
+
+    let session_id = VIEWER_SESSION_COUNTER.fetch_add(1, Ordering::SeqCst);
+    info!("Processing WebRTC OFFER from viewer '{}' (session {})", viewer_id, session_id);
 
     // Create unique static local video track for this viewer
     let video_codec = create_h264_codec();
@@ -1082,6 +1119,7 @@ async fn process_offer(
 
     let (gather_complete_tx, mut gather_complete_rx) = mpsc::channel::<()>(1);
     let handler = Arc::new(ViewerHandler {
+        session_id,
         gather_complete_tx,
         viewers: viewer_count.clone(),
         force_keyframe: force_keyframe.clone(),
@@ -1186,6 +1224,7 @@ async fn process_offer(
             map.insert(
                 viewer_id.clone(),
                 ActiveViewer {
+                    session_id,
                     track: video_track,
                     payload_type: negotiated_pt,
                     pc: pc.clone(),

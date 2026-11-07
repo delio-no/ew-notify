@@ -181,6 +181,73 @@
       transform: translate(-50%, -50%) scale(1);
     }
 
+    /* Central Play Button when Paused */
+    .center-play-badge {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: rgba(15, 23, 42, 0.88);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1.5px solid rgba(255, 255, 255, 0.25);
+      color: #fff;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+      cursor: pointer;
+      z-index: 12;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      pointer-events: auto;
+    }
+
+    .center-play-badge:hover {
+      transform: translate(-50%, -50%) scale(1.08);
+      background: rgba(99, 102, 241, 0.95);
+      border-color: rgba(255, 255, 255, 0.45);
+    }
+
+    .center-play-badge:active {
+      transform: translate(-50%, -50%) scale(0.94);
+    }
+
+    /* Floating Unmute Banner on Autoplay */
+    .unmute-floating-pill {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 14px;
+      border-radius: 9999px;
+      background: rgba(15, 23, 42, 0.88);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #fff;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      z-index: 14;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+      transition: all 0.2s ease;
+      pointer-events: auto;
+    }
+
+    .unmute-floating-pill:hover {
+      background: rgba(99, 102, 241, 0.95);
+      transform: translateY(-1px);
+    }
+
+    .unmute-floating-pill:active {
+      transform: translateY(1px);
+    }
+
     /* Modern Video Player Overlay */
     .player-overlay {
       position: absolute;
@@ -681,6 +748,21 @@
         </svg>
       </div>
 
+      <!-- Floating Unmute Pill -->
+      <button class="unmute-floating-pill" id="unmutePill" onclick="unmuteAudio(event)" title="Включить звук">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>
+        </svg>
+        <span>Включить звук</span>
+      </button>
+
+      <!-- Center Play Button (visible when paused) -->
+      <button class="center-play-badge" id="centerPlayBtn" onclick="togglePlay(event)" title="Воспроизвести">
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M8 5v14l11-7z"/>
+        </svg>
+      </button>
+
       <!-- Loading / Connecting Placeholder -->
       <div id="placeholder" class="placeholder-view">
         <div id="loadingSpinner" class="spinner"></div>
@@ -840,6 +922,8 @@
     const rippleIcon = document.getElementById('rippleIcon');
     const playPauseIcon = document.getElementById('playPauseIcon');
     const muteIcon = document.getElementById('muteIcon');
+    const unmutePill = document.getElementById('unmutePill');
+    const centerPlayBtn = document.getElementById('centerPlayBtn');
     const fsIcon = document.getElementById('fsIcon');
 
     // SVG icon templates
@@ -874,12 +958,18 @@
     }
 
     function onStreamPlaying() {
-      if (placeholder.classList.contains('hidden')) return;
-      placeholder.classList.add('hidden');
-      loadingSpinner.style.display = 'none';
-      playBtn.style.display = 'none';
-      retryBtn.style.display = 'none';
-      setStatus('live', 'В ЭФИРЕ');
+      if (!placeholder.classList.contains('hidden')) {
+        placeholder.classList.add('hidden');
+        loadingSpinner.style.display = 'none';
+        playBtn.style.display = 'none';
+        retryBtn.style.display = 'none';
+        setStatus('live', 'В ЭФИРЕ');
+      }
+      if (playPauseIcon) playPauseIcon.innerHTML = ICONS.pause;
+      if (centerPlayBtn) centerPlayBtn.style.display = 'none';
+      if (unmutePill) {
+        unmutePill.style.display = video.muted ? 'inline-flex' : 'none';
+      }
       showControlsBriefly(3000);
     }
 
@@ -940,7 +1030,18 @@
 
     function handleCenterTap(e) {
       if (e) e.stopPropagation();
-      togglePlay(e);
+      // Center tap toggles overlay controls visibility, NEVER pauses the live stream!
+      handlePlayerClick(e);
+    }
+
+    function unmuteAudio(e) {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      triggerHaptic();
+      if (!video) return;
+      video.muted = false;
+      if (unmutePill) unmutePill.style.display = 'none';
+      if (muteIcon) muteIcon.innerHTML = ICONS.volumeHigh;
+      showControlsBriefly(3000);
     }
 
     function forcePlayVideo(e) {
@@ -969,15 +1070,28 @@
       if (!video) return;
 
       if (video.paused) {
-        video.play().catch(console.warn);
-        playPauseIcon.innerHTML = ICONS.pause;
+        if (!video.srcObject && pc) {
+          const receivers = pc.getReceivers ? pc.getReceivers() : [];
+          for (const r of receivers) {
+            if (r.track && r.track.kind === 'video') {
+              video.srcObject = new MediaStream([r.track]);
+              break;
+            }
+          }
+        }
+        video.play().then(() => {
+          onStreamPlaying();
+        }).catch(console.warn);
+        if (playPauseIcon) playPauseIcon.innerHTML = ICONS.pause;
+        if (centerPlayBtn) centerPlayBtn.style.display = 'none';
         showCenterRipple(true);
       } else {
         video.pause();
-        playPauseIcon.innerHTML = ICONS.play;
+        if (playPauseIcon) playPauseIcon.innerHTML = ICONS.play;
+        if (centerPlayBtn) centerPlayBtn.style.display = 'flex';
         showCenterRipple(false);
       }
-      showControlsBriefly(3000);
+      showControlsBriefly(3500);
     }
 
     function toggleMute(e) {
@@ -985,9 +1099,28 @@
       triggerHaptic();
       if (!video) return;
       video.muted = !video.muted;
-      muteIcon.innerHTML = video.muted ? ICONS.volumeMuted : ICONS.volumeHigh;
+      if (muteIcon) muteIcon.innerHTML = video.muted ? ICONS.volumeMuted : ICONS.volumeHigh;
+      if (unmutePill) unmutePill.style.display = video.muted ? 'inline-flex' : 'none';
       showControlsBriefly(3000);
     }
+
+    // Keyboard shortcuts for power users (desktop)
+    window.addEventListener('keydown', (e) => {
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+      if (e.code === 'Space' || e.key === 'k') {
+        e.preventDefault();
+        togglePlay(e);
+      } else if (e.key === 'm') {
+        e.preventDefault();
+        toggleMute(e);
+      } else if (e.key === 'f') {
+        e.preventDefault();
+        toggleFullscreen(e);
+      } else if (e.key === 'd') {
+        e.preventDefault();
+        toggleDiagnostics(e);
+      }
+    });
 
     function toggleFullscreen(e) {
       if (e) { e.preventDefault(); e.stopPropagation(); }
@@ -1160,6 +1293,7 @@
       let isOfferReady = false;
       let connectedBrokerClient = null;
       let hasReceivedAnswer = false;
+      let hasPublishedOffer = false;
 
       log('Старт сессии: ' + targetStreamId + ' (ID: ' + viewerId + ')');
 
@@ -1183,7 +1317,7 @@
       }
 
       function tryPublishOffer() {
-        if (!isOfferReady || !pc || !pc.localDescription) {
+        if (!isOfferReady || !pc || !pc.localDescription || hasReceivedAnswer) {
           return;
         }
 
@@ -1192,25 +1326,28 @@
           sdp: pc.localDescription.sdp,
         });
 
-        // 1. Primary Signaling via HTTPS/Port 443 (ntfy.sh)
-        log('Отправка WebRTC OFFER по каналу HTTPS/443 (ntfy.sh)...');
-        fetch(ntfyOfferUrl, {
-          method: 'POST',
-          body: offerPayload,
-        })
-        .then(async (res) => {
-          if (res.ok) {
-            log('OFFER успешно доставлен (HTTPS/443)! Ждём ответ игры...', '#22c55e');
-          } else {
-            log('ntfy.sh вернул HTTP статус: ' + res.status + ', пробуем fallback...', '#f59e0b');
-          }
-        })
-        .catch((err) => {
-          log('Ошибка отправки OFFER по HTTPS/443: ' + err.message, '#f59e0b');
-        });
+        // 1. Primary Signaling via HTTPS/Port 443 (ntfy.sh) - send ONCE
+        if (!hasPublishedOffer) {
+          hasPublishedOffer = true;
+          log('Отправка WebRTC OFFER по каналу HTTPS/443 (ntfy.sh)...');
+          fetch(ntfyOfferUrl, {
+            method: 'POST',
+            body: offerPayload,
+          })
+          .then(async (res) => {
+            if (res.ok) {
+              log('OFFER успешно доставлен (HTTPS/443)! Ждём ответ игры...', '#22c55e');
+            } else {
+              log('ntfy.sh вернул HTTP статус: ' + res.status + ', пробуем fallback...', '#f59e0b');
+            }
+          })
+          .catch((err) => {
+            log('Ошибка отправки OFFER по HTTPS/443: ' + err.message, '#f59e0b');
+          });
+        }
 
-        // 2. Secondary Signaling via MQTT Brokers
-        if (connectedBrokerClient) {
+        // 2. Secondary Signaling via MQTT Brokers - only if we haven't received answer yet
+        if (connectedBrokerClient && !hasReceivedAnswer) {
           log('Отправка WebRTC OFFER в MQTT топик...');
           connectedBrokerClient.publish(offerTopic, offerPayload, { qos: 1 }, (err) => {
             if (err) {
@@ -1429,8 +1566,8 @@
             if (pc.iceGatheringState === 'complete') done();
           };
           pc.addEventListener('icegatheringstatechange', check);
-          // Wait up to 1800ms on mobile connections to ensure relay / srflx candidates are gathered
-          timer = setTimeout(done, 1800);
+          // Wait up to 2000ms on mobile connections to ensure relay / srflx candidates are gathered
+          timer = setTimeout(done, 2000);
         });
 
         isOfferReady = true;
