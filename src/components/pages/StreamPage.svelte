@@ -420,8 +420,12 @@
   }
 
   function formatUptime(secs: number): string {
-    const m = Math.floor(secs / 60);
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
     const s = secs % 60;
+    if (h > 0) {
+      return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
     return `${m}:${s.toString().padStart(2, '0')}`;
   }
 </script>
@@ -446,7 +450,7 @@
       <div class="header-right">
         {#if ffmpegInfo.installed}
           <span class="badge badge-success" title={ffmpegInfo.path ?? ''}>
-            <span class="dot dot-success"></span> FFmpeg {ffmpegVersionShort || 'готов'}
+            <span class="dot dot-success"></span> FFmpeg {ffmpegVersionShort || 'готов'}{#if ffmpegInfo.detected_encoder} • {ffmpegInfo.detected_encoder}{/if}
           </span>
           <button
             type="button"
@@ -568,7 +572,11 @@
                 <span class="spec-item">⏱ В эфире: <strong>{formatUptime(rtmpStreamStatus.uptime_secs)}</strong></span>
                 <span class="spec-item">📺 Качество: <strong>{rtmpStreamStatus.resolution} (30 FPS)</strong></span>
                 <span class="spec-item">⚡ Битрейт: <strong>{rtmpStreamStatus.resolution.includes('720') ? '~2500 kbps' : '~4500 kbps'}</strong></span>
-                <span class="spec-item">📡 Кодек: <strong>H.264 (FFmpeg)</strong></span>
+                {#if rtmpStreamStatus.encoder}
+                  <span class="spec-item">🚀 Энкодер: <strong>{rtmpStreamStatus.encoder}</strong></span>
+                {:else}
+                  <span class="spec-item">📡 Кодек: <strong>H.264 (FFmpeg)</strong></span>
+                {/if}
               </div>
             </div>
             <div class="session-action-btns">

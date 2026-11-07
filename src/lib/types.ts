@@ -10,6 +10,7 @@ export interface FFmpegInfo {
   installed: boolean;
   path: string | null;
   version: string | null;
+  detected_encoder?: string | null;
 }
 
 export interface ActiveRtmpInfo {
@@ -19,6 +20,7 @@ export interface ActiveRtmpInfo {
   rtmp_url: string;
   uptime_secs: number;
   resolution: string;
+  encoder?: string;
 }
 
 export interface ActiveP2pInfo {

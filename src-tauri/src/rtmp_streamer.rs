@@ -14,6 +14,93 @@ use tracing::{info, warn};
 
 const TARGET_FPS: u64 = 30;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum H264Encoder {
+    Nvenc,
+    Amf,
+    Qsv,
+    MediaFoundation,
+    Software,
+}
+
+impl H264Encoder {
+    pub fn codec_name(&self) -> &'static str {
+        match self {
+            Self::Nvenc => "h264_nvenc",
+            Self::Amf => "h264_amf",
+            Self::Qsv => "h264_qsv",
+            Self::MediaFoundation => "h264_mf",
+            Self::Software => "libx264",
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Nvenc => "NVIDIA NVENC (GPU)",
+            Self::Amf => "AMD AMF (GPU)",
+            Self::Qsv => "Intel QuickSync (iGPU)",
+            Self::MediaFoundation => "Windows Media Foundation (GPU)",
+            Self::Software => "x264 (CPU)",
+        }
+    }
+
+    pub fn is_hardware(&self) -> bool {
+        !matches!(self, Self::Software)
+    }
+}
+
+static DETECTED_ENCODER: std::sync::OnceLock<H264Encoder> = std::sync::OnceLock::new();
+
+fn probe_encoder(ffmpeg_path: &std::path::Path, encoder_name: &str) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = Command::new(ffmpeg_path);
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        cmd.args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=64x64:d=0.04",
+            "-c:v",
+            encoder_name,
+            "-f",
+            "null",
+            "-",
+        ]);
+        cmd.stdout(Stdio::null());
+        cmd.stderr(Stdio::null());
+        if let Ok(output) = cmd.output() {
+            return output.status.success();
+        }
+    }
+    false
+}
+
+pub fn detect_best_h264_encoder(ffmpeg_path: &std::path::Path) -> H264Encoder {
+    *DETECTED_ENCODER.get_or_init(|| {
+        let candidates = [
+            H264Encoder::Nvenc,
+            H264Encoder::Amf,
+            H264Encoder::Qsv,
+            H264Encoder::MediaFoundation,
+        ];
+        for candidate in candidates {
+            if probe_encoder(ffmpeg_path, candidate.codec_name()) {
+                info!(
+                    "Hardware video encoder detected and chosen: {} ({})",
+                    candidate.codec_name(),
+                    candidate.display_name()
+                );
+                return candidate;
+            }
+        }
+        info!("No hardware video encoder supported; using software libx264 (CPU)");
+        H264Encoder::Software
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActiveRtmpInfo {
     pub hwnd: isize,
@@ -22,6 +109,7 @@ pub struct ActiveRtmpInfo {
     pub rtmp_url: String,
     pub uptime_secs: u64,
     pub resolution: String,
+    pub encoder: String,
 }
 
 struct RtmpSession {
@@ -30,6 +118,7 @@ struct RtmpSession {
     title: String,
     rtmp_url: String,
     resolution: String,
+    encoder: String,
     start_time: Instant,
     running: Arc<AtomicBool>,
     child: Arc<Mutex<Option<Child>>>,
@@ -108,6 +197,7 @@ pub struct FFmpegInfo {
     pub installed: bool,
     pub path: Option<String>,
     pub version: Option<String>,
+    pub detected_encoder: Option<String>,
 }
 
 pub fn get_ffmpeg_version(path: &std::path::Path) -> Option<String> {
@@ -133,16 +223,19 @@ pub fn get_ffmpeg_version(path: &std::path::Path) -> Option<String> {
 pub fn check_ffmpeg_info() -> FFmpegInfo {
     if let Some(path) = find_ffmpeg() {
         let version = get_ffmpeg_version(&path);
+        let encoder = detect_best_h264_encoder(&path);
         FFmpegInfo {
             installed: true,
             path: Some(path.to_string_lossy().to_string()),
             version,
+            detected_encoder: Some(encoder.display_name().to_string()),
         }
     } else {
         FFmpegInfo {
             installed: false,
             path: None,
             version: None,
+            detected_encoder: None,
         }
     }
 }
@@ -171,7 +264,30 @@ pub async fn get_rtmp_info() -> Option<ActiveRtmpInfo> {
         rtmp_url: s.rtmp_url.clone(),
         uptime_secs: s.start_time.elapsed().as_secs(),
         resolution: s.resolution.clone(),
+        encoder: s.encoder.clone(),
     })
+}
+
+/// Construct full RTMP target URL from user inputs (normalizes protocols, trailing slashes, and handles full RTMP keys)
+pub fn build_full_rtmp_target(rtmp_url: &str, rtmp_key: &str) -> Result<String> {
+    let clean_key = rtmp_key.trim();
+    if clean_key.is_empty() {
+        return Err(anyhow!("Ключ трансляции (Stream Key) не заполнен."));
+    }
+
+    if clean_key.starts_with("rtmp://") || clean_key.starts_with("rtmps://") {
+        return Ok(clean_key.to_string());
+    }
+
+    let mut server = rtmp_url.trim().to_string();
+    if server.is_empty() {
+        server = "rtmps://live.me.t.me/live".to_string();
+    }
+    if !server.starts_with("rtmp://") && !server.starts_with("rtmps://") {
+        server = format!("rtmps://{}", server);
+    }
+    let clean_server = server.trim_end_matches('/');
+    Ok(format!("{}/{}", clean_server, clean_key))
 }
 
 /// Start RTMP streaming of a target game window to Telegram Channel / Group
@@ -202,24 +318,7 @@ pub async fn start_rtmp_stream(
         .ok_or_else(|| anyhow!("FFmpeg не найден на компьютере! Поместите ffmpeg.exe в папку программы."))?;
     info!("Using FFmpeg binary at: {:?}", ffmpeg_path);
 
-    let clean_key = rtmp_key.trim();
-    if clean_key.is_empty() {
-        return Err(anyhow!("Ключ трансляции (Stream Key) не заполнен."));
-    }
-
-    let full_target = if clean_key.starts_with("rtmp://") || clean_key.starts_with("rtmps://") {
-        clean_key.to_string()
-    } else {
-        let mut server = rtmp_url.trim().to_string();
-        if server.is_empty() {
-            server = "rtmps://live.me.t.me/live".to_string();
-        }
-        if !server.starts_with("rtmp://") && !server.starts_with("rtmps://") {
-            server = format!("rtmps://{}", server);
-        }
-        let clean_server = server.trim_end_matches('/');
-        format!("{}/{}", clean_server, clean_key)
-    };
+    let full_target = build_full_rtmp_target(&rtmp_url, &rtmp_key)?;
 
     // Validate target window before launching stream
     #[cfg(windows)]
@@ -247,20 +346,27 @@ pub async fn start_rtmp_stream(
         (1920usize, 1080usize, "4500k", "5000k", "9000k", "1080p Full HD")
     };
 
+    let encoder = detect_best_h264_encoder(&ffmpeg_path);
+    let encoder_name = encoder.display_name().to_string();
+
     let masked_target = if full_target.len() > 15 {
         format!("{}...****", &full_target[..full_target.len().saturating_sub(6)])
     } else {
         "***".to_string()
     };
-    info!("Spawning FFmpeg for RTMP stream ({}) to target: {}", res_label, masked_target);
+    info!(
+        "Spawning FFmpeg for RTMP stream ({}, encoder: {}) to target: {}",
+        res_label, encoder_name, masked_target
+    );
 
-    let mut cmd = Command::new(ffmpeg_path);
+    let mut cmd = Command::new(&ffmpeg_path);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
 
+    // Common raw input parameters and silent audio generator for clock sync
     cmd.args([
         "-y",
         "-f",
@@ -277,26 +383,112 @@ pub async fn start_rtmp_stream(
         "lavfi",
         "-i",
         "anullsrc=channel_layout=stereo:sample_rate=44100",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-tune",
-        "zerolatency",
-        "-b:v",
-        b_v,
-        "-maxrate",
-        max_v,
-        "-bufsize",
-        buf_v,
-        "-pix_fmt",
-        "yuv420p",
-        "-g",
-        "60",
-        "-keyint_min",
-        "60",
-        "-sc_threshold",
-        "0",
+    ]);
+
+    // Hardware-accelerated or software video encoder configuration
+    match encoder {
+        H264Encoder::Nvenc => {
+            cmd.args([
+                "-c:v",
+                "h264_nvenc",
+                "-preset",
+                "p4",
+                "-tune",
+                "ll",
+                "-rc",
+                "cbr",
+                "-b:v",
+                b_v,
+                "-maxrate",
+                max_v,
+                "-bufsize",
+                buf_v,
+                "-g",
+                "60",
+                "-pix_fmt",
+                "yuv420p",
+            ]);
+        }
+        H264Encoder::Amf => {
+            cmd.args([
+                "-c:v",
+                "h264_amf",
+                "-usage",
+                "lowlatency",
+                "-rc",
+                "cbr",
+                "-b:v",
+                b_v,
+                "-maxrate",
+                max_v,
+                "-bufsize",
+                buf_v,
+                "-g",
+                "60",
+                "-pix_fmt",
+                "yuv420p",
+            ]);
+        }
+        H264Encoder::Qsv => {
+            cmd.args([
+                "-c:v",
+                "h264_qsv",
+                "-preset",
+                "veryfast",
+                "-b:v",
+                b_v,
+                "-maxrate",
+                max_v,
+                "-bufsize",
+                buf_v,
+                "-g",
+                "60",
+                "-pix_fmt",
+                "yuv420p",
+            ]);
+        }
+        H264Encoder::MediaFoundation => {
+            cmd.args([
+                "-c:v",
+                "h264_mf",
+                "-rate_control",
+                "cbr",
+                "-b:v",
+                b_v,
+                "-g",
+                "60",
+                "-pix_fmt",
+                "yuv420p",
+            ]);
+        }
+        H264Encoder::Software => {
+            cmd.args([
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-tune",
+                "zerolatency",
+                "-b:v",
+                b_v,
+                "-maxrate",
+                max_v,
+                "-bufsize",
+                buf_v,
+                "-pix_fmt",
+                "yuv420p",
+                "-g",
+                "60",
+                "-keyint_min",
+                "60",
+                "-sc_threshold",
+                "0",
+            ]);
+        }
+    }
+
+    // Audio encoding and FLV muxing for RTMP
+    cmd.args([
         "-c:a",
         "aac",
         "-b:a",
@@ -453,6 +645,7 @@ pub async fn start_rtmp_stream(
         title: title.clone(),
         rtmp_url: rtmp_url.clone(),
         resolution: res_label.to_string(),
+        encoder: encoder_name.clone(),
         start_time: Instant::now(),
         running,
         child: Arc::new(Mutex::new(Some(child))),
@@ -466,6 +659,7 @@ pub async fn start_rtmp_stream(
         rtmp_url,
         uptime_secs: 0,
         resolution: res_label.to_string(),
+        encoder: encoder_name,
     };
 
     *guard = Some(session);
@@ -716,27 +910,10 @@ pub fn normalize_channel_url(input: &str) -> String {
 
 /// Test connection to Telegram RTMP server using a 1-second dummy probe
 pub async fn test_rtmp_connection(rtmp_url: String, rtmp_key: String) -> Result<String> {
-    let clean_url = rtmp_url.trim();
-    let clean_key = rtmp_key.trim();
-    if clean_url.is_empty() {
-        return Err(anyhow!("Укажите «Сервер трансляции» (RTMP URL)"));
-    }
-    if clean_key.is_empty() {
-        return Err(anyhow!("Укажите «Ключ трансляции» (Stream Key)"));
-    }
+    let full_target = build_full_rtmp_target(&rtmp_url, &rtmp_key)?;
 
     let ffmpeg_path = find_ffmpeg()
         .ok_or_else(|| anyhow!("FFmpeg не найден на компьютере! Скачайте его через кнопку выше."))?;
-
-    let full_target = if clean_key.starts_with("rtmp://") || clean_key.starts_with("rtmps://") {
-        clean_key.to_string()
-    } else {
-        let mut server = clean_url.to_string();
-        if !server.starts_with("rtmp://") && !server.starts_with("rtmps://") {
-            server = format!("rtmps://{}", server);
-        }
-        format!("{}/{}", server.trim_end_matches('/'), clean_key)
-    };
 
     let mut cmd = Command::new(ffmpeg_path);
     #[cfg(windows)]
@@ -773,5 +950,94 @@ pub async fn test_rtmp_connection(rtmp_url: String, rtmp_key: String) -> Result<
             .find(|l| l.contains("Error") || l.contains("error") || l.contains("failed") || l.contains("Failed") || l.contains("refused"))
             .unwrap_or("Сервер отклонил соединение. Проверьте правильность URL и Ключа трансляции.");
         Err(anyhow!("Ошибка подключения: {}", err_line.trim()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_h264_encoder_codec_and_display_names() {
+        assert_eq!(H264Encoder::Amf.codec_name(), "h264_amf");
+        assert!(H264Encoder::Amf.display_name().contains("AMD AMF"));
+        assert!(H264Encoder::Amf.is_hardware());
+
+        assert_eq!(H264Encoder::Nvenc.codec_name(), "h264_nvenc");
+        assert!(H264Encoder::Nvenc.display_name().contains("NVIDIA NVENC"));
+        assert!(H264Encoder::Nvenc.is_hardware());
+
+        assert_eq!(H264Encoder::Qsv.codec_name(), "h264_qsv");
+        assert!(H264Encoder::Qsv.display_name().contains("Intel QuickSync"));
+        assert!(H264Encoder::Qsv.is_hardware());
+
+        assert_eq!(H264Encoder::MediaFoundation.codec_name(), "h264_mf");
+        assert!(H264Encoder::MediaFoundation.display_name().contains("Windows Media Foundation"));
+        assert!(H264Encoder::MediaFoundation.is_hardware());
+
+        assert_eq!(H264Encoder::Software.codec_name(), "libx264");
+        assert_eq!(H264Encoder::Software.display_name(), "x264 (CPU)");
+        assert!(!H264Encoder::Software.is_hardware());
+    }
+
+    #[test]
+    fn test_normalize_channel_url() {
+        assert_eq!(normalize_channel_url("@testchan"), "https://t.me/testchan");
+        assert_eq!(normalize_channel_url("t.me/testchan"), "https://t.me/testchan");
+        assert_eq!(normalize_channel_url("https://t.me/testchan"), "https://t.me/testchan");
+        assert_eq!(normalize_channel_url("testchan"), "https://t.me/testchan");
+        assert_eq!(normalize_channel_url("   "), "");
+    }
+
+    #[test]
+    fn test_build_full_rtmp_target_standard() {
+        let res = build_full_rtmp_target("rtmps://dc4-1.rtmp.t.me/s/", "397407123456");
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), "rtmps://dc4-1.rtmp.t.me/s/397407123456");
+    }
+
+    #[test]
+    fn test_build_full_rtmp_target_no_trailing_slash() {
+        let res = build_full_rtmp_target("rtmps://dc4-1.rtmp.t.me/s", "397407123456");
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), "rtmps://dc4-1.rtmp.t.me/s/397407123456");
+    }
+
+    #[test]
+    fn test_build_full_rtmp_target_auto_prefix_rtmps() {
+        let res = build_full_rtmp_target("dc4-1.rtmp.t.me/s/", "397407123456");
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), "rtmps://dc4-1.rtmp.t.me/s/397407123456");
+    }
+
+    #[test]
+    fn test_build_full_rtmp_target_full_url_in_key() {
+        // User pasted full rtmps URL in the key field: should ignore empty server and return full URL
+        let full = "rtmps://dc4-1.rtmp.t.me/s/397407123456";
+        let res = build_full_rtmp_target("", full);
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), full);
+
+        // Also works with rtmp://
+        let full_plain = "rtmp://dc4-1.rtmp.t.me/s/397407123456";
+        let res2 = build_full_rtmp_target("some-server", full_plain);
+        assert!(res2.is_ok());
+        assert_eq!(res2.unwrap(), full_plain);
+    }
+
+    #[test]
+    fn test_build_full_rtmp_target_empty_server_defaults_to_telegram() {
+        let res = build_full_rtmp_target("", "mykey123");
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), "rtmps://live.me.t.me/live/mykey123");
+    }
+
+    #[test]
+    fn test_build_full_rtmp_target_empty_key_fails() {
+        let res1 = build_full_rtmp_target("rtmps://dc4-1.rtmp.t.me/s/", "");
+        assert!(res1.is_err());
+
+        let res2 = build_full_rtmp_target("rtmps://dc4-1.rtmp.t.me/s/", "   ");
+        assert!(res2.is_err());
     }
 }

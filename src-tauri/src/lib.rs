@@ -239,6 +239,16 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
         info!("Monitoring supervisor started ({mode_label})");
         let mut last_fire: HashMap<String, Instant> = HashMap::new();
         let mut last_burst: HashMap<String, (Instant, String)> = HashMap::new();
+        let mut cached_cooldown_secs = 5u64;
+        let mut cached_tray_enabled = true;
+        let mut cached_telegram_enabled = false;
+        let mut cached_burst_window_ms = 500u64;
+        if let Ok(cfg) = config.try_lock() {
+            cached_cooldown_secs = cfg.notifications.cooldown_seconds;
+            cached_tray_enabled = cfg.notifications.tray_enabled;
+            cached_telegram_enabled = cfg.notifications.telegram_enabled;
+            cached_burst_window_ms = cfg.notifications.burst_dedup_ms;
+        }
 
         while monitoring.load(Ordering::SeqCst) {
             // Resolve filter for this capture session
@@ -489,8 +499,24 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     continue;
                 }
 
-                // Automatically process pattern triggers (start / stop) for auto-clicker
-                clicker.trigger_pattern_event(&pattern.name, target_slot, target_pid, &app_notify, &config, &window_filter, &rt);
+                // Automatically process pattern triggers (start / stop) for auto-clicker in background task without stalling packet capture
+                let clicker_c = clicker.clone();
+                let pat_name = pattern.name.clone();
+                let app_c = app_notify.clone();
+                let config_c = config.clone();
+                let filter_c = window_filter.clone();
+                let rt_c = rt.clone();
+                rt.spawn(async move {
+                    clicker_c.trigger_pattern_event(
+                        &pat_name,
+                        target_slot,
+                        target_pid,
+                        &app_c,
+                        &config_c,
+                        &filter_c,
+                        &rt_c,
+                    );
+                });
 
                 let cooldown_key = match &conn {
                     Some(c) => c.cooldown_id(&pattern.name),
@@ -501,16 +527,17 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                     .map(|c| c.short_label())
                     .unwrap_or_else(|| "unknown".into());
 
-                let (cooldown_secs, tray_enabled, telegram_enabled, burst_window_ms) =
-                    rt.block_on(async {
-                        let cfg = config.lock().await;
-                        (
-                            cfg.notifications.cooldown_seconds,
-                            cfg.notifications.tray_enabled,
-                            cfg.notifications.telegram_enabled,
-                            cfg.notifications.burst_dedup_ms,
-                        )
-                    });
+                // Non-blocking config read: update local cache if lock is free; otherwise use cached settings
+                if let Ok(cfg) = config.try_lock() {
+                    cached_cooldown_secs = cfg.notifications.cooldown_seconds;
+                    cached_tray_enabled = cfg.notifications.tray_enabled;
+                    cached_telegram_enabled = cfg.notifications.telegram_enabled;
+                    cached_burst_window_ms = cfg.notifications.burst_dedup_ms;
+                }
+                let cooldown_secs = cached_cooldown_secs;
+                let tray_enabled = cached_tray_enabled;
+                let telegram_enabled = cached_telegram_enabled;
+                let burst_window_ms = cached_burst_window_ms;
 
                 let now = Instant::now();
 
@@ -656,15 +683,17 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                         let pattern_name_clone = pattern.name.clone();
                         let window_label_clone = window_label.clone();
 
-                        std::thread::spawn(move || {
+                        rt.spawn(async move {
                             tracing::info!("Sending Telegram notification in background: {}", notify_title_clone);
-                            if let Err(e) = tauri::async_runtime::block_on(telegram::send_notification(
+                            if let Err(e) = telegram::send_notification(
                                 &config_arc,
                                 &notify_title_clone,
                                 &pattern_name_clone,
                                 window_label_clone.as_deref(),
                                 send_win,
-                            )) {
+                            )
+                            .await
+                            {
                                 let msg = format!("Telegram: {e}");
                                 tracing::warn!("{}", msg);
                                 if let Ok(mut err) = last_error_clone.lock() {
