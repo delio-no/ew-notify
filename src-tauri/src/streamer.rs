@@ -672,7 +672,7 @@ pub(crate) fn capture_window_720p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> 
     use windows::Win32::Graphics::Gdi::{
         CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
         ReleaseDC, SelectObject, SetStretchBltMode, StretchBlt, BitBlt, BITMAPINFO, BITMAPINFOHEADER,
-        BI_RGB, DIB_RGB_COLORS, HALFTONE, HDC, SRCCOPY,
+        BI_RGB, COLORONCOLOR, DIB_RGB_COLORS, HDC, SRCCOPY,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         GetWindowRect, IsIconic, ShowWindow, SW_SHOWNOACTIVATE,
@@ -731,21 +731,25 @@ pub(crate) fn capture_window_720p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> 
             fn PrintWindow(hwnd: HWND, hdc_blt: HDC, n_flags: u32) -> windows::Win32::Foundation::BOOL;
         }
 
-        // 1st attempt: PrintWindow PW_RENDERFULLCONTENT = 2
-        let printed = PrintWindow(hwnd, HDC(hdc_src.0), 2);
-        if !printed.as_bool() {
-            // Fallback to window DC BitBlt
-            let hdc_win = GetDC(hwnd);
-            if !hdc_win.is_invalid() {
-                let _ = BitBlt(hdc_src, 0, 0, src_w, src_h, hdc_win, 0, 0, SRCCOPY);
-                ReleaseDC(hwnd, hdc_win);
-            } else {
+        // 1st attempt: window DC BitBlt (fastest for DirectX game windows, ~2ms)
+        let mut captured = false;
+        let hdc_win = GetDC(hwnd);
+        if !hdc_win.is_invalid() {
+            captured = BitBlt(hdc_src, 0, 0, src_w, src_h, hdc_win, 0, 0, SRCCOPY).as_bool();
+            ReleaseDC(hwnd, hdc_win);
+        }
+
+        if !captured {
+            // 2nd attempt: PrintWindow PW_RENDERFULLCONTENT = 2
+            let printed = PrintWindow(hwnd, HDC(hdc_src.0), 2);
+            if !printed.as_bool() {
+                // 3rd attempt: screen DC BitBlt
                 let _ = BitBlt(hdc_src, 0, 0, src_w, src_h, hdc_screen, rect.left, rect.top, SRCCOPY);
             }
         }
 
-        // StretchBlt from original resolution to 1280x720
-        SetStretchBltMode(hdc_mem, HALFTONE);
+        // Fast StretchBlt using COLORONCOLOR instead of slow HALFTONE
+        SetStretchBltMode(hdc_mem, COLORONCOLOR);
         let _ = StretchBlt(
             hdc_mem,
             0,
@@ -786,7 +790,7 @@ pub(crate) fn capture_window_720p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> 
         } else {
             out_bgra.iter().any(|&b| b > 15)
         };
-        if lines > 0 && !sample_has_content && printed.as_bool() {
+        if lines > 0 && !sample_has_content {
             let _ = BitBlt(hdc_src, 0, 0, src_w, src_h, hdc_screen, rect.left, rect.top, SRCCOPY);
             let _ = StretchBlt(
                 hdc_mem, 0, 0, TARGET_WIDTH as i32, TARGET_HEIGHT as i32,

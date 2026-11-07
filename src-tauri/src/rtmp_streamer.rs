@@ -15,7 +15,6 @@ use tracing::{info, warn};
 const TARGET_WIDTH: usize = 1280;
 const TARGET_HEIGHT: usize = 720;
 const TARGET_FPS: u64 = 30;
-const FRAME_DURATION: Duration = Duration::from_millis(1000 / TARGET_FPS);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActiveRtmpInfo {
@@ -319,11 +318,10 @@ pub async fn start_rtmp_stream(
             let mut current_hwnd = hwnd;
             let mut last_hwnd_check = Instant::now();
             let mut total_frames = 0u64;
+            let stream_start = Instant::now();
             let mut last_log = Instant::now();
 
             while running_thread.load(Ordering::SeqCst) {
-                let frame_start = Instant::now();
-
                 // Validate window handle; reconnect if process restarted or changed HWND
                 #[cfg(windows)]
                 {
@@ -356,22 +354,39 @@ pub async fn start_rtmp_stream(
                     warn!("FFmpeg stdin pipe broken ({}), terminating RTMP capture loop", e);
                     break;
                 }
+                total_frames += 1;
+
+                // Wall-clock synchronization:
+                // If capture took longer than 1/30s, emit duplicate frame(s) to guarantee exactly 30.0 FPS.
+                // This prevents audio/video PTS desynchronization in RTMP and ensures the Telegram player never starves.
+                let elapsed_secs = stream_start.elapsed().as_secs_f64();
+                let target_frames = (elapsed_secs * TARGET_FPS as f64).floor() as u64;
+                while total_frames < target_frames {
+                    if let Err(_) = child_stdin.write_all(&bgra_buffer) {
+                        break;
+                    }
+                    total_frames += 1;
+                }
                 let _ = child_stdin.flush();
 
-                total_frames += 1;
                 if last_log.elapsed() >= Duration::from_secs(10) {
+                    let total_elapsed = stream_start.elapsed().as_secs_f64();
+                    let actual_fps = total_frames as f64 / total_elapsed.max(0.001);
                     info!(
-                        "RTMP stream active: {} frames piped (uptime: {}s)",
+                        "RTMP stream active: {} frames piped (fps: {:.1}, uptime: {}s)",
                         total_frames,
-                        last_log.elapsed().as_secs()
+                        actual_fps,
+                        total_elapsed as u64
                     );
                     last_log = Instant::now();
                 }
 
-                // Throttle to target FPS
-                let elapsed = frame_start.elapsed();
-                if elapsed < FRAME_DURATION {
-                    std::thread::sleep(FRAME_DURATION - elapsed);
+                // Sleep until the exact schedule for the next frame
+                let next_frame_micros = total_frames * 1_000_000 / TARGET_FPS as u64;
+                let next_frame_time = stream_start + Duration::from_micros(next_frame_micros);
+                let now = Instant::now();
+                if next_frame_time > now {
+                    std::thread::sleep(next_frame_time - now);
                 }
             }
 
