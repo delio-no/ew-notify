@@ -907,14 +907,19 @@ pub async fn start_bot(
                                         } else {
                                             let _ = bot
                                                 .answer_callback_query(callback.id.clone())
-                                                .text("Запуск трансляции 720p...")
+                                                .text("Запуск трансляции...")
                                                 .send()
                                                 .await;
-                                            match crate::streamer::start_stream(target_win.hwnd, target_win.pid, target_win.title.clone()).await {
+                                            match crate::streamer::start_stream(target_win.hwnd, target_win.pid, target_win.title.clone(), None).await {
                                                 Ok(info) => {
+                                                    let res_label = if info.resolution.contains("1080") {
+                                                        "1080p Full HD, 30 FPS"
+                                                    } else {
+                                                        "720p HD, 30 FPS"
+                                                    };
                                                     let success_msg = format!(
-                                                        "📺 Трансляция окна запущена!\n\n🎮 Окно: «{}» (PID {})\n🌐 Качество: 720p HD, 30 FPS\n🔗 Ссылка для просмотра:\n{}\n\n👁 Зрителей сейчас: 0\nОткройте прямо в Telegram (Mini App) или в браузере:",
-                                                        info.title, info.pid, info.player_url
+                                                        "📺 Трансляция окна запущена!\n\n🎮 Окно: «{}» (PID {})\n🌐 Качество: {}\n🔗 Ссылка для просмотра:\n{}\n\n👁 Зрителей сейчас: 0\nОткройте прямо в Telegram (Mini App) или в браузере:",
+                                                        info.title, info.pid, res_label, info.player_url
                                                     );
                                                     let mut kb = InlineKeyboardMarkup::default();
                                                     if let Ok(url) = info.player_url.parse::<reqwest::Url>() {
@@ -964,7 +969,7 @@ pub async fn start_bot(
                                 } else if let Ok(hwnd_val) = hwnd_str.parse::<isize>() {
                                     let _ = bot
                                         .answer_callback_query(callback.id.clone())
-                                        .text("Разворачиваю окно и запускаю 720p...")
+                                        .text("Разворачиваю окно и запускаю трансляцию...")
                                         .send()
                                         .await;
 
@@ -980,11 +985,16 @@ pub async fn start_bot(
 
                                     let windows = crate::screen_capture::find_target_windows(&process_name);
                                     if let Some(target_win) = windows.into_iter().find(|w| w.hwnd == hwnd_val) {
-                                        match crate::streamer::start_stream(target_win.hwnd, target_win.pid, target_win.title.clone()).await {
+                                        match crate::streamer::start_stream(target_win.hwnd, target_win.pid, target_win.title.clone(), None).await {
                                             Ok(info) => {
+                                                let res_label = if info.resolution.contains("1080") {
+                                                    "1080p Full HD, 30 FPS"
+                                                } else {
+                                                    "720p HD, 30 FPS"
+                                                };
                                                 let success_msg = format!(
-                                                    "📺 Трансляция окна запущена (развёрнуто программно)!\n\n🎮 Окно: «{}» (PID {})\n🌐 Качество: 720p HD, 30 FPS\n🔗 Ссылка для просмотра:\n{}\n\n👁 Зрителей сейчас: 0\nОткройте прямо в Telegram (Mini App) или в браузере:",
-                                                    info.title, info.pid, info.player_url
+                                                    "📺 Трансляция окна запущена (развёрнуто программно)!\n\n🎮 Окно: «{}» (PID {})\n🌐 Качество: {}\n🔗 Ссылка для просмотра:\n{}\n\n👁 Зрителей сейчас: 0\nОткройте прямо в Telegram (Mini App) или в браузере:",
+                                                    info.title, info.pid, res_label, info.player_url
                                                 );
                                                 let mut kb = InlineKeyboardMarkup::default();
                                                 if let Ok(url) = info.player_url.parse::<reqwest::Url>() {
@@ -1039,9 +1049,14 @@ pub async fn start_bot(
                                         .send()
                                         .await;
 
+                                    let res_label = if active.resolution.contains("1080") {
+                                        "1080p Full HD, 30 FPS"
+                                    } else {
+                                        "720p HD, 30 FPS"
+                                    };
                                     let info_msg = format!(
-                                        "📺 Сейчас активна трансляция:\n\n🎮 Окно: «{}» (PID {})\n🌐 Разрешение: 720p HD, 30 FPS\n👁 Зрителей: {}\n⏱ В эфире: {} сек\n\n🔗 Ссылка на стрим:\n{}\n\nОткройте плеер прямо в Telegram или в браузере:",
-                                        active.title, active.pid, active.viewer_count, active.uptime_secs, active.player_url
+                                        "📺 Сейчас активна трансляция:\n\n🎮 Окно: «{}» (PID {})\n🌐 Разрешение: {}\n👁 Зрителей: {}\n⏱ В эфире: {} сек\n\n🔗 Ссылка на стрим:\n{}\n\nОткройте плеер прямо в Telegram или в браузере:",
+                                        active.title, active.pid, res_label, active.viewer_count, active.uptime_secs, active.player_url
                                     );
                                     let mut kb = InlineKeyboardMarkup::default();
                                     if let Ok(url) = active.player_url.parse::<reqwest::Url>() {

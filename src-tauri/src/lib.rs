@@ -1704,6 +1704,38 @@ async fn get_rtmp_stream_ui_status() -> Result<Option<crate::rtmp_streamer::Acti
 }
 
 #[tauri::command]
+async fn start_p2p_stream_ui(
+    state: State<'_, AppState>,
+    hwnd: isize,
+    pid: u32,
+    title: String,
+    custom_resolution: Option<String>,
+) -> Result<crate::streamer::ActiveStreamInfo, String> {
+    let mut cfg = state.config.lock().await;
+    if let Some(res) = custom_resolution.as_ref().filter(|s| !s.trim().is_empty()) {
+        cfg.streamer.p2p_resolution = res.clone();
+        let _ = crate::config::save_config(&cfg);
+    }
+    let res = cfg.streamer.p2p_resolution.clone();
+    drop(cfg);
+
+    crate::streamer::start_stream(hwnd, pid, title, Some(res))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn stop_p2p_stream_ui() -> Result<(), String> {
+    crate::streamer::stop_stream().await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_p2p_stream_ui_status() -> Result<Option<crate::streamer::ActiveStreamInfo>, String> {
+    Ok(crate::streamer::get_stream_info().await)
+}
+
+#[tauri::command]
 fn get_app_version() -> String {
     format!("v{}", updater::APP_VERSION)
 }
@@ -1780,6 +1812,7 @@ pub fn run() {
         .setup(move |app| {
             info!("Setup started");
             crate::rtmp_streamer::set_app_handle(app.handle().clone());
+            crate::streamer::set_app_handle(app.handle().clone());
             #[cfg(windows)]
             notifications::register_app_user_model_id();
             let start = MenuItem::with_id(app, "start", "Старт мониторинга", true, None::<&str>)?;
@@ -2001,6 +2034,9 @@ pub fn run() {
             get_rtmp_stream_ui_status,
             test_rtmp_connection,
             check_upnp_status,
+            start_p2p_stream_ui,
+            stop_p2p_stream_ui,
+            get_p2p_stream_ui_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

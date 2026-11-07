@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
   ActiveRtmpInfo,
+  ActiveP2pInfo,
   UpnpStatusResult,
   ClickerConfig,
   ClickerStatus,
@@ -137,4 +138,18 @@ export const api = {
   testRtmpConnection: (rtmpUrl: string, rtmpKey: string) =>
     invoke<string>('test_rtmp_connection', { rtmpUrl, rtmpKey }),
   checkUpnpStatus: () => invoke<UpnpStatusResult>('check_upnp_status'),
+  startP2pStream: (
+    hwnd: number,
+    pid: number,
+    title: string,
+    customResolution?: string
+  ) =>
+    invoke<ActiveP2pInfo>('start_p2p_stream_ui', {
+      hwnd,
+      pid,
+      title,
+      customResolution: customResolution || null,
+    }),
+  stopP2pStream: () => invoke<void>('stop_p2p_stream_ui'),
+  getP2pStatus: () => invoke<ActiveP2pInfo | null>('get_p2p_stream_ui_status'),
 };

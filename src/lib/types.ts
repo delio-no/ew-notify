@@ -21,6 +21,17 @@ export interface ActiveRtmpInfo {
   resolution: string;
 }
 
+export interface ActiveP2pInfo {
+  stream_id: string;
+  hwnd: number;
+  pid: number;
+  title: string;
+  viewer_count: number;
+  player_url: string;
+  uptime_secs: number;
+  resolution: string;
+}
+
 export interface UpnpStatusResult {
   available: boolean;
   external_ip?: string | null;
@@ -107,6 +118,7 @@ export interface StreamerConfig {
   rtmp_key?: string;
   rtmp_channel_url?: string | null;
   rtmp_resolution?: '1080p' | '720p' | string;
+  p2p_resolution?: '1080p' | '720p' | string;
 }
 
 export interface Config {
@@ -291,5 +303,6 @@ export const defaultConfig = (): Config => ({
     rtmp_key: '',
     rtmp_channel_url: '',
     rtmp_resolution: '1080p',
+    p2p_resolution: '720p',
   },
 });

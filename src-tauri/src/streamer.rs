@@ -33,8 +33,6 @@ use webrtc::peer_connection::{
     RTCIceGatheringState, RTCPeerConnectionState,
 };
 
-const TARGET_WIDTH: usize = 1280;
-const TARGET_HEIGHT: usize = 720;
 const TARGET_FPS: u64 = 30;
 const FRAME_DURATION_MS: u64 = 1000 / TARGET_FPS;
 const SSRC_VIDEO: u32 = 5000;
@@ -123,6 +121,20 @@ pub struct ActiveStreamInfo {
     pub viewer_count: usize,
     pub player_url: String,
     pub uptime_secs: u64,
+    pub resolution: String,
+}
+
+static APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
+
+pub fn set_app_handle(app: tauri::AppHandle) {
+    let _ = APP_HANDLE.set(app);
+}
+
+pub fn emit_p2p_status_changed(info: &Option<ActiveStreamInfo>) {
+    if let Some(app) = APP_HANDLE.get() {
+        use tauri::Emitter;
+        let _ = app.emit("p2p-status-changed", info);
+    }
 }
 
 #[derive(Clone)]
@@ -146,6 +158,7 @@ pub struct StreamSession {
     pub force_keyframe: Arc<AtomicBool>,
     pub running: Arc<AtomicBool>,
     pub active_viewers: Arc<std::sync::RwLock<HashMap<String, ActiveViewer>>>,
+    pub resolution: String,
 }
 
 static ACTIVE_STREAM_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
@@ -182,14 +195,16 @@ pub async fn get_stream_info() -> Option<ActiveStreamInfo> {
         title: s.title.clone(),
         viewer_count: s.viewer_count.load(Ordering::SeqCst),
         player_url: format!(
-            "https://delio-no.github.io/ew-notify/?s={}&_t={}",
+            "https://delio-no.github.io/ew-notify/?s={}&_t={}&res={}",
             s.stream_id,
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
-                .unwrap_or(0)
+                .unwrap_or(0),
+            s.resolution
         ),
         uptime_secs: s.start_time.elapsed().as_secs(),
+        resolution: s.resolution.clone(),
     })
 }
 
@@ -330,6 +345,7 @@ pub async fn stop_stream() {
             release_upnp_port().await;
         });
     }
+    emit_p2p_status_changed(&None);
 }
 
 pub async fn is_streaming_hwnd(hwnd: isize) -> bool {
@@ -381,8 +397,13 @@ fn url_encode(input: &str) -> String {
     out
 }
 
-/// Start a new 1080p stream for the given game window
-pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<ActiveStreamInfo> {
+/// Start a new WebRTC stream (720p or 1080p) for the given game window
+pub async fn start_stream(
+    hwnd: isize,
+    pid: u32,
+    title: String,
+    custom_resolution: Option<String>,
+) -> Result<ActiveStreamInfo> {
     let mgr = get_manager();
     let mut guard = mgr.current_session.lock().await;
 
@@ -398,6 +419,12 @@ pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<Active
             });
         }
     }
+
+    // Determine target resolution from config or parameter
+    let streamer_cfg = crate::config::load_config().map(|c| c.streamer).unwrap_or_default();
+    let raw_res = custom_resolution.unwrap_or(streamer_cfg.p2p_resolution);
+    let is_720p = raw_res.eq_ignore_ascii_case("720p") || raw_res == "720";
+    let resolution = if is_720p { "720p".to_string() } else { "1080p".to_string() };
 
     // Generate random stream ID e.g. ew-a7b2c9
     let rand_hex: String = (0..6)
@@ -432,7 +459,6 @@ pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<Active
     });
 
     // Attempt automatic UPnP router port forwarding for direct 4G/cellular traversal
-    let streamer_cfg = crate::config::load_config().map(|c| c.streamer).unwrap_or_default();
     let upnp_target_port = streamer_cfg.udp_port.unwrap_or(50000);
     tokio::spawn(async move {
         try_acquire_upnp_port(upnp_target_port).await;
@@ -461,13 +487,16 @@ pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<Active
     let cap_viewers_map = active_viewers.clone();
     let cap_viewer_count = viewer_count.clone();
     let cap_force_keyframe = force_keyframe.clone();
+    let cap_resolution = resolution.clone();
 
+    let thread_name = format!("ew-{}-stream-capture", resolution);
     std::thread::Builder::new()
-        .name("ew-720p-stream-capture".into())
+        .name(thread_name)
         .spawn(move || {
             run_capture_encode_loop(
                 hwnd,
                 pid,
+                cap_resolution,
                 cap_running,
                 cap_viewers_map,
                 cap_viewer_count,
@@ -490,16 +519,17 @@ pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<Active
         force_keyframe,
         running,
         active_viewers,
+        resolution: resolution.clone(),
     };
 
-    let streamer_cfg = crate::config::load_config().map(|c| c.streamer).unwrap_or_default();
     let mut player_url = format!(
-        "https://delio-no.github.io/ew-notify/?s={}&_t={}",
+        "https://delio-no.github.io/ew-notify/?s={}&_t={}&res={}",
         stream_id,
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
-            .unwrap_or(0)
+            .unwrap_or(0),
+        resolution
     );
 
     if let Some(turn_url) = streamer_cfg.turn_server.as_ref().filter(|s| !s.trim().is_empty()) {
@@ -521,22 +551,32 @@ pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<Active
         viewer_count: 0,
         player_url,
         uptime_secs: 0,
+        resolution: resolution.clone(),
     };
 
     *guard = Some(session);
+    emit_p2p_status_changed(&Some(info.clone()));
     Ok(info)
 }
 
-/// Screen capture and H.264 encoding loop at 720p, 30fps (runs in dedicated OS thread)
+/// Screen capture and H.264 encoding loop at 720p or 1080p, 30fps (runs in dedicated OS thread)
 fn run_capture_encode_loop(
     hwnd_val: isize,
     pid: u32,
+    resolution: String,
     running: Arc<AtomicBool>,
     active_viewers: Arc<std::sync::RwLock<HashMap<String, ActiveViewer>>>,
     _viewer_count: Arc<AtomicUsize>,
     force_keyframe: Arc<AtomicBool>,
 ) {
-    info!("Starting 720p capture & encode loop for HWND: {}, PID: {}", hwnd_val, pid);
+    let is_720p = resolution.eq_ignore_ascii_case("720p") || resolution == "720";
+    let (target_w, target_h, target_bitrate, res_label) = if is_720p {
+        (1280usize, 720usize, 1_800_000u32, "720p HD")
+    } else {
+        (1920usize, 1080usize, 3_500_000u32, "1080p Full HD")
+    };
+
+    info!("Starting {} capture & encode loop for HWND: {}, PID: {}", res_label, hwnd_val, pid);
 
     #[cfg(windows)]
     unsafe {
@@ -552,7 +592,7 @@ fn run_capture_encode_loop(
 
     let api = OpenH264API::from_source();
     let config = EncoderConfig::new()
-        .bitrate(BitRate::from_bps(1_800_000))
+        .bitrate(BitRate::from_bps(target_bitrate))
         .max_frame_rate(FrameRate::from_hz(TARGET_FPS as f32))
         .intra_frame_period(IntraFramePeriod::from_num_frames(30))
         .sps_pps_strategy(SpsPpsStrategy::ConstantId);
@@ -571,8 +611,8 @@ fn run_capture_encode_loop(
         }
     };
 
-    let mut yuv_buffer = Yuv420Buffer::new(TARGET_WIDTH, TARGET_HEIGHT);
-    let mut bgra_buffer = vec![0u8; TARGET_WIDTH * TARGET_HEIGHT * 4];
+    let mut yuv_buffer = Yuv420Buffer::new(target_w, target_h);
+    let mut bgra_buffer = vec![0u8; target_w * target_h * 4];
     let mut current_hwnd = hwnd_val;
     let mut last_hwnd_check = Instant::now();
     let mut total_encoded_frames = 0u64;
@@ -626,15 +666,15 @@ fn run_capture_encode_loop(
             }
         }
 
-        // Capture 720p frame from Windows window via GDI StretchBlt
-        let captured = capture_window_720p_into(current_hwnd, &mut bgra_buffer);
+        // Capture frame from Windows window scaled via GDI StretchBlt
+        let captured = capture_window_scaled_into(current_hwnd, target_w, target_h, &mut bgra_buffer);
         if !captured {
             std::thread::sleep(Duration::from_millis(100));
             continue;
         }
 
         // Convert BGRA to planar YUV420p
-        bgra_to_yuv420(&bgra_buffer, TARGET_WIDTH, TARGET_HEIGHT, &mut yuv_buffer);
+        bgra_to_yuv420(&bgra_buffer, target_w, target_h, &mut yuv_buffer);
 
         // Force keyframe if requested (new viewer connected)
         if force_keyframe.swap(false, Ordering::SeqCst) {
@@ -681,8 +721,8 @@ fn run_capture_encode_loop(
 
             if last_stat_log.elapsed() >= Duration::from_secs(5) {
                 info!(
-                    "Streaming active: encoded {} frames (720p 30fps), active viewers: {}",
-                    total_encoded_frames, viewers.len()
+                    "Streaming active: encoded {} frames ({} 30fps), active viewers: {}",
+                    total_encoded_frames, res_label, viewers.len()
                 );
                 last_stat_log = Instant::now();
             }
@@ -695,7 +735,7 @@ fn run_capture_encode_loop(
         }
     }
 
-    info!("720p capture loop terminated for HWND: {}", current_hwnd);
+    info!("{} capture loop terminated for HWND: {}", res_label, current_hwnd);
 }
 
 /// Capture game window and scale directly to target resolution BGRA
@@ -852,18 +892,6 @@ pub(crate) fn capture_window_scaled_into(
         ReleaseDC(HWND(0), hdc_screen);
 
         lines > 0
-    }
-}
-
-pub(crate) fn capture_window_720p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
-    #[cfg(windows)]
-    {
-        capture_window_scaled_into(hwnd_val, TARGET_WIDTH, TARGET_HEIGHT, out_bgra)
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (hwnd_val, out_bgra);
-        false
     }
 }
 

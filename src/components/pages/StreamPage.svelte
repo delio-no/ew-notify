@@ -5,6 +5,7 @@
   import type {
     Config,
     ActiveRtmpInfo,
+    ActiveP2pInfo,
     FFmpegInfo,
     FFmpegDownloadProgress,
     TargetWindow,
@@ -28,6 +29,9 @@
   let rtmpStreamStatus = $state<ActiveRtmpInfo | null>(null);
   let isStartingRtmp = $state(false);
   let rtmpActionError = $state<string | null>(null);
+  let p2pStreamStatus = $state<ActiveP2pInfo | null>(null);
+  let isStartingP2p = $state(false);
+  let p2pActionError = $state<string | null>(null);
   let isTestingRtmp = $state(false);
   let rtmpTestResult = $state<{ ok: boolean; message: string } | null>(null);
   let ffmpegDownload = $state<FFmpegDownloadProgress | null>(null);
@@ -37,9 +41,11 @@
   let isSaving = $state(false);
   let saveSuccess = $state(false);
   let copySuccess = $state(false);
+  let p2pCopySuccess = $state(false);
 
   let unlistenFfmpeg: UnlistenFn | null = null;
   let unlistenStatus: UnlistenFn | null = null;
+  let unlistenP2pStatus: UnlistenFn | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
   const isRtmpConfigured = $derived(
@@ -50,6 +56,7 @@
   );
 
   const selectedResolution = $derived(config.streamer?.rtmp_resolution ?? '1080p');
+  const selectedP2pResolution = $derived(config.streamer?.p2p_resolution ?? '720p');
 
   let ffmpegVersionShort = $derived.by(() => {
     if (!ffmpegInfo.version) return '';
@@ -70,6 +77,12 @@
       console.warn('Failed to get RTMP status:', e);
     }
 
+    try {
+      p2pStreamStatus = await api.getP2pStatus();
+    } catch (e) {
+      console.warn('Failed to get P2P status:', e);
+    }
+
     await refreshWindows();
 
     // Industry standard: asynchronous background UPnP check on startup/mount
@@ -79,19 +92,26 @@
     // Ensures stream started from Telegram bot is immediately reflected in ew-notify UI
     pollTimer = setInterval(async () => {
       try {
-        const next = await api.getRtmpStatus();
+        const nextRtmp = await api.getRtmpStatus();
         const wasStreaming = rtmpStreamStatus != null;
-        const isNowStreaming = next != null;
-        rtmpStreamStatus = next;
+        const isNowStreaming = nextRtmp != null;
+        rtmpStreamStatus = nextRtmp;
         if (!wasStreaming && isNowStreaming) {
           void refreshWindows();
         }
       } catch {
         // ignore
       }
+
+      try {
+        const nextP2p = await api.getP2pStatus();
+        p2pStreamStatus = nextP2p;
+      } catch {
+        // ignore
+      }
     }, 1000);
 
-    // 2. Realtime Tauri event listener for instant 0ms sync
+    // 2. Realtime Tauri event listeners for instant 0ms sync
     try {
       unlistenStatus = await listen<ActiveRtmpInfo | null>('rtmp-status-changed', (event) => {
         rtmpStreamStatus = event.payload;
@@ -101,6 +121,14 @@
       });
     } catch (e) {
       console.warn('Failed to listen to rtmp-status-changed:', e);
+    }
+
+    try {
+      unlistenP2pStatus = await listen<ActiveP2pInfo | null>('p2p-status-changed', (event) => {
+        p2pStreamStatus = event.payload;
+      });
+    } catch (e) {
+      console.warn('Failed to listen to p2p-status-changed:', e);
     }
 
     // 3. Listen to FFmpeg download progress
@@ -122,6 +150,7 @@
   onDestroy(() => {
     if (pollTimer) clearInterval(pollTimer);
     if (unlistenStatus) unlistenStatus();
+    if (unlistenP2pStatus) unlistenP2pStatus();
     if (unlistenFfmpeg) unlistenFfmpeg();
   });
 
@@ -165,9 +194,57 @@
         rtmp_key: '',
         rtmp_channel_url: '',
         rtmp_resolution: res,
+        p2p_resolution: '720p',
       };
     } else {
       config.streamer.rtmp_resolution = res;
+    }
+  }
+
+  function setP2pResolution(res: '1080p' | '720p') {
+    if (!config.streamer) {
+      config.streamer = {
+        rtmp_url: 'rtmps://live.me.t.me/live',
+        rtmp_key: '',
+        rtmp_channel_url: '',
+        rtmp_resolution: '1080p',
+        p2p_resolution: res,
+      };
+    } else {
+      config.streamer.p2p_resolution = res;
+    }
+  }
+
+  async function startDesktopP2p(win: TargetWindow) {
+    isStartingP2p = true;
+    p2pActionError = null;
+    try {
+      const res = config.streamer?.p2p_resolution ?? '720p';
+      p2pStreamStatus = await api.startP2pStream(win.hwnd, win.pid, win.title, res);
+    } catch (e) {
+      p2pActionError = String(e);
+    } finally {
+      isStartingP2p = false;
+    }
+  }
+
+  async function stopDesktopP2p() {
+    try {
+      await api.stopP2pStream();
+      p2pStreamStatus = null;
+    } catch (e) {
+      p2pActionError = String(e);
+    }
+  }
+
+  async function copyP2pUrl() {
+    if (!p2pStreamStatus?.player_url) return;
+    try {
+      await navigator.clipboard.writeText(p2pStreamStatus.player_url);
+      p2pCopySuccess = true;
+      setTimeout(() => (p2pCopySuccess = false), 2000);
+    } catch (e) {
+      console.warn('Clipboard write error:', e);
     }
   }
 
@@ -847,7 +924,13 @@
     <div class="card-header">
       <div class="header-left">
         <h2>🌐 P2P WebRTC Стриминг (Telegram Mini App)</h2>
-        <span class="info-pill">Прямое подключение</span>
+        {#if p2pStreamStatus}
+          <span class="live-pill">
+            <span class="live-dot-pulse"></span> В ЭФИРЕ ({formatUptime(p2pStreamStatus.uptime_secs)})
+          </span>
+        {:else}
+          <span class="info-pill">Прямое подключение</span>
+        {/if}
       </div>
       <div class="header-right">
         {#if isCheckingUpnp}
@@ -864,6 +947,140 @@
     </div>
 
     <div class="card-body">
+      {#if p2pActionError}
+        <div class="rtmp-error-msg">⚠️ {p2pActionError}</div>
+      {/if}
+
+      <!-- Active P2P Session Banner -->
+      {#if p2pStreamStatus}
+        <div class="active-session-banner p2p-active-banner">
+          <div class="session-main">
+            <div class="session-game-title">
+              <span class="game-tag p2p-tag">P2P WEBRTC</span>
+              <strong>{p2pStreamStatus.title}</strong>
+              <span class="pid-tag">PID: {p2pStreamStatus.pid}</span>
+              <span class="pid-tag">ID: {p2pStreamStatus.stream_id}</span>
+            </div>
+            <div class="session-specs-row">
+              <span class="spec-item">⏱ В эфире: <strong>{formatUptime(p2pStreamStatus.uptime_secs)}</strong></span>
+              <span class="spec-item">📺 Качество: <strong>{p2pStreamStatus.resolution} (30 FPS)</strong></span>
+              <span class="spec-item">👥 Зрителей: <strong>{p2pStreamStatus.viewer_count}</strong></span>
+              <span class="spec-item">📡 Передача: <strong>OpenH264 • WebRTC RTP</strong></span>
+            </div>
+          </div>
+          <div class="session-action-btns">
+            <button
+              type="button"
+              class="btn btn-sm btn-outline-channel"
+              onclick={() => api.openUrl(p2pStreamStatus?.player_url || '')}
+              title="Открыть веб-плеер Mini App в браузере"
+            >
+              ▶️ Открыть плеер
+            </button>
+            <button
+              type="button"
+              class="btn btn-sm btn-outline"
+              onclick={copyP2pUrl}
+              title="Скопировать ссылку на плеер для Telegram Mini App"
+            >
+              {p2pCopySuccess ? '✅ Скопировано!' : '📋 Ссылка на Mini App'}
+            </button>
+            <button
+              type="button"
+              class="btn btn-sm btn-danger"
+              onclick={stopDesktopP2p}
+            >
+              🛑 Остановить P2P эфир
+            </button>
+          </div>
+        </div>
+      {/if}
+
+      <!-- Quality & Resolution Selection for P2P WebRTC -->
+      <div class="resolution-selector-group">
+        <span class="section-sublabel">Качество P2P трансляции (Разрешение):</span>
+        <div class="resolution-options">
+          <button
+            type="button"
+            class="res-card"
+            class:active={selectedP2pResolution === '720p'}
+            onclick={() => setP2pResolution('720p')}
+          >
+            <div class="res-radio-row">
+              <span class="res-title">720p HD</span>
+              {#if selectedP2pResolution === '720p'}
+                <span class="res-check">✅ Выбрано</span>
+              {/if}
+            </div>
+            <div class="res-specs">1280 × 720 • 30 FPS • Битрейт ~1800k (OpenH264)</div>
+            <div class="res-desc">
+              <strong>Рекомендуется для Telegram Mini App:</strong> оптимально для смартфонов. Минимальная нагрузка на CPU, экономный расход трафика и аккумулятора телефона, плавная картинка даже на слабом сигнале.
+            </div>
+          </button>
+
+          <button
+            type="button"
+            class="res-card"
+            class:active={selectedP2pResolution === '1080p'}
+            onclick={() => setP2pResolution('1080p')}
+          >
+            <div class="res-radio-row">
+              <span class="res-title">1080p Full HD</span>
+              {#if selectedP2pResolution === '1080p'}
+                <span class="res-check">✅ Выбрано</span>
+              {/if}
+            </div>
+            <div class="res-specs">1920 × 1080 • 30 FPS • Битрейт ~3500k (OpenH264)</div>
+            <div class="res-desc">
+              <strong>Максимальная четкость:</strong> идеальная детализация интерфейса и текста на больших экранах планшетов или ПК в браузере. Требует больше ресурсов процессора и стабильное Wi-Fi/LAN соединение.
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Quick Launch from App if not active -->
+      {#if !p2pStreamStatus && targetWindows.length > 0}
+        <div class="p2p-quick-start-box">
+          <div class="p2p-qs-left">
+            <span class="p2p-qs-label">🎮 Запустить P2P эфир окна игры:</span>
+            <span class="p2p-qs-sub">Прямая трансляция для Telegram Mini App без создания каналов</span>
+          </div>
+          <div class="p2p-qs-actions">
+            <select
+              class="p2p-window-select"
+              bind:value={selectedHwnd}
+            >
+              {#each targetWindows as win}
+                <option value={win.hwnd}>{win.title} (PID {win.pid})</option>
+              {/each}
+            </select>
+            <button
+              type="button"
+              class="btn btn-sm btn-primary"
+              disabled={isStartingP2p || !selectedHwnd}
+              onclick={() => {
+                const win = targetWindows.find((w) => w.hwnd === selectedHwnd);
+                if (win) void startDesktopP2p(win);
+              }}
+            >
+              {isStartingP2p ? '⏳ Запуск...' : '▶️ Запустить P2P эфир'}
+            </button>
+          </div>
+        </div>
+      {/if}
+
+      <!-- Save P2P Config Button -->
+      <div class="p2p-save-bar">
+        <button
+          type="button"
+          class="btn btn-primary"
+          disabled={isSaving}
+          onclick={saveSettings}
+        >
+          {isSaving ? 'Сохранение...' : saveSuccess ? '✅ Настройки сохранены!' : '💾 Сохранить параметры P2P'}
+        </button>
+      </div>
+
       <!-- High-visibility Recommendation Banner -->
       <div class="p2p-recommendation-box">
         <div class="rec-icon">💡</div>
@@ -1851,6 +2068,73 @@
   .rec-text.solution {
     color: #bae6fd;
     font-weight: 600;
+  }
+
+  .p2p-tag {
+    background: #0284c7;
+  }
+
+  .p2p-active-banner {
+    background: rgba(2, 132, 199, 0.1);
+    border-color: rgba(2, 132, 199, 0.4);
+  }
+
+  .p2p-quick-start-box {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 12px 16px;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .p2p-qs-left {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .p2p-qs-label {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #f1f5f9;
+  }
+
+  .p2p-qs-sub {
+    font-size: 0.78rem;
+    color: #94a3b8;
+  }
+
+  .p2p-qs-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .p2p-window-select {
+    background: rgba(15, 23, 42, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    color: #f8fafc;
+    padding: 6px 12px;
+    font-size: 0.82rem;
+    cursor: pointer;
+    min-width: 220px;
+  }
+
+  .p2p-window-select:focus {
+    outline: none;
+    border-color: #38bdf8;
+  }
+
+  .p2p-save-bar {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 4px;
   }
 
   .upnp-check-section {

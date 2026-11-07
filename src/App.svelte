@@ -924,6 +924,36 @@
             clickerStatus.count = event.payload;
           }),
         );
+
+        let isRtmpActive = false;
+        let isP2pActive = false;
+        const updateStreamLive = () => {
+          isStreamLive = isRtmpActive || isP2pActive;
+        };
+
+        unlisteners.push(
+          await listen('rtmp-status-changed', (event) => {
+            isRtmpActive = Boolean(event.payload);
+            updateStreamLive();
+          }),
+        );
+        unlisteners.push(
+          await listen('p2p-status-changed', (event) => {
+            isP2pActive = Boolean(event.payload);
+            updateStreamLive();
+          }),
+        );
+
+        api.getRtmpStatus().then((s) => {
+          isRtmpActive = Boolean(s);
+          updateStreamLive();
+        }).catch(console.warn);
+
+        api.getP2pStatus().then((s) => {
+          isP2pActive = Boolean(s);
+          updateStreamLive();
+        }).catch(console.warn);
+
         void refreshClickerStatus();
       } catch (e) {
         console.error('listen setup failed', e);
