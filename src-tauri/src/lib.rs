@@ -1779,6 +1779,7 @@ pub fn run() {
         .manage(app_state)
         .setup(move |app| {
             info!("Setup started");
+            crate::rtmp_streamer::set_app_handle(app.handle().clone());
             #[cfg(windows)]
             notifications::register_app_user_model_id();
             let start = MenuItem::with_id(app, "start", "Старт мониторинга", true, None::<&str>)?;

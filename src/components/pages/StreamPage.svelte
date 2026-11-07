@@ -39,6 +39,8 @@
   let copySuccess = $state(false);
 
   let unlistenFfmpeg: UnlistenFn | null = null;
+  let unlistenStatus: UnlistenFn | null = null;
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
 
   const isRtmpConfigured = $derived(
     Boolean(
@@ -73,6 +75,35 @@
     // Industry standard: asynchronous background UPnP check on startup/mount
     void checkUpnp();
 
+    // 1. Continuous status poller: polls every 1000ms REGARDLESS of whether stream is active or not!
+    // Ensures stream started from Telegram bot is immediately reflected in ew-notify UI
+    pollTimer = setInterval(async () => {
+      try {
+        const next = await api.getRtmpStatus();
+        const wasStreaming = rtmpStreamStatus != null;
+        const isNowStreaming = next != null;
+        rtmpStreamStatus = next;
+        if (!wasStreaming && isNowStreaming) {
+          void refreshWindows();
+        }
+      } catch {
+        // ignore
+      }
+    }, 1000);
+
+    // 2. Realtime Tauri event listener for instant 0ms sync
+    try {
+      unlistenStatus = await listen<ActiveRtmpInfo | null>('rtmp-status-changed', (event) => {
+        rtmpStreamStatus = event.payload;
+        if (event.payload) {
+          void refreshWindows();
+        }
+      });
+    } catch (e) {
+      console.warn('Failed to listen to rtmp-status-changed:', e);
+    }
+
+    // 3. Listen to FFmpeg download progress
     try {
       unlistenFfmpeg = await listen<FFmpegDownloadProgress>('ffmpeg-download-progress', (event) => {
         ffmpegDownload = event.payload;
@@ -89,20 +120,9 @@
   });
 
   onDestroy(() => {
+    if (pollTimer) clearInterval(pollTimer);
+    if (unlistenStatus) unlistenStatus();
     if (unlistenFfmpeg) unlistenFfmpeg();
-  });
-
-  $effect(() => {
-    if (rtmpStreamStatus) {
-      const interval = setInterval(async () => {
-        try {
-          rtmpStreamStatus = await api.getRtmpStatus();
-        } catch {
-          // ignore
-        }
-      }, 1000);
-      return () => clearInterval(interval);
-    }
   });
 
   async function refreshWindows() {

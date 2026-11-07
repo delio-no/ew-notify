@@ -70,6 +70,7 @@
   let availableUpdate = $state<UpdateInfo | null>(null);
   let isUpdating = $state(false);
   let updateError = $state<string | null>(null);
+  let isStreamLive = $state(false);
 
   async function handleDirectUpdate() {
     if (!availableUpdate || !availableUpdate.download_url || isUpdating) return;

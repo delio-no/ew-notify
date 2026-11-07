@@ -42,6 +42,18 @@ pub struct GlobalRtmpManager {
 
 static MANAGER: std::sync::OnceLock<GlobalRtmpManager> = std::sync::OnceLock::new();
 static RTMP_RUNNING_FLAG: AtomicBool = AtomicBool::new(false);
+static APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
+
+pub fn set_app_handle(app: tauri::AppHandle) {
+    let _ = APP_HANDLE.set(app);
+}
+
+pub fn emit_rtmp_status_changed(info: &Option<ActiveRtmpInfo>) {
+    if let Some(app) = APP_HANDLE.get() {
+        use tauri::Emitter;
+        let _ = app.emit("rtmp-status-changed", info);
+    }
+}
 
 fn get_manager() -> &'static GlobalRtmpManager {
     MANAGER.get_or_init(|| GlobalRtmpManager {
@@ -143,7 +155,15 @@ pub fn is_rtmp_running() -> bool {
 /// Get snapshot info of active RTMP stream
 pub async fn get_rtmp_info() -> Option<ActiveRtmpInfo> {
     let mgr = get_manager();
-    let guard = mgr.current_session.lock().await;
+    let mut guard = mgr.current_session.lock().await;
+    if let Some(ref s) = *guard {
+        if !s.running.load(Ordering::SeqCst) {
+            *guard = None;
+            RTMP_RUNNING_FLAG.store(false, Ordering::SeqCst);
+            emit_rtmp_status_changed(&None);
+            return None;
+        }
+    }
     guard.as_ref().map(|s| ActiveRtmpInfo {
         hwnd: s.hwnd,
         pid: s.pid,
@@ -421,6 +441,7 @@ pub async fn start_rtmp_stream(
             info!("RTMP capture loop finished (total frames: {})", total_frames);
             running_thread.store(false, Ordering::SeqCst);
             RTMP_RUNNING_FLAG.store(false, Ordering::SeqCst);
+            emit_rtmp_status_changed(&None);
         })
         .map_err(|e| anyhow!("Не удалось запустить поток захвата экрана: {e}"))?;
 
@@ -448,6 +469,7 @@ pub async fn start_rtmp_stream(
     };
 
     *guard = Some(session);
+    emit_rtmp_status_changed(&Some(info.clone()));
     Ok(info)
 }
 
@@ -471,6 +493,7 @@ pub async fn stop_rtmp_stream() -> Result<()> {
         RTMP_RUNNING_FLAG.store(false, Ordering::SeqCst);
     }
 
+    emit_rtmp_status_changed(&None);
     Ok(())
 }
 

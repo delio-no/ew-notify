@@ -71,6 +71,9 @@
         onclick={() => onNavigate(item.id)}
       >
         <span>{item.label}</span>
+        {#if item.id === 'stream' && isStreamLive}
+          <span class="nav-live-dot" title="Стрим сейчас в эфире (LIVE)"></span>
+        {/if}
         {#if item.id === 'settings' && hasUpdate}
           <span class="nav-update-dot" title="Доступно обновление"></span>
         {/if}
@@ -266,5 +269,20 @@
 
   .version-link:hover {
     color: var(--accent, #6366f1);
+  }
+  .nav-live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ef4444;
+    box-shadow: 0 0 8px #ef4444;
+    animation: live-nav-pulse 1.5s infinite;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  @keyframes live-nav-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(0.8); }
   }
 </style>
