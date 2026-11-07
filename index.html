@@ -723,17 +723,29 @@
         };
       } catch(e) {}
 
-      // Configure WebRTC PeerConnection with STUN
+      // Configure WebRTC PeerConnection with STUN & optional TURN
       try {
         log('Инициализация RTCPeerConnection...');
-        pc = new RTCPeerConnection({
-          iceServers: [
-            { urls: 'stun:stun.cloudflare.com:3478' },
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:global.stun.twilio.com:3478' }
-          ]
-        });
+        const params = new URLSearchParams(window.location.search);
+        const iceServers = [
+          { urls: 'stun:stun.cloudflare.com:3478' },
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:global.stun.twilio.com:3478' }
+        ];
+        const customTurn = params.get('turn') || localStorage.getItem('ew_turn_server');
+        if (customTurn) {
+          const turnUser = params.get('tu') || localStorage.getItem('ew_turn_user') || '';
+          const turnPass = params.get('tp') || localStorage.getItem('ew_turn_pass') || '';
+          iceServers.push({
+            urls: customTurn,
+            username: turnUser,
+            credential: turnPass
+          });
+          log('TURN relay настроен: ' + customTurn, '#22c55e');
+        }
+
+        pc = new RTCPeerConnection({ iceServers });
 
         video.muted = true;
 
@@ -799,7 +811,10 @@
 
         pc.onicecandidate = (event) => {
           if (event.candidate) {
-            log('ICE кандидат: ' + event.candidate.type + ' ' + (event.candidate.protocol || 'udp'));
+            const cand = event.candidate;
+            const addr = cand.address || cand.ip || '';
+            const port = cand.port ? (':' + cand.port) : '';
+            log('ICE кандидат: ' + cand.type + ' ' + (cand.protocol || 'udp') + (addr ? (' (' + addr + port + ')') : ''));
           } else {
             log('ICE сбор кандидатов завершен');
           }
@@ -828,16 +843,23 @@
         await new Promise((resolve) => {
           if (pc.iceGatheringState === 'complete') {
             resolve();
-          } else {
-            const check = () => {
-              if (pc.iceGatheringState === 'complete') {
-                pc.removeEventListener('icegatheringstatechange', check);
-                resolve();
-              }
-            };
-            pc.addEventListener('icegatheringstatechange', check);
-            setTimeout(resolve, 600);
+            return;
           }
+          let resolved = false;
+          let timer = null;
+          const done = () => {
+            if (!resolved) {
+              resolved = true;
+              if (timer) clearTimeout(timer);
+              resolve();
+            }
+          };
+          const check = () => {
+            if (pc.iceGatheringState === 'complete') done();
+          };
+          pc.addEventListener('icegatheringstatechange', check);
+          // Wait up to 1200ms on mobile connections to ensure public IP (srflx) is gathered
+          timer = setTimeout(done, 1200);
         });
 
         isOfferReady = true;
