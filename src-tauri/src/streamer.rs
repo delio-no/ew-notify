@@ -266,13 +266,32 @@ pub async fn stop_stream() {
     if let Some(session) = guard.take() {
         info!("Stopping active stream: {}", session.stream_id);
         session.running.store(false, Ordering::SeqCst);
+
+        // Notify all viewers over HTTPS/443 ntfy signaling that stream stopped
+        let clean_id = session.stream_id.strip_prefix("ew-").unwrap_or(&session.stream_id).to_string();
+        let http_client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(1500))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
         let viewers = session.active_viewers.write().unwrap().drain().collect::<Vec<_>>();
-        for (_, viewer) in viewers {
+        for (vid, viewer) in viewers {
+            let answer_url = format!("https://ntfy.sh/ew-{}-ans-{}", clean_id, vid);
+            let client_c = http_client.clone();
+            tokio::spawn(async move {
+                let stop_payload = serde_json::json!({
+                    "event": "stream_stopped",
+                    "message": "Хост остановил трансляцию в Telegram-боте или закрыл ew-notify."
+                });
+                let _ = client_c.post(&answer_url).json(&stop_payload).send().await;
+            });
+
             let pc = viewer.pc;
             tokio::spawn(async move {
                 let _ = pc.close().await;
             });
         }
+
         tokio::spawn(async move {
             release_upnp_port().await;
         });

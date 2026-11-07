@@ -1880,6 +1880,17 @@ pub fn run() {
             install_update,
             get_app_version,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            match event {
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+                    tracing::info!("Application exiting: stopping active stream session...");
+                    tauri::async_runtime::block_on(async {
+                        crate::streamer::stop_stream().await;
+                    });
+                }
+                _ => {}
+            }
+        });
 }

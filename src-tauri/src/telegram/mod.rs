@@ -496,7 +496,10 @@ pub async fn start_bot(
                                         kb = kb.append_row(vec![InlineKeyboardButton::web_app("▶️ Смотреть в Telegram", WebAppInfo { url: url.clone() })]);
                                         kb = kb.append_row(vec![InlineKeyboardButton::url("🌐 Открыть в браузере", url)]);
                                     }
-                                    kb = kb.append_row(vec![InlineKeyboardButton::callback("🛑 Остановить стрим", "stream_stop")]);
+                                    kb = kb.append_row(vec![
+                                        InlineKeyboardButton::callback("🔄 Обновить", "stream_refresh"),
+                                        InlineKeyboardButton::callback("🛑 Остановить стрим", "stream_stop"),
+                                    ]);
                                     let _ = bot
                                         .send_message(ChatId(chat_id), info_msg)
                                         .reply_markup(kb)
@@ -716,29 +719,33 @@ pub async fn start_bot(
                                         } else {
                                             let _ = bot
                                                 .answer_callback_query(callback.id.clone())
-                                                .text("Запуск трансляции 1080p...")
+                                                .text("Запуск трансляции 720p...")
                                                 .send()
                                                 .await;
                                             match crate::streamer::start_stream(target_win.hwnd, target_win.pid, target_win.title.clone()).await {
                                                 Ok(info) => {
                                                     let success_msg = format!(
-                                                        "📺 Трансляция окна запущена!\n\n                                                         🎮 Окно: «{}» (PID {})\n                                                         🌐 Качество: 1080p Full HD, 30 FPS\n                                                         🔗 Ссылка для просмотра:\n{}\n\n                                                         👁 Зрителей: 0\n                                                         Откройте ссылку на телефоне, планшете или другом ПК.",
+                                                        "📺 Трансляция окна запущена!\n\n🎮 Окно: «{}» (PID {})\n🌐 Качество: 720p HD, 30 FPS\n🔗 Ссылка для просмотра:\n{}\n\n👁 Зрителей сейчас: 0\nОткройте прямо в Telegram (Mini App) или в браузере:",
                                                         info.title, info.pid, info.player_url
                                                     );
                                                     let mut kb = InlineKeyboardMarkup::default();
-                                                    if let Ok(url) = info.player_url.parse() {
-                                                        kb = kb.append_row(vec![InlineKeyboardButton::url("🌐 Открыть плеер", url)]);
+                                                    if let Ok(url) = info.player_url.parse::<reqwest::Url>() {
+                                                        kb = kb.append_row(vec![InlineKeyboardButton::web_app("▶️ Смотреть в Telegram", WebAppInfo { url: url.clone() })]);
+                                                        kb = kb.append_row(vec![InlineKeyboardButton::url("🌐 Открыть в браузере", url)]);
                                                     }
-                                                    kb = kb.append_row(vec![InlineKeyboardButton::callback("🛑 Остановить стрим", "stream_stop")]);
+                                                    kb = kb.append_row(vec![
+                                                        InlineKeyboardButton::callback("🔄 Обновить", "stream_refresh"),
+                                                        InlineKeyboardButton::callback("🛑 Остановить стрим", "stream_stop"),
+                                                    ]);
                                                     let _ = bot
-                                                        .send_message(ChatId(chat_id), success_msg)
+                                                        .edit_message_text(message.chat().id, message.id(), success_msg)
                                                         .reply_markup(kb)
                                                         .send()
                                                         .await;
                                                 }
                                                 Err(e) => {
                                                     let _ = bot
-                                                        .send_message(ChatId(chat_id), format!("❌ Ошибка запуска стрима: {e}"))
+                                                        .edit_message_text(message.chat().id, message.id(), format!("❌ Ошибка запуска стрима: {e}"))
                                                         .send()
                                                         .await;
                                                 }
@@ -746,7 +753,7 @@ pub async fn start_bot(
                                         }
                                     } else {
                                         let _ = bot
-                                            .send_message(ChatId(chat_id), "⚠️ Окно больше не найдено (возможно, игра закрыта).")
+                                            .edit_message_text(message.chat().id, message.id(), "⚠️ Окно больше не найдено (возможно, игра закрыта).")
                                             .send()
                                             .await;
                                     }
@@ -769,7 +776,7 @@ pub async fn start_bot(
                                 } else if let Ok(hwnd_val) = hwnd_str.parse::<isize>() {
                                     let _ = bot
                                         .answer_callback_query(callback.id.clone())
-                                        .text("Разворачиваю окно и запускаю 1080p...")
+                                        .text("Разворачиваю окно и запускаю 720p...")
                                         .send()
                                         .await;
 
@@ -788,7 +795,7 @@ pub async fn start_bot(
                                         match crate::streamer::start_stream(target_win.hwnd, target_win.pid, target_win.title.clone()).await {
                                             Ok(info) => {
                                                 let success_msg = format!(
-                                                    "📺 Трансляция окна запущена (развёрнуто программно)!\n\n                                                     🎮 Окно: «{}» (PID {})\n                                                     🌐 Качество: 1080p Full HD, 30 FPS\n                                                     🔗 Ссылка для просмотра:\n{}\n\n                                                     👁 Зрителей: 0\n                                                     Откройте ссылку на телефоне, планшете или другом ПК.",
+                                                    "📺 Трансляция окна запущена (развёрнуто программно)!\n\n🎮 Окно: «{}» (PID {})\n🌐 Качество: 720p HD, 30 FPS\n🔗 Ссылка для просмотра:\n{}\n\n👁 Зрителей сейчас: 0\nОткройте прямо в Telegram (Mini App) или в браузере:",
                                                     info.title, info.pid, info.player_url
                                                 );
                                                 let mut kb = InlineKeyboardMarkup::default();
@@ -796,23 +803,26 @@ pub async fn start_bot(
                                                     kb = kb.append_row(vec![InlineKeyboardButton::web_app("▶️ Смотреть в Telegram", WebAppInfo { url: url.clone() })]);
                                                     kb = kb.append_row(vec![InlineKeyboardButton::url("🌐 Открыть в браузере", url)]);
                                                 }
-                                                kb = kb.append_row(vec![InlineKeyboardButton::callback("🛑 Остановить стрим", "stream_stop")]);
+                                                kb = kb.append_row(vec![
+                                                    InlineKeyboardButton::callback("🔄 Обновить", "stream_refresh"),
+                                                    InlineKeyboardButton::callback("🛑 Остановить стрим", "stream_stop"),
+                                                ]);
                                                 let _ = bot
-                                                    .send_message(ChatId(chat_id), success_msg)
+                                                    .edit_message_text(message.chat().id, message.id(), success_msg)
                                                     .reply_markup(kb)
                                                     .send()
                                                     .await;
                                             }
                                             Err(e) => {
                                                 let _ = bot
-                                                    .send_message(ChatId(chat_id), format!("❌ Ошибка запуска стрима: {e}"))
+                                                    .edit_message_text(message.chat().id, message.id(), format!("❌ Ошибка запуска стрима: {e}"))
                                                     .send()
                                                     .await;
                                             }
                                         }
                                     } else {
                                         let _ = bot
-                                            .send_message(ChatId(chat_id), "⚠️ Окно больше не найдено.")
+                                            .edit_message_text(message.chat().id, message.id(), "⚠️ Окно больше не найдено.")
                                             .send()
                                             .await;
                                     }
@@ -824,10 +834,104 @@ pub async fn start_bot(
                                     .text("🛑 Трансляция остановлена")
                                     .send()
                                     .await;
+
+                                let kb = InlineKeyboardMarkup::default().append_row(vec![
+                                    InlineKeyboardButton::callback("📺 Запустить стрим заново", "stream_restart"),
+                                ]);
                                 let _ = bot
-                                    .send_message(message.chat().id, "🛑 Трансляция окна была остановлена.")
+                                    .edit_message_text(message.chat().id, message.id(), "🛑 Трансляция окна остановлена.")
+                                    .reply_markup(kb)
                                     .send()
                                     .await;
+                            } else if data == "stream_refresh" {
+                                if let Some(active) = crate::streamer::get_stream_info().await {
+                                    let _ = bot
+                                        .answer_callback_query(callback.id.clone())
+                                        .text("Статус обновлен")
+                                        .send()
+                                        .await;
+
+                                    let info_msg = format!(
+                                        "📺 Сейчас активна трансляция:\n\n🎮 Окно: «{}» (PID {})\n🌐 Разрешение: 720p HD, 30 FPS\n👁 Зрителей: {}\n⏱ В эфире: {} сек\n\n🔗 Ссылка на стрим:\n{}\n\nОткройте плеер прямо в Telegram или в браузере:",
+                                        active.title, active.pid, active.viewer_count, active.uptime_secs, active.player_url
+                                    );
+                                    let mut kb = InlineKeyboardMarkup::default();
+                                    if let Ok(url) = active.player_url.parse::<reqwest::Url>() {
+                                        kb = kb.append_row(vec![InlineKeyboardButton::web_app("▶️ Смотреть в Telegram", WebAppInfo { url: url.clone() })]);
+                                        kb = kb.append_row(vec![InlineKeyboardButton::url("🌐 Открыть в браузере", url)]);
+                                    }
+                                    kb = kb.append_row(vec![
+                                        InlineKeyboardButton::callback("🔄 Обновить", "stream_refresh"),
+                                        InlineKeyboardButton::callback("🛑 Остановить стрим", "stream_stop"),
+                                    ]);
+                                    let _ = bot
+                                        .edit_message_text(message.chat().id, message.id(), info_msg)
+                                        .reply_markup(kb)
+                                        .send()
+                                        .await;
+                                } else {
+                                    let _ = bot
+                                        .answer_callback_query(callback.id.clone())
+                                        .text("Трансляция не активна")
+                                        .send()
+                                        .await;
+
+                                    let kb = InlineKeyboardMarkup::default().append_row(vec![
+                                        InlineKeyboardButton::callback("📺 Запустить стрим заново", "stream_restart"),
+                                    ]);
+                                    let _ = bot
+                                        .edit_message_text(message.chat().id, message.id(), "🛑 Трансляция не активна или была остановлена.")
+                                        .reply_markup(kb)
+                                        .send()
+                                        .await;
+                                }
+                            } else if data == "stream_restart" {
+                                let _ = bot
+                                    .answer_callback_query(callback.id.clone())
+                                    .send()
+                                    .await;
+
+                                let config_guard = config.lock().await;
+                                let process_name = config_guard.target.process_name.clone();
+                                drop(config_guard);
+
+                                let windows = crate::screen_capture::find_target_windows(&process_name);
+                                if windows.is_empty() {
+                                    let kb = InlineKeyboardMarkup::default().append_row(vec![
+                                        InlineKeyboardButton::callback("🔄 Повторить поиск", "stream_restart"),
+                                    ]);
+                                    let _ = bot
+                                        .edit_message_text(
+                                            message.chat().id,
+                                            message.id(),
+                                            format!(
+                                                "⚠️ Окна процесса «{}» не найдены.\nУбедитесь, что игра запущена на ПК.",
+                                                process_name
+                                            ),
+                                        )
+                                        .reply_markup(kb)
+                                        .send()
+                                        .await;
+                                } else {
+                                    let mut kb = InlineKeyboardMarkup::default();
+                                    for (idx, win) in windows.iter().enumerate() {
+                                        let win_num = idx + 1;
+                                        let min_mark = if win.is_minimized { " [Свёрнуто ⚠️]" } else { "" };
+                                        let label = format!("🎮 Окно #{} (PID {}){}", win_num, win.pid, min_mark);
+                                        kb = kb.append_row(vec![
+                                            InlineKeyboardButton::callback(label, format!("stream_pick_{}", win.hwnd)),
+                                        ]);
+                                    }
+                                    kb = kb.append_row(vec![
+                                        InlineKeyboardButton::callback("❌ Отмена", "stream_cancel"),
+                                    ]);
+                                    let prompt = "📺 Выберите окно игры для начала стрима:";
+                                    let _ = bot
+                                        .edit_message_text(message.chat().id, message.id(), prompt)
+                                        .reply_markup(kb)
+                                        .send()
+                                        .await;
+                                }
                             } else if data == "stream_cancel" {
                                 let _ = bot
                                     .answer_callback_query(callback.id.clone())
