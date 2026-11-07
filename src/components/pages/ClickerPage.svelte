@@ -572,8 +572,8 @@
               <!-- Mode Selection (Looping vs Single-shot) -->
               <div class="form-group mode-form-group">
                 <span class="field-title">
-                  ����� ������
-                  <span class="hint-text">({rule.single_press ? '����������' : '������������'})</span>
+                  Режим работы
+                  <span class="hint-text">({rule.single_press ? 'Одиночное' : 'Периодическое'})</span>
                 </span>
                 <div class="mode-toggle-group">
                   <button
@@ -582,7 +582,7 @@
                     class:active={!rule.single_press}
                     onclick={() => (rule.single_press = false)}
                   >
-                    ?? ������������
+                    🔁 Периодически
                   </button>
                   <button
                     type="button"
@@ -590,7 +590,7 @@
                     class:active={rule.single_press}
                     onclick={() => (rule.single_press = true)}
                   >
-                    ? ��������
+                    ⚡ Однократно
                   </button>
                 </div>
               </div>
@@ -599,8 +599,8 @@
               <!-- Interval Field -->
               <div class="form-group">
                 <label for="rule-interval-{rule.id}">
-                  �������� (��)
-                  <span class="hint-text">({rule.interval_ms} �� = {(rule.interval_ms / 1000).toFixed(1)} �)</span>
+                  Интервал (мс)
+                  <span class="hint-text">({rule.interval_ms} мс = {(rule.interval_ms / 1000).toFixed(1)} с)</span>
                 </label>
                 <input
                   id="rule-interval-{rule.id}"
@@ -618,7 +618,7 @@
                       class:active={Number(rule.interval_ms) === qi}
                       onclick={() => (rule.interval_ms = qi)}
                     >
-                      {qi} ��
+                      {qi} мс
                     </button>
                   {/each}
                 </div>

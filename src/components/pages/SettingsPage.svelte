@@ -56,6 +56,15 @@
   let rtmpStreamStatus = $state<ActiveRtmpInfo | null>(null);
   let isStartingRtmp = $state(false);
   let rtmpActionError = $state<string | null>(null);
+  let isTestingRtmp = $state(false);
+  let rtmpTestResult = $state<{ ok: boolean; message: string } | null>(null);
+
+  const isRtmpConfigured = $derived(
+    Boolean(
+      (config.streamer?.rtmp_key ?? '').trim().length > 0 &&
+      (config.streamer?.rtmp_url ?? '').trim().length > 0
+    )
+  );
   let ffmpegDownload = $state<FFmpegDownloadProgress | null>(null);
   let isDownloadingFfmpeg = $state(false);
 
@@ -138,11 +147,42 @@
     try {
       const clipText = await navigator.clipboard.readText();
       if (clipText && clipText.trim()) {
-        if (!config.streamer) config.streamer = { rtmp_url: '', rtmp_key: '' };
+        if (!config.streamer) config.streamer = { rtmp_url: '', rtmp_key: '', rtmp_channel_url: '' };
         config.streamer.rtmp_url = clipText.trim();
       }
     } catch (e) {
       console.warn('Clipboard read failed:', e);
+    }
+  }
+
+  async function pasteChannelUrlFromClipboard() {
+    try {
+      const clipText = await navigator.clipboard.readText();
+      if (clipText && clipText.trim()) {
+        if (!config.streamer) config.streamer = { rtmp_url: '', rtmp_key: '', rtmp_channel_url: '' };
+        config.streamer.rtmp_channel_url = clipText.trim();
+      }
+    } catch (e) {
+      console.warn('Clipboard read failed:', e);
+    }
+  }
+
+  async function testRtmpConnection() {
+    const url = (config.streamer?.rtmp_url ?? '').trim();
+    const key = (config.streamer?.rtmp_key ?? '').trim();
+    if (!key) {
+      rtmpTestResult = { ok: false, message: 'Сначала введите «Ключ трансляции» (Stream Key).' };
+      return;
+    }
+    isTestingRtmp = true;
+    rtmpTestResult = null;
+    try {
+      const msg = await api.testRtmpConnection(url, key);
+      rtmpTestResult = { ok: true, message: `✅ ${msg}` };
+    } catch (e) {
+      rtmpTestResult = { ok: false, message: `❌ ${String(e)}` };
+    } finally {
+      isTestingRtmp = false;
     }
   }
 
@@ -177,7 +217,8 @@
         return;
       }
       const url = (config.streamer?.rtmp_url ?? '').trim();
-      rtmpStreamStatus = await api.startRtmpStream(win.hwnd, win.pid, win.title, url, key);
+      const chan = (config.streamer?.rtmp_channel_url ?? '').trim();
+      rtmpStreamStatus = await api.startRtmpStream(win.hwnd, win.pid, win.title, url, key, chan);
     } catch (e) {
       rtmpActionError = String(e);
     } finally {
@@ -393,6 +434,20 @@
           <input type="checkbox" bind:checked={config.notifications.telegram_enabled} />
           <span>Включить Telegram уведомления</span>
         </label>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            checked={config.telegram?.notify_stop_farm ?? true}
+            onchange={(e) => {
+              if (!config.telegram) return;
+              config.telegram.notify_stop_farm = (e.target as HTMLInputElement).checked;
+            }}
+          />
+          <span>🛑 Отправлять ботом оповещения STOP_FARM</span>
+        </label>
+        <span class="hint">Управляет только отправкой сообщений ботом. В ew-notify кликер и мониторинг пакетов продолжат работать.</span>
       </div>
       <div class="form-group">
         <label class="checkbox-label">
@@ -681,12 +736,54 @@
           type={showRtmpKey ? 'text' : 'password'}
           value={config.streamer?.rtmp_key ?? ''}
           oninput={(e) => {
-            if (!config.streamer) config.streamer = { rtmp_url: 'rtmps://live.me.t.me/live', rtmp_key: '' };
+            if (!config.streamer) config.streamer = { rtmp_url: '', rtmp_key: '', rtmp_channel_url: '' };
             config.streamer.rtmp_key = (e.target as HTMLInputElement).value;
           }}
           placeholder="123456789:ABCdefGHIjklMNO..."
         />
         <span class="hint">Ключ из меню вашего канала Telegram: «Видеотрансляция» ➔ «Трансляция с помощью...» ➔ «Ключ трансляции»</span>
+      </div>
+
+      <!-- Telegram Channel Link Input -->
+      <div class="form-group">
+        <div class="form-label-row">
+          <label for="rtmp-channel-url">Ссылка на канал или группу Telegram (для бота)</label>
+          <button
+            type="button"
+            class="btn-text-sm"
+            onclick={pasteChannelUrlFromClipboard}
+          >
+            📋 Вставить
+          </button>
+        </div>
+        <input
+          id="rtmp-channel-url"
+          type="text"
+          value={config.streamer?.rtmp_channel_url ?? ''}
+          oninput={(e) => {
+            if (!config.streamer) config.streamer = { rtmp_url: '', rtmp_key: '', rtmp_channel_url: '' };
+            config.streamer.rtmp_channel_url = (e.target as HTMLInputElement).value;
+          }}
+          placeholder="https://t.me/my_channel или @my_channel"
+        />
+        <span class="hint">Укажите ваш канал — бот пришлёт прямую кнопку «📢 Открыть канал со стримом» для быстрого перехода</span>
+      </div>
+
+      <!-- RTMP Connection Test Action -->
+      <div class="rtmp-test-box">
+        <button
+          type="button"
+          class="btn-test-rtmp"
+          disabled={isTestingRtmp || !config.streamer?.rtmp_key?.trim()}
+          onclick={testRtmpConnection}
+        >
+          {isTestingRtmp ? '⏳ Проверка соединения с Telegram...' : '🔍 Проверить подключение к RTMP'}
+        </button>
+        {#if rtmpTestResult}
+          <div class="test-badge" class:success={rtmpTestResult.ok} class:error={!rtmpTestResult.ok}>
+            {rtmpTestResult.message}
+          </div>
+        {/if}
       </div>
 
       <!-- Live Stream Control directly inside ew-notify Desktop UI -->
@@ -746,12 +843,17 @@
               <button
                 type="button"
                 class="btn btn-primary btn-sm"
-                disabled={!selectedHwnd || !ffmpegInfo.installed || !config.streamer?.rtmp_key || isStartingRtmp}
+                disabled={!selectedHwnd || !ffmpegInfo.installed || !isRtmpConfigured || isStartingRtmp}
                 onclick={startDesktopRtmp}
               >
                 {isStartingRtmp ? 'Запуск...' : '▶️ Начать эфир в Telegram'}
               </button>
             </div>
+            {#if !isRtmpConfigured}
+              <div class="rtmp-config-warning">
+                ⚠️ Чтобы включить запуск эфира, заполните <strong>«Сервер трансляции»</strong> и <strong>«Ключ трансляции»</strong> выше.
+              </div>
+            {/if}
           {/if}
         </div>
       </div>
@@ -1399,4 +1501,65 @@
     background: rgba(239, 68, 68, 0.15);
     border-color: #ef4444;
   }
+
+  .rtmp-test-box {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: -6px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+
+  .btn-test-rtmp {
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.4);
+    color: #38bdf8;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .btn-test-rtmp:hover:not(:disabled) {
+    background: rgba(56, 189, 248, 0.25);
+    border-color: #38bdf8;
+  }
+
+  .btn-test-rtmp:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .test-badge {
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 500;
+  }
+
+  .test-badge.success {
+    background: rgba(34, 197, 94, 0.15);
+    border: 1px solid rgba(34, 197, 94, 0.4);
+    color: #4ade80;
+  }
+
+  .test-badge.error {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #f87171;
+  }
+
+  .rtmp-config-warning {
+    margin-top: 10px;
+    padding: 8px 12px;
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 6px;
+    color: #f59e0b;
+    font-size: 0.82rem;
+  }
+
 </style>

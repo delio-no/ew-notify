@@ -38,6 +38,11 @@ pub async fn send_notification(
         return Ok(());
     }
 
+    if pattern_id.eq_ignore_ascii_case("STOP_FARM") && !config_guard.telegram.notify_stop_farm {
+        tracing::info!("Telegram notification for STOP_FARM skipped (notify_stop_farm=false)");
+        return Ok(());
+    }
+
     let token = config_guard.telegram.bot_token.clone();
     let notify_all = config_guard.telegram.notify_all_users;
     let enabled_users: Vec<RegisteredUser> = config_guard
@@ -408,25 +413,37 @@ pub async fn start_bot(
                                     .find(|p| p.name == "DEATH")
                                     .map(|p| p.screenshot_enabled)
                                     .unwrap_or(true);
+                                let notify_stop = config_guard.telegram.notify_stop_farm;
                                 let delay = config_guard.notifications.screenshot_delay_ms;
                                 drop(config_guard);
 
                                 let text_msg = format!(
-                                    "⚙️ Настройки уведомлений:\n\n\
+                                    "⚙️ Настройки уведомлений бота:\n\n\
+• 🛑 Оповещения STOP_FARM: {}\n\
 • 💀 Скриншот при смерти (DEATH): {}\n\
 • ⏱ Задержка скриншота: {} мс\n\n\
 Нажмите кнопку ниже для переключения:",
+                                    if notify_stop { "Включены ✅" } else { "Выключены ❌" },
                                     if on_death { "Включён ✅" } else { "Выключен ❌" },
                                     delay
                                 );
-                                let btn_text = if on_death {
+                                let btn_stop = if notify_stop {
+                                    "🛑 STOP_FARM: Вкл ✅"
+                                } else {
+                                    "🛑 STOP_FARM: Выкл ❌"
+                                };
+                                let btn_death = if on_death {
                                     "💀 Скрин при смерти: Вкл ✅"
                                 } else {
                                     "💀 Скрин при смерти: Выкл ❌"
                                 };
-                                let kb = InlineKeyboardMarkup::default().append_row(vec![
-                                    InlineKeyboardButton::callback(btn_text, "toggle_death_screen"),
-                                ]);
+                                let kb = InlineKeyboardMarkup::default()
+                                    .append_row(vec![
+                                        InlineKeyboardButton::callback(btn_stop, "toggle_stop_farm"),
+                                    ])
+                                    .append_row(vec![
+                                        InlineKeyboardButton::callback(btn_death, "toggle_death_screen"),
+                                    ]);
                                 let _ = bot
                                     .send_message(ChatId(chat_id), text_msg)
                                     .reply_markup(kb)
@@ -560,6 +577,7 @@ pub async fn start_bot(
                                 let process_name = config_guard.target.process_name.clone();
                                 let rtmp_url = config_guard.streamer.rtmp_url.clone();
                                 let rtmp_key = config_guard.streamer.rtmp_key.clone();
+                                let rtmp_chan = config_guard.streamer.rtmp_channel_url.clone();
                                 drop(config_guard);
 
                                 if !allowed {
@@ -573,16 +591,29 @@ pub async fn start_bot(
                                         .send()
                                         .await;
                                 } else if let Some(active) = crate::rtmp_streamer::get_rtmp_info().await {
+                                    let chan_line = if let Some(ref c) = rtmp_chan {
+                                        format!("\n📢 Канал: {}", c)
+                                    } else {
+                                        String::new()
+                                    };
                                     let info_msg = format!(
                                         "📡 Сейчас активна трансляция в Telegram:\n\n\
                                          🎮 Окно: «{}» (PID {})\n\
                                          ⏱ В эфире: {} сек\n\
                                          🚀 Параметры: 720p HD, 30 FPS, битрейт 2500k\n\
-                                         📍 Сервер: {}\n\n\
-                                         Откройте ваш Telegram-канал, чтобы смотреть прямой эфир.",
-                                        active.title, active.pid, active.uptime_secs, active.rtmp_url
+                                         📍 Сервер: {}{}\n\n\
+                                         Нажмите кнопку ниже для перехода в канал:",
+                                        active.title, active.pid, active.uptime_secs, active.rtmp_url, chan_line
                                     );
-                                    let kb = InlineKeyboardMarkup::default().append_row(vec![
+                                    let mut kb = InlineKeyboardMarkup::default();
+                                    if let Some(ref c) = rtmp_chan {
+                                        if let Ok(url) = reqwest::Url::parse(c) {
+                                            kb = kb.append_row(vec![
+                                                InlineKeyboardButton::url("📢 Открыть канал со стримом", url),
+                                            ]);
+                                        }
+                                    }
+                                    kb = kb.append_row(vec![
                                         InlineKeyboardButton::callback("🔄 Обновить статус", "rtmp_refresh"),
                                         InlineKeyboardButton::callback("🛑 Остановить RTMP", "rtmp_stop"),
                                     ]);
@@ -591,18 +622,18 @@ pub async fn start_bot(
                                         .reply_markup(kb)
                                         .send()
                                         .await;
-                                } else if rtmp_key.trim().is_empty() {
+                                } else if rtmp_key.trim().is_empty() || rtmp_url.trim().is_empty() {
                                     let prompt = "📡 Трансляция в канал Telegram (RTMP)\n\n\
-                                                  ⚠️ Ключ трансляции (Stream Key) еще не настроен!\n\n\
-                                                  📋 Как получить ключ:\n\
-                                                  1. Откройте ваш Telegram-канал или группу.\n\
-                                                  2. Меню ➔ «Видеотрансляция» (или «Прямой эфир») ➔ «Трансляция с помощью...»\n\
-                                                  3. Скопируйте «Ключ трансляции» (Stream Key).\n\
-                                                  4. Отправьте боту команду:\n\
-                                                  `/set_rtmp ВАШ_КЛЮЧ`\n\n\
-                                                  После этого трансляция будет запускаться прямо в ваш Telegram-канал в один клик!";
+                                                  ⚠️ Параметры RTMP еще не заполнены!\n\n\
+                                                  Для запуска стрима необходимо указать:\n\
+                                                  • Сервер трансляции (RTMP URL)\n\
+                                                  • Ключ трансляции (Stream Key)\n\n\
+                                                  📋 Укажите их в приложении ew-notify на ПК (вкладка «Настройки») или отправьте боту:\n\
+                                                  `/set_rtmp <URL_СЕРВЕРА> <КЛЮЧ>`\n\n\
+                                                  Также можно указать ссылку на канал:\n\
+                                                  `/set_channel https://t.me/ваш_канал`";
                                     let kb = InlineKeyboardMarkup::default().append_row(vec![
-                                        InlineKeyboardButton::callback("❓ Подробнее о настройке", "rtmp_setup_help"),
+                                        InlineKeyboardButton::callback("❓ Инструкция по настройке", "rtmp_setup_help"),
                                     ]);
                                     let _ = bot
                                         .send_message(ChatId(chat_id), prompt)
@@ -700,6 +731,45 @@ pub async fn start_bot(
                                              🔑 Ключ: {}\n\n\
                                              Теперь отправьте /rtmp или нажмите 📡 RTMP для запуска трансляции.",
                                             saved_url, masked
+                                        );
+                                        let _ = bot
+                                            .send_message(ChatId(chat_id), resp)
+                                            .reply_markup(make_user_keyboard(is_admin))
+                                            .send()
+                                            .await;
+                                    }
+                                }
+                            } else if text_cmd == "/set_channel" || text_cmd.starts_with("/set_channel ") {
+                                if !is_admin {
+                                    let _ = bot
+                                        .send_message(ChatId(chat_id), "⛔ Команда доступна только администратору.")
+                                        .send()
+                                        .await;
+                                } else {
+                                    let arg = text_cmd.strip_prefix("/set_channel").unwrap_or("").trim();
+                                    if arg.is_empty() {
+                                        let msg = "ℹ️ Использование команды:\n\
+                                                   `/set_channel <ссылка_на_канал_или_@username>`\n\n\
+                                                   Пример:\n\
+                                                   `/set_channel https://t.me/my_channel`\n\
+                                                   или\n\
+                                                   `/set_channel @my_channel`";
+                                        let _ = bot
+                                            .send_message(ChatId(chat_id), msg)
+                                            .send()
+                                            .await;
+                                    } else {
+                                        let norm = crate::rtmp_streamer::normalize_channel_url(arg);
+                                        let mut cfg = config.lock().await;
+                                        cfg.streamer.rtmp_channel_url = Some(norm.clone());
+                                        let _ = crate::config::save_config(&cfg);
+                                        drop(cfg);
+
+                                        let resp = format!(
+                                            "✅ Ссылка на канал успешно сохранена!\n\n\
+                                             📢 Канал: {}\n\n\
+                                             Теперь при запуске RTMP бот будет присылать прямую кнопку для перехода в канал.",
+                                            norm
                                         );
                                         let _ = bot
                                             .send_message(ChatId(chat_id), resp)
@@ -1183,11 +1253,29 @@ pub async fn start_bot(
                                             .await
                                             {
                                                 Ok(info) => {
+                                                    let cfg_guard = config.lock().await;
+                                                    let chan_opt = cfg_guard.streamer.rtmp_channel_url.clone();
+                                                    drop(cfg_guard);
+
+                                                    let chan_note = if let Some(ref c) = chan_opt {
+                                                        format!("\n📢 Канал: {}\n\n👉 Нажмите кнопку ниже для перехода в канал:", c)
+                                                    } else {
+                                                        "\n\n👉 Перейдите в ваш канал Telegram и включите видеотрансляцию (эфир появится автоматически)!".to_string()
+                                                    };
+
                                                     let success_msg = format!(
-                                                        "📡 Трансляция в канал Telegram запущена!\n\n                                                         🎮 Окно: «{}» (PID {})\n                                                         ⏱ Только что запущена\n                                                         🚀 Качество: 720p HD, 30 FPS (H.264 / AAC Mute)\n                                                         📍 Сервер: {}\n\n                                                         👉 Перейдите в ваш канал Telegram и включите видеотрансляцию (эфир появится автоматически)!",
-                                                        info.title, info.pid, info.rtmp_url
+                                                        "📡 Трансляция в канал Telegram запущена!\n\n                                                         🎮 Окно: «{}» (PID {})\n                                                         ⏱ Только что запущена\n                                                         🚀 Качество: 720p HD, 30 FPS (H.264 / AAC Mute)\n                                                         📍 Сервер: {}{}",
+                                                        info.title, info.pid, info.rtmp_url, chan_note
                                                     );
-                                                    let kb = InlineKeyboardMarkup::default().append_row(vec![
+                                                    let mut kb = InlineKeyboardMarkup::default();
+                                                    if let Some(ref c) = chan_opt {
+                                                        if let Ok(url) = reqwest::Url::parse(c) {
+                                                            kb = kb.append_row(vec![
+                                                                InlineKeyboardButton::url("📢 Открыть канал со стримом", url),
+                                                            ]);
+                                                        }
+                                                    }
+                                                    kb = kb.append_row(vec![
                                                         InlineKeyboardButton::callback("🔄 Обновить статус", "rtmp_refresh"),
                                                         InlineKeyboardButton::callback("🛑 Остановить RTMP", "rtmp_stop"),
                                                     ]);
@@ -1428,8 +1516,70 @@ pub async fn start_bot(
                                     .send()
                                     .await;
 
+                            } else if data == "toggle_stop_farm" {
+                                let (notify_stop, on_death, delay) = {
+                                    let mut config_guard = config.lock().await;
+                                    config_guard.telegram.notify_stop_farm = !config_guard.telegram.notify_stop_farm;
+                                    let stop_v = config_guard.telegram.notify_stop_farm;
+                                    let death_v = config_guard
+                                        .target
+                                        .patterns
+                                        .iter()
+                                        .find(|p| p.name == "DEATH")
+                                        .map(|p| p.screenshot_enabled)
+                                        .unwrap_or(true);
+                                    let d = config_guard.notifications.screenshot_delay_ms;
+                                    let _ = crate::config::save_config(&config_guard);
+                                    (stop_v, death_v, d)
+                                };
+                                let _ = app.emit("config-updated", ());
+
+                                let status_toast = if notify_stop {
+                                    "Оповещения STOP_FARM включены ✅"
+                                } else {
+                                    "Оповещения STOP_FARM выключены ❌"
+                                };
+                                let _ = bot
+                                    .answer_callback_query(callback.id.clone())
+                                    .text(status_toast)
+                                    .send()
+                                    .await;
+
+                                let btn_stop = if notify_stop {
+                                    "🛑 STOP_FARM: Вкл ✅"
+                                } else {
+                                    "🛑 STOP_FARM: Выкл ❌"
+                                };
+                                let btn_death = if on_death {
+                                    "💀 Скрин при смерти: Вкл ✅"
+                                } else {
+                                    "💀 Скрин при смерти: Выкл ❌"
+                                };
+                                let new_text = format!(
+                                    "⚙️ Настройки уведомлений бота:\n\n\
+• 🛑 Оповещения STOP_FARM: {}\n\
+• 💀 Скриншот при смерти (DEATH): {}\n\
+• ⏱ Задержка скриншота: {} мс\n\n\
+Нажмите кнопку ниже для переключения:",
+                                    if notify_stop { "Включены ✅" } else { "Выключены ❌" },
+                                    if on_death { "Включён ✅" } else { "Выключен ❌" },
+                                    delay
+                                );
+                                let kb = InlineKeyboardMarkup::default()
+                                    .append_row(vec![
+                                        InlineKeyboardButton::callback(btn_stop, "toggle_stop_farm"),
+                                    ])
+                                    .append_row(vec![
+                                        InlineKeyboardButton::callback(btn_death, "toggle_death_screen"),
+                                    ]);
+                                let _ = bot
+                                    .edit_message_text(message.chat().id, message.id(), new_text)
+                                    .reply_markup(kb)
+                                    .send()
+                                    .await;
+
                             } else if data == "toggle_death_screen" {
-                                let (new_val, delay) = {
+                                let (notify_stop, new_val, delay) = {
                                     let mut config_guard = config.lock().await;
                                     let mut v = true;
                                     if let Some(p) = config_guard
@@ -1441,9 +1591,10 @@ pub async fn start_bot(
                                         p.screenshot_enabled = !p.screenshot_enabled;
                                         v = p.screenshot_enabled;
                                     }
+                                    let stop_v = config_guard.telegram.notify_stop_farm;
                                     let d = config_guard.notifications.screenshot_delay_ms;
                                     let _ = crate::config::save_config(&config_guard);
-                                    (v, d)
+                                    (stop_v, v, d)
                                 };
                                 let _ = app.emit("config-updated", ());
 
@@ -1458,22 +1609,33 @@ pub async fn start_bot(
                                     .send()
                                     .await;
 
+                                let btn_stop = if notify_stop {
+                                    "🛑 STOP_FARM: Вкл ✅"
+                                } else {
+                                    "🛑 STOP_FARM: Выкл ❌"
+                                };
                                 let btn_text = if new_val {
                                     "💀 Скрин при смерти: Вкл ✅"
                                 } else {
                                     "💀 Скрин при смерти: Выкл ❌"
                                 };
                                 let new_text = format!(
-                                    "⚙️ Настройки бота:\n\n\
+                                    "⚙️ Настройки уведомлений бота:\n\n\
+• 🛑 Оповещения STOP_FARM: {}\n\
 • 💀 Скриншот при смерти (DEATH): {}\n\
 • ⏱ Задержка скриншота: {} мс\n\n\
-Нажмите кнопку ниже, чтобы переключить:",
+Нажмите кнопку ниже для переключения:",
+                                    if notify_stop { "Включены ✅" } else { "Выключены ❌" },
                                     if new_val { "Включён ✅" } else { "Выключен ❌" },
                                     delay
                                 );
-                                let kb = InlineKeyboardMarkup::default().append_row(vec![
-                                    InlineKeyboardButton::callback(btn_text, "toggle_death_screen"),
-                                ]);
+                                let kb = InlineKeyboardMarkup::default()
+                                    .append_row(vec![
+                                        InlineKeyboardButton::callback(btn_stop, "toggle_stop_farm"),
+                                    ])
+                                    .append_row(vec![
+                                        InlineKeyboardButton::callback(btn_text, "toggle_death_screen"),
+                                    ]);
                                 let _ = bot
                                     .edit_message_text(message.chat().id, message.id(), new_text)
                                     .reply_markup(kb)

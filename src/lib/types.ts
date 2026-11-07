@@ -97,6 +97,7 @@ export interface StreamerConfig {
   turn_password?: string | null;
   rtmp_url?: string;
   rtmp_key?: string;
+  rtmp_channel_url?: string | null;
 }
 
 export interface Config {
@@ -107,6 +108,7 @@ export interface Config {
     auto_start: boolean;
     registered_users: RegisteredUser[];
     notify_all_users: boolean;
+    notify_stop_farm?: boolean;
   };
   target: {
     process_name: string;
@@ -214,6 +216,7 @@ export const defaultConfig = (): Config => ({
     auto_start: false,
     registered_users: [],
     notify_all_users: true,
+    notify_stop_farm: true,
   },
   target: {
     process_name: 'EndlessWar.exe',

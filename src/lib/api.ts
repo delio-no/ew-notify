@@ -118,7 +118,8 @@ export const api = {
     pid: number,
     title: string,
     customUrl?: string,
-    customKey?: string
+    customKey?: string,
+    customChannelUrl?: string
   ) =>
     invoke<ActiveRtmpInfo>('start_rtmp_stream_ui', {
       hwnd,
@@ -126,7 +127,10 @@ export const api = {
       title,
       customUrl: customUrl || null,
       customKey: customKey || null,
+      customChannelUrl: customChannelUrl || null,
     }),
   stopRtmpStream: () => invoke<void>('stop_rtmp_stream_ui'),
   getRtmpStatus: () => invoke<ActiveRtmpInfo | null>('get_rtmp_stream_ui_status'),
+  testRtmpConnection: (rtmpUrl: string, rtmpKey: string) =>
+    invoke<string>('test_rtmp_connection', { rtmpUrl, rtmpKey }),
 };

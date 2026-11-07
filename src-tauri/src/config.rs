@@ -62,6 +62,8 @@ pub struct StreamerConfig {
     pub rtmp_url: String,
     #[serde(default)]
     pub rtmp_key: String,
+    #[serde(default)]
+    pub rtmp_channel_url: Option<String>,
 }
 
 impl Default for StreamerConfig {
@@ -73,6 +75,7 @@ impl Default for StreamerConfig {
             turn_password: None,
             rtmp_url: default_rtmp_url(),
             rtmp_key: String::new(),
+            rtmp_channel_url: None,
         }
     }
 }
@@ -127,6 +130,8 @@ pub struct TelegramConfig {
     pub registered_users: Vec<RegisteredUser>,
     #[serde(default = "default_true")]
     pub notify_all_users: bool,
+    #[serde(default = "default_true")]
+    pub notify_stop_farm: bool,
 }
 
 impl Default for TelegramConfig {
@@ -137,6 +142,7 @@ impl Default for TelegramConfig {
             auto_start: false,
             registered_users: Vec::new(),
             notify_all_users: true,
+            notify_stop_farm: true,
         }
     }
 }

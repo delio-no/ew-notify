@@ -661,3 +661,82 @@ pub fn delete_ffmpeg_binary() -> Result<String> {
         Ok("Файл ffmpeg.exe не найден в папке программы.".to_string())
     }
 }
+
+/// Normalize telegram channel link or @username to full https://t.me/... URL
+pub fn normalize_channel_url(input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if trimmed.starts_with("https://t.me/") || trimmed.starts_with("http://t.me/") {
+        trimmed.to_string()
+    } else if let Some(stripped) = trimmed.strip_prefix('@') {
+        format!("https://t.me/{}", stripped)
+    } else if trimmed.starts_with("t.me/") {
+        format!("https://{}", trimmed)
+    } else {
+        format!("https://t.me/{}", trimmed)
+    }
+}
+
+/// Test connection to Telegram RTMP server using a 1-second dummy probe
+pub async fn test_rtmp_connection(rtmp_url: String, rtmp_key: String) -> Result<String> {
+    let clean_url = rtmp_url.trim();
+    let clean_key = rtmp_key.trim();
+    if clean_url.is_empty() {
+        return Err(anyhow!("Укажите «Сервер трансляции» (RTMP URL)"));
+    }
+    if clean_key.is_empty() {
+        return Err(anyhow!("Укажите «Ключ трансляции» (Stream Key)"));
+    }
+
+    let ffmpeg_path = find_ffmpeg()
+        .ok_or_else(|| anyhow!("FFmpeg не найден на компьютере! Скачайте его через кнопку выше."))?;
+
+    let full_target = if clean_key.starts_with("rtmp://") || clean_key.starts_with("rtmps://") {
+        clean_key.to_string()
+    } else {
+        let mut server = clean_url.to_string();
+        if !server.starts_with("rtmp://") && !server.starts_with("rtmps://") {
+            server = format!("rtmps://{}", server);
+        }
+        format!("{}/{}", server.trim_end_matches('/'), clean_key)
+    };
+
+    let mut cmd = Command::new(ffmpeg_path);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    cmd.args([
+        "-y",
+        "-f", "lavfi",
+        "-i", "testsrc=size=320x240:rate=1",
+        "-t", "1",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-tune", "zerolatency",
+        "-pix_fmt", "yuv420p",
+        "-f", "flv",
+        &full_target,
+    ]);
+
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::piped());
+
+    let output = cmd.output().map_err(|e| anyhow!("Ошибка запуска FFmpeg: {e}"))?;
+
+    if output.status.success() {
+        Ok("Подключение к Telegram RTMP успешно установлено!".to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let err_line = stderr
+            .lines()
+            .rev()
+            .find(|l| l.contains("Error") || l.contains("error") || l.contains("failed") || l.contains("Failed") || l.contains("refused"))
+            .unwrap_or("Сервер отклонил соединение. Проверьте правильность URL и Ключа трансляции.");
+        Err(anyhow!("Ошибка подключения: {}", err_line.trim()))
+    }
+}
