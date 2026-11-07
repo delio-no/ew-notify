@@ -692,14 +692,6 @@ pub async fn start_bot(
                                             .await;
                                     }
                                 }
-                            } else if text_cmd == "/set_rtmp" || text_cmd.starts_with("/set_rtmp ") {
-                                let _ = bot
-                                    .send_message(
-                                        ChatId(chat_id),
-                                        "ℹ️ Настройка ключа и параметров RTMP-трансляции производится в приложении ew-notify на ПК во вкладке «📺 Стрим»."
-                                    )
-                                    .send()
-                                    .await;
                             } else if text_cmd == "/set_channel" || text_cmd.starts_with("/set_channel ") {
                                 if !is_admin {
                                     let _ = bot
