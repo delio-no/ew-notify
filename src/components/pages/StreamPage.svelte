@@ -107,7 +107,7 @@
     try {
       unlistenFfmpeg = await listen<FFmpegDownloadProgress>('ffmpeg-download-progress', (event) => {
         ffmpegDownload = event.payload;
-        if (event.payload.stage === 'ready' || event.payload.stage === 'done') {
+        if (event.payload.stage === 'done') {
           isDownloadingFfmpeg = false;
           api.getFFmpegInfo().then((info) => (ffmpegInfo = info)).catch(console.warn);
         } else if (event.payload.stage === 'error') {
@@ -147,7 +147,7 @@
       if (onSaveConfig) {
         await onSaveConfig();
       } else {
-        await api.saveConfig(config);
+        await api.updateConfig(config);
       }
       saveSuccess = true;
       setTimeout(() => (saveSuccess = false), 2500);

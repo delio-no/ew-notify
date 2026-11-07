@@ -945,6 +945,7 @@
     hasUpdate={!!availableUpdate?.has_update}
     updateVersion={availableUpdate?.latest_version || ''}
     {isUpdating}
+    {isStreamLive}
     onNavigate={showPage}
     onDirectUpdate={handleDirectUpdate}
   />

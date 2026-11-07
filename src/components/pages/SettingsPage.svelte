@@ -416,7 +416,7 @@
             <button
               type="button"
               class="btn btn-primary btn-sm btn-update"
-              disabled={updateStatus === 'downloading'}
+              disabled={isUpdating}
               onclick={installUpdate}
             >
               Скачать и обновить

@@ -9,6 +9,7 @@
     hasUpdate = false,
     updateVersion = '',
     isUpdating = false,
+    isStreamLive = false,
     onNavigate,
     onDirectUpdate,
   }: {
@@ -17,6 +18,7 @@
     hasUpdate?: boolean;
     updateVersion?: string;
     isUpdating?: boolean;
+    isStreamLive?: boolean;
     onNavigate: (page: PageId) => void;
     onDirectUpdate?: () => void;
   } = $props();
