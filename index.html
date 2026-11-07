@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -12,17 +12,18 @@
 
   <style>
     :root {
-      --bg-dark: #0c0f17;
-      --card-bg: rgba(22, 27, 39, 0.85);
+      --bg-dark: #090c14;
+      --card-bg: rgba(18, 24, 38, 0.75);
       --card-border: rgba(255, 255, 255, 0.08);
       --accent: #6366f1;
-      --accent-glow: rgba(99, 102, 241, 0.35);
+      --accent-glow: rgba(99, 102, 241, 0.4);
       --accent-hover: #4f46e5;
       --live-red: #ef4444;
       --text-main: #f8fafc;
       --text-dim: #94a3b8;
       --success: #22c55e;
       --warning: #f59e0b;
+      --safe-bottom: env(safe-area-inset-bottom, 12px);
     }
 
     * {
@@ -35,38 +36,38 @@
     body {
       background-color: var(--bg-dark);
       background-image: 
-        radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.15) 0%, transparent 60%),
-        radial-gradient(circle at 100% 100%, rgba(239, 68, 68, 0.05) 0%, transparent 40%);
+        radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.12) 0%, transparent 50%),
+        radial-gradient(circle at 100% 100%, rgba(239, 68, 68, 0.04) 0%, transparent 40%);
       color: var(--text-main);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 16px;
+      padding: 12px 16px max(16px, var(--safe-bottom));
       overflow-x: hidden;
     }
 
     header {
       width: 100%;
-      max-width: 1200px;
+      max-width: 1100px;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 8px 4px 16px;
+      padding: 4px 4px 12px;
     }
 
     .brand {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       font-weight: 700;
-      font-size: 1.15rem;
+      font-size: 1.1rem;
       letter-spacing: -0.02em;
     }
 
     .brand-icon {
-      font-size: 1.5rem;
+      font-size: 1.35rem;
       filter: drop-shadow(0 0 10px var(--accent-glow));
     }
 
@@ -74,9 +75,9 @@
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      padding: 6px 14px;
+      padding: 5px 12px;
       border-radius: 9999px;
-      font-size: 0.85rem;
+      font-size: 0.8rem;
       font-weight: 600;
       background: rgba(255, 255, 255, 0.05);
       border: 1px solid var(--card-border);
@@ -85,8 +86,8 @@
     }
 
     .status-dot {
-      width: 9px;
-      height: 9px;
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
       background: var(--text-dim);
     }
@@ -99,7 +100,7 @@
 
     .status-badge.live .status-dot {
       background: var(--live-red);
-      box-shadow: 0 0 10px var(--live-red);
+      box-shadow: 0 0 8px var(--live-red);
       animation: pulse 1.8s infinite;
     }
 
@@ -122,12 +123,13 @@
 
     main {
       width: 100%;
-      max-width: 1200px;
+      max-width: 1100px;
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 14px;
     }
 
+    /* Player Container */
     .player-container {
       position: relative;
       width: 100%;
@@ -135,12 +137,14 @@
       background: #000;
       border-radius: 16px;
       overflow: hidden;
-      box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.7),
+      box-shadow: 0 20px 50px -15px rgba(0, 0, 0, 0.8),
                   0 0 0 1px var(--card-border);
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
     }
 
     video {
@@ -150,17 +154,51 @@
       background: #000;
     }
 
+    /* Central animated ripple for tap/click feedback */
+    .center-action-ripple {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) scale(0.6);
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 15;
+    }
+
+    .center-action-ripple.show {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+
+    /* Modern Video Player Overlay */
     .player-overlay {
       position: absolute;
       inset: 0;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      padding: 14px;
+      padding: 14px 16px;
       pointer-events: none;
-      background: linear-gradient(to top, rgba(0, 0, 0, 0.75) 0%, transparent 25%, transparent 75%, rgba(0, 0, 0, 0.6) 100%);
+      background: linear-gradient(
+        180deg, 
+        rgba(0, 0, 0, 0.75) 0%, 
+        transparent 22%, 
+        transparent 78%, 
+        rgba(0, 0, 0, 0.85) 100%
+      );
       opacity: 0;
-      transition: opacity 0.25s ease;
+      transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1);
       z-index: 5;
     }
 
@@ -169,53 +207,186 @@
       opacity: 1;
     }
 
-    .overlay-top,
-    .overlay-bottom {
+    /* Top Bar */
+    .overlay-top-bar {
       display: flex;
-      gap: 10px;
+      justify-content: space-between;
+      align-items: center;
+      pointer-events: auto;
+      gap: 12px;
+    }
+
+    .stream-info-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid var(--card-border);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      padding: 5px 12px;
+      border-radius: 9999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .live-pulse-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--live-red);
+      box-shadow: 0 0 6px var(--live-red);
+      animation: pulse 1.6s infinite;
+    }
+
+    .stream-id-chip {
+      background: rgba(99, 102, 241, 0.18);
+      color: #a5b4fc;
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      padding: 2px 7px;
+      border-radius: 6px;
+      font-family: ui-monospace, monospace;
+      font-size: 0.75rem;
+      cursor: pointer;
+    }
+
+    .overlay-top-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .icon-btn {
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid var(--card-border);
+      color: var(--text-main);
+      width: 36px;
+      height: 36px;
+      border-radius: 9999px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      transition: all 0.2s ease;
       pointer-events: auto;
     }
 
-    .overlay-top {
-      justify-content: flex-end;
+    .icon-btn:hover {
+      background: rgba(99, 102, 241, 0.75);
+      border-color: var(--accent);
+      transform: scale(1.05);
     }
 
-    .overlay-bottom {
+    .icon-btn:active {
+      transform: scale(0.92);
+    }
+
+    /* Invisible center tap layer */
+    .overlay-center-tap {
+      flex: 1;
+      width: 100%;
+      pointer-events: auto;
+    }
+
+    /* Bottom Control Bar - Sleek Floating Bar (YouTube/Twitch/Netflix style) */
+    .overlay-bottom-bar {
+      display: flex;
       justify-content: space-between;
       align-items: center;
+      pointer-events: auto;
+      background: rgba(15, 23, 42, 0.78);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-radius: 12px;
+      padding: 6px 12px;
+      gap: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
     }
 
-    .control-btn {
-      background: rgba(15, 23, 42, 0.85);
-      border: 1px solid var(--card-border);
-      color: var(--text-main);
-      padding: 8px 14px;
+    .controls-left,
+    .controls-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .control-icon-btn {
+      background: transparent;
+      border: none;
+      color: #f1f5f9;
+      width: 36px;
+      height: 36px;
       border-radius: 8px;
       cursor: pointer;
-      font-size: 0.95rem;
-      font-weight: 500;
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.18s ease;
+      pointer-events: auto;
+    }
+
+    .control-icon-btn:hover {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+    }
+
+    .control-icon-btn:active {
+      transform: scale(0.9);
+      background: rgba(99, 102, 241, 0.4);
+    }
+
+    /* Live pill badge */
+    .live-pill {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      pointer-events: auto;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: #f87171;
+      background: rgba(239, 68, 68, 0.16);
+      border: 1px solid rgba(239, 68, 68, 0.3);
       user-select: none;
-      -webkit-user-select: none;
-      -webkit-tap-highlight-color: transparent;
     }
 
-    .control-btn:hover {
-      background: rgba(99, 102, 241, 0.8);
-      border-color: var(--accent);
+    .live-pill .live-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--live-red);
+      box-shadow: 0 0 6px var(--live-red);
+      animation: pulse 1.6s infinite;
     }
 
-    .control-btn:active {
-      transform: scale(0.95);
-      background: rgba(99, 102, 241, 0.95);
+    /* Quality Chip */
+    .quality-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: var(--text-dim);
+      padding: 4px 9px;
+      border-radius: 8px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
     }
 
+    .quality-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+
+    /* Placeholder View */
     .placeholder-view {
       position: absolute;
       inset: 0;
@@ -226,9 +397,9 @@
       gap: 16px;
       padding: 24px;
       text-align: center;
-      background: rgba(12, 15, 23, 0.95);
+      background: rgba(9, 12, 20, 0.94);
       z-index: 10;
-      transition: opacity 0.4s ease;
+      transition: opacity 0.35s ease;
     }
 
     .placeholder-view.hidden {
@@ -237,12 +408,12 @@
     }
 
     .spinner {
-      width: 48px;
-      height: 48px;
-      border: 3px solid rgba(255, 255, 255, 0.1);
+      width: 44px;
+      height: 44px;
+      border: 3px solid rgba(255, 255, 255, 0.08);
       border-radius: 50%;
       border-top-color: var(--accent);
-      animation: spin 1s ease-in-out infinite;
+      animation: spin 0.9s cubic-bezier(0.5, 0.1, 0.5, 0.9) infinite;
     }
 
     @keyframes spin {
@@ -250,24 +421,33 @@
     }
 
     .placeholder-title {
-      font-size: 1.25rem;
+      font-size: 1.15rem;
       font-weight: 600;
+      color: #f1f5f9;
     }
 
     .placeholder-subtitle {
       color: var(--text-dim);
-      font-size: 0.9rem;
-      max-width: 420px;
+      font-size: 0.85rem;
+      max-width: 380px;
       line-height: 1.5;
     }
 
-    .btn {
+    .btn-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-top: 4px;
+    }
+
+    .primary-btn {
       background: var(--accent);
       color: #fff;
       border: none;
-      padding: 10px 20px;
+      padding: 9px 18px;
       border-radius: 10px;
       font-weight: 600;
+      font-size: 0.88rem;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
@@ -276,32 +456,63 @@
       transition: all 0.2s ease;
     }
 
-    .btn:hover {
+    .primary-btn:hover {
       background: var(--accent-hover);
       transform: translateY(-1px);
     }
 
+    .primary-btn:active {
+      transform: scale(0.96);
+    }
+
+    .glass-btn {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-main);
+      border: 1px solid var(--card-border);
+      padding: 9px 16px;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 0.88rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      backdrop-filter: blur(8px);
+      transition: all 0.2s ease;
+    }
+
+    .glass-btn:hover {
+      background: rgba(255, 255, 255, 0.14);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .glass-btn:active {
+      transform: scale(0.96);
+    }
+
+    /* Metadata Card */
     .stream-meta-card {
       background: var(--card-bg);
       border: 1px solid var(--card-border);
-      border-radius: 16px;
-      padding: 20px;
+      border-radius: 14px;
+      padding: 14px 18px;
       backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       display: flex;
       flex-wrap: wrap;
       justify-content: space-between;
       align-items: center;
-      gap: 16px;
+      gap: 12px;
     }
 
     .stream-id-group {
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 4px;
     }
 
     .stream-id-label {
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       text-transform: uppercase;
       letter-spacing: 0.05em;
       color: var(--text-dim);
@@ -311,12 +522,12 @@
     .stream-id-value {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 1.15rem;
+      font-size: 1rem;
       color: #a5b4fc;
       background: rgba(99, 102, 241, 0.1);
-      padding: 4px 10px;
+      padding: 3px 9px;
       border-radius: 6px;
       border: 1px dashed rgba(99, 102, 241, 0.3);
     }
@@ -326,9 +537,11 @@
       border: none;
       color: var(--text-dim);
       cursor: pointer;
-      padding: 4px;
+      padding: 3px;
       border-radius: 4px;
       transition: color 0.2s;
+      display: flex;
+      align-items: center;
     }
 
     .copy-btn:hover {
@@ -337,9 +550,9 @@
 
     .manual-connect {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       width: 100%;
-      max-width: 380px;
+      max-width: 340px;
     }
 
     .manual-input {
@@ -347,10 +560,10 @@
       background: rgba(0, 0, 0, 0.4);
       border: 1px solid var(--card-border);
       border-radius: 10px;
-      padding: 10px 14px;
+      padding: 8px 12px;
       color: #fff;
       font-family: monospace;
-      font-size: 0.95rem;
+      font-size: 0.9rem;
       outline: none;
       transition: border-color 0.2s;
     }
@@ -359,27 +572,73 @@
       border-color: var(--accent);
     }
 
-    .unmute-banner {
-      position: absolute;
-      top: 16px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(0, 0, 0, 0.85);
-      border: 1px solid var(--accent);
-      padding: 8px 16px;
-      border-radius: 9999px;
-      display: none;
+    /* Diagnostics Card (Collapsible Drawer) */
+    .diagnostics-card {
+      width: 100%;
+      background: rgba(12, 17, 29, 0.8);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      overflow: hidden;
+      transition: all 0.3s ease;
+    }
+
+    .diagnostics-header {
+      padding: 10px 14px;
+      display: flex;
+      justify-content: space-between;
       align-items: center;
-      gap: 8px;
       cursor: pointer;
-      z-index: 20;
-      backdrop-filter: blur(8px);
-      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      background: rgba(255, 255, 255, 0.02);
+      user-select: none;
+    }
+
+    .diagnostics-header:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .diagnostics-body {
+      display: none;
+      padding: 12px 14px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.78rem;
+      max-height: 140px;
+      overflow-y: auto;
+      line-height: 1.5;
+      color: #38bdf8;
+    }
+
+    .diagnostics-card.expanded .diagnostics-body {
+      display: block;
+    }
+
+    .diagnostics-actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .text-link-btn {
+      background: none;
+      border: none;
+      color: var(--accent);
+      cursor: pointer;
+      font-size: 0.75rem;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+
+    .text-link-btn:hover {
+      text-decoration: underline;
     }
 
     @media (max-width: 640px) {
       body {
-        padding: 10px;
+        padding: 8px 10px max(14px, var(--safe-bottom));
       }
       .stream-meta-card {
         flex-direction: column;
@@ -387,6 +646,13 @@
       }
       .manual-connect {
         max-width: 100%;
+      }
+      .overlay-bottom-bar {
+        padding: 4px 8px;
+        gap: 6px;
+      }
+      .quality-chip {
+        display: none; /* Hide on small screens to prioritize buttons */
       }
     }
   </style>
@@ -404,63 +670,143 @@
   </header>
 
   <main>
-    <div class="player-container" id="playerContainer" onclick="handlePlayerClick()">
+    <!-- Player Container -->
+    <div class="player-container" id="playerContainer" onclick="handlePlayerClick(event)">
       <video id="videoPlayer" playsinline webkit-playsinline autoplay muted></video>
 
-      <div id="unmuteBanner" class="unmute-banner" onclick="unmuteAudio(event)">
-        <span>🔊</span>
-        <span>Нажмите для включения звука</span>
+      <!-- Central Tap Ripple Animation -->
+      <div class="center-action-ripple" id="centerRipple">
+        <svg id="rippleIcon" width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M8 5v14l11-7z"/>
+        </svg>
       </div>
 
+      <!-- Loading / Connecting Placeholder -->
       <div id="placeholder" class="placeholder-view">
         <div id="loadingSpinner" class="spinner"></div>
         <h2 id="placeholderTitle" class="placeholder-title">Подключение к трансляции</h2>
-        <p id="placeholderSubtitle" class="placeholder-subtitle">Ожидание подключения к хосту игры...</p>
-        <button id="playBtn" class="btn" style="display: none;" onclick="forcePlayVideo(event)">
-          <span>▶</span> Запустить видео
-        </button>
-        <button id="retryBtn" class="btn" style="display: none;" onclick="initConnection(event)">
-          <span>🔄</span> Повторить подключение
-        </button>
+        <p id="placeholderSubtitle" class="placeholder-subtitle">Ожидание P2P рукопожатия с хостом игры...</p>
+        <div class="btn-row">
+          <button id="playBtn" class="primary-btn" style="display: none;" onclick="forcePlayVideo(event)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            Запустить видео
+          </button>
+          <button id="retryBtn" class="glass-btn" style="display: none;" onclick="initConnection(event)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+            Повторить
+          </button>
+        </div>
       </div>
 
+      <!-- Modern Player Overlay -->
       <div class="player-overlay" id="playerOverlay">
-        <div class="overlay-top">
-          <button class="control-btn" onclick="togglePiP(event)" title="Картинка в картинке">⧉ PiP</button>
-          <button class="control-btn" onclick="toggleFullscreen(event)" title="Полный экран">⛶ Экран</button>
-        </div>
-        <div class="overlay-bottom">
-          <div style="display: flex; gap: 8px;">
-            <button class="control-btn" id="playPauseBtn" onclick="togglePlay(event)">⏸</button>
-            <button class="control-btn" id="muteBtn" onclick="toggleMute(event)">🔇</button>
+        <!-- Top Bar -->
+        <div class="overlay-top-bar">
+          <div class="stream-info-badge">
+            <span class="live-pulse-dot"></span>
+            <span>EndlessWar</span>
+            <span class="stream-id-chip" id="overlayStreamChip" onclick="copyStreamId(event)">—</span>
           </div>
-          <span style="font-size: 0.8rem; color: var(--text-dim); background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px;">720p 30fps WebRTC</span>
+
+          <div class="overlay-top-actions">
+            <button class="icon-btn" onclick="toggleDiagnostics(event)" title="Лог подключения">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="4 17 10 11 4 5"></polyline>
+                <line x1="12" y1="19" x2="20" y2="19"></line>
+              </svg>
+            </button>
+            <button class="icon-btn" onclick="initConnection(event)" title="Переподключиться">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Center tap target -->
+        <div class="overlay-center-tap" onclick="handleCenterTap(event)"></div>
+
+        <!-- Bottom Controls Bar (Twitch / YouTube style) -->
+        <div class="overlay-bottom-bar">
+          <div class="controls-left">
+            <!-- Play / Pause Button -->
+            <button class="control-icon-btn" id="playPauseBtn" onclick="togglePlay(event)" title="Воспроизведение / Пауза">
+              <svg id="playPauseIcon" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+              </svg>
+            </button>
+
+            <!-- Mute / Unmute Button -->
+            <button class="control-icon-btn" id="muteBtn" onclick="toggleMute(event)" title="Звук">
+              <svg id="muteIcon" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                <!-- Muted by default -->
+                <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>
+              </svg>
+            </button>
+
+            <!-- Live Pill Indicator -->
+            <div class="live-pill">
+              <span class="live-dot"></span>
+              <span>LIVE</span>
+            </div>
+          </div>
+
+          <div class="controls-right">
+            <!-- Quality Badge -->
+            <div class="quality-chip">
+              <span class="quality-dot"></span>
+              <span id="qualityBadgeText">720p 30fps</span>
+            </div>
+
+            <!-- Picture-in-Picture Button -->
+            <button class="control-icon-btn" id="pipBtn" onclick="togglePiP(event)" title="Картинка в картинке">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19 11h-8v6h8v-6zm4 8V4.98C23 3.88 22.1 3 21 3H3c-1.1 0-2 .88-2 1.98V19c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2zm-2 .02H3V4.97h18v14.05z"/>
+              </svg>
+            </button>
+
+            <!-- Fullscreen Button -->
+            <button class="control-icon-btn" id="fsBtn" onclick="toggleFullscreen(event)" title="Во весь экран">
+              <svg id="fsIcon" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
     </div>
 
+    <!-- Metadata Card -->
     <div class="stream-meta-card">
       <div class="stream-id-group">
         <div class="stream-id-label">Идентификатор трансляции</div>
         <div class="stream-id-value">
           <span id="currentStreamId">—</span>
-          <button class="copy-btn" onclick="copyStreamId()" title="Скопировать ID">📋</button>
+          <button class="copy-btn" onclick="copyStreamId()" title="Скопировать ID">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+          </button>
         </div>
       </div>
 
       <div class="manual-connect">
         <input type="text" id="streamInput" class="manual-input" placeholder="ew-abc123" />
-        <button class="btn" onclick="onManualConnect()">Смотреть</button>
+        <button class="primary-btn" onclick="onManualConnect()">Смотреть</button>
       </div>
     </div>
 
-    <!-- On-screen real-time connection log for mobile diagnostic -->
-    <div style="width: 100%; max-width: 1200px; background: rgba(15, 23, 42, 0.85); border: 1px solid var(--card-border); border-radius: 12px; padding: 12px 16px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.8rem; color: #94a3b8; margin-top: 4px;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-weight: 600; color: #cbd5e1;">
-        <span>Диагностика подключения:</span>
-        <button onclick="document.getElementById('debugLog').innerHTML = ''" style="background:none; border:none; color: var(--accent); cursor:pointer; font-size: 0.75rem;">Очистить</button>
+    <!-- Collapsible Diagnostics Card -->
+    <div class="diagnostics-card" id="diagnosticsCard">
+      <div class="diagnostics-header" onclick="toggleDiagnostics(event)">
+        <span>⚡ Диагностика соединения WebRTC / ICE</span>
+        <div class="diagnostics-actions">
+          <button class="text-link-btn" onclick="clearLog(event)">Очистить</button>
+          <span id="diagnosticsChevron">▾</span>
+        </div>
       </div>
-      <div id="debugLog" style="max-height: 120px; overflow-y: auto; line-height: 1.5; color: #38bdf8;">Ожидание запуска...</div>
+      <div class="diagnostics-body" id="debugLog">Ожидание запуска...</div>
     </div>
   </main>
 
@@ -488,8 +834,23 @@
     const statusBadge = document.getElementById('statusBadge');
     const statusText = document.getElementById('statusText');
     const currentStreamIdEl = document.getElementById('currentStreamId');
+    const overlayStreamChip = document.getElementById('overlayStreamChip');
     const streamInput = document.getElementById('streamInput');
-    const unmuteBanner = document.getElementById('unmuteBanner');
+    const centerRipple = document.getElementById('centerRipple');
+    const rippleIcon = document.getElementById('rippleIcon');
+    const playPauseIcon = document.getElementById('playPauseIcon');
+    const muteIcon = document.getElementById('muteIcon');
+    const fsIcon = document.getElementById('fsIcon');
+
+    // SVG icon templates
+    const ICONS = {
+      play: '<path d="M8 5v14l11-7z"/>',
+      pause: '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>',
+      volumeHigh: '<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>',
+      volumeMuted: '<path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>',
+      fsEnter: '<path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>',
+      fsExit: '<path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/>'
+    };
 
     function parseStreamIdFromUrl() {
       const params = new URLSearchParams(window.location.search);
@@ -501,21 +862,25 @@
       statusText.innerText = message;
     }
 
+    let overlayTimeout = null;
+    function showControlsBriefly(duration = 3500) {
+      const overlay = document.getElementById('playerOverlay');
+      if (!overlay) return;
+      overlay.classList.add('visible');
+      if (overlayTimeout) clearTimeout(overlayTimeout);
+      overlayTimeout = setTimeout(() => {
+        overlay.classList.remove('visible');
+      }, duration);
+    }
+
     function onStreamPlaying() {
       if (placeholder.classList.contains('hidden')) return;
       placeholder.classList.add('hidden');
       loadingSpinner.style.display = 'none';
       playBtn.style.display = 'none';
       retryBtn.style.display = 'none';
-      setStatus('live', 'В ЭФИРЕ • 720p 30fps');
-
-      // Briefly show controls overlay for 3 seconds on start
-      const overlay = document.getElementById('playerOverlay');
-      if (overlay) {
-        overlay.classList.add('visible');
-        if (overlayTimeout) clearTimeout(overlayTimeout);
-        overlayTimeout = setTimeout(() => overlay.classList.remove('visible'), 3000);
-      }
+      setStatus('live', 'В ЭФИРЕ');
+      showControlsBriefly(3000);
     }
 
     // Bind all video events to show stream as soon as first frame arrives
@@ -539,7 +904,23 @@
       placeholderSubtitle.innerText = subtitle;
     }
 
-    let overlayTimeout = null;
+    function triggerHaptic() {
+      if (window.Telegram?.WebApp?.HapticFeedback) {
+        try {
+          window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+        } catch(e) {}
+      }
+    }
+
+    function showCenterRipple(isPlay) {
+      if (!centerRipple || !rippleIcon) return;
+      rippleIcon.innerHTML = isPlay ? ICONS.play : ICONS.pause;
+      centerRipple.classList.add('show');
+      setTimeout(() => {
+        centerRipple.classList.remove('show');
+      }, 400);
+    }
+
     function handlePlayerClick(e) {
       if (!placeholder.classList.contains('hidden') && isConnectedToHost) {
         forcePlayVideo(e);
@@ -552,13 +933,14 @@
           overlay.classList.remove('visible');
           if (overlayTimeout) clearTimeout(overlayTimeout);
         } else {
-          overlay.classList.add('visible');
-          if (overlayTimeout) clearTimeout(overlayTimeout);
-          overlayTimeout = setTimeout(() => {
-            overlay.classList.remove('visible');
-          }, 4000);
+          showControlsBriefly(4000);
         }
       }
+    }
+
+    function handleCenterTap(e) {
+      if (e) e.stopPropagation();
+      togglePlay(e);
     }
 
     function forcePlayVideo(e) {
@@ -579,6 +961,112 @@
       }).catch(err => {
         console.warn('Manual play failed:', err);
       });
+    }
+
+    function togglePlay(e) {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      triggerHaptic();
+      if (!video) return;
+
+      if (video.paused) {
+        video.play().catch(console.warn);
+        playPauseIcon.innerHTML = ICONS.pause;
+        showCenterRipple(true);
+      } else {
+        video.pause();
+        playPauseIcon.innerHTML = ICONS.play;
+        showCenterRipple(false);
+      }
+      showControlsBriefly(3000);
+    }
+
+    function toggleMute(e) {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      triggerHaptic();
+      if (!video) return;
+      video.muted = !video.muted;
+      muteIcon.innerHTML = video.muted ? ICONS.volumeMuted : ICONS.volumeHigh;
+      showControlsBriefly(3000);
+    }
+
+    function toggleFullscreen(e) {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      triggerHaptic();
+      const container = document.getElementById('playerContainer');
+
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        if (document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {});
+        } else if (document.webkitExitFullscreen) {
+          document.webkitExitFullscreen();
+        }
+        if (fsIcon) fsIcon.innerHTML = ICONS.fsEnter;
+      } else {
+        if (container.requestFullscreen) {
+          container.requestFullscreen().then(() => {
+            if (fsIcon) fsIcon.innerHTML = ICONS.fsExit;
+          }).catch(() => {
+            if (video && video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+          });
+        } else if (container.webkitRequestFullscreen) {
+          container.webkitRequestFullscreen();
+          if (fsIcon) fsIcon.innerHTML = ICONS.fsExit;
+        } else if (video && video.webkitEnterFullscreen) {
+          // iOS Safari iPhone
+          video.webkitEnterFullscreen();
+        }
+      }
+      showControlsBriefly(3000);
+    }
+
+    document.addEventListener('fullscreenchange', () => {
+      if (fsIcon) {
+        fsIcon.innerHTML = document.fullscreenElement ? ICONS.fsExit : ICONS.fsEnter;
+      }
+    });
+    document.addEventListener('webkitfullscreenchange', () => {
+      if (fsIcon) {
+        fsIcon.innerHTML = document.webkitFullscreenElement ? ICONS.fsExit : ICONS.fsEnter;
+      }
+    });
+
+    function togglePiP(e) {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      triggerHaptic();
+      if (!video) return;
+
+      if (document.pictureInPictureElement) {
+        document.exitPictureInPicture?.().catch(() => {});
+      } else if (video.requestPictureInPicture) {
+        video.requestPictureInPicture().catch((err) => {
+          log('PiP ошибка: ' + err.message, '#f59e0b');
+        });
+      } else if (video.webkitSetPresentationMode && typeof video.webkitSetPresentationMode === 'function') {
+        const mode = video.webkitPresentationMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture';
+        video.webkitSetPresentationMode(mode);
+      } else {
+        alert('Режим «Картинка в картинке» не поддерживается вашим браузером');
+      }
+      showControlsBriefly(3000);
+    }
+
+    function toggleDiagnostics(e) {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      triggerHaptic();
+      const card = document.getElementById('diagnosticsCard');
+      const chevron = document.getElementById('diagnosticsChevron');
+      if (card) {
+        card.classList.toggle('expanded');
+        if (chevron) {
+          chevron.innerText = card.classList.contains('expanded') ? '▴' : '▾';
+        }
+      }
+    }
+
+    function clearLog(e) {
+      if (e) e.stopPropagation();
+      const el = document.getElementById('debugLog');
+      if (el) el.innerHTML = '';
     }
 
     function log(msg, color) {
@@ -623,24 +1111,26 @@
 
     async function initConnection(e) {
       if (e) e.stopPropagation();
+      triggerHaptic();
       cleanupCurrentConnection();
 
       if (!targetStreamId) {
-        setStatus('', 'Ожидание ID стрима');
+        setStatus('', 'Ожидание ID');
         showError('Укажите ID трансляции', 'Введите идентификатор окна в поле ниже или откройте ссылку из бота.');
         return;
       }
 
       currentStreamIdEl.innerText = targetStreamId;
+      overlayStreamChip.innerText = targetStreamId;
       streamInput.value = targetStreamId;
 
-      setStatus('connecting', 'Подключение к брокеру...');
+      setStatus('connecting', 'Подключение...');
       placeholder.classList.remove('hidden');
       loadingSpinner.style.display = 'block';
       playBtn.style.display = 'none';
       retryBtn.style.display = 'none';
       placeholderTitle.innerText = 'Установка P2P соединения...';
-      placeholderSubtitle.innerText = 'Подключение к хосту ' + targetStreamId;
+      placeholderSubtitle.innerText = 'Связь с хостом ' + targetStreamId;
 
       viewerId = 'v-' + Math.random().toString(36).substring(2, 10);
       const answerTopic = `ew-notify/${targetStreamId}/answer/${viewerId}`;
@@ -671,15 +1161,15 @@
       let connectedBrokerClient = null;
       let hasReceivedAnswer = false;
 
-      log('Старт сессии: ' + targetStreamId + ' (ID зрителя: ' + viewerId + ')');
+      log('Старт сессии: ' + targetStreamId + ' (ID: ' + viewerId + ')');
 
       async function handleRemoteAnswer(sdpStr, channelName) {
         if (hasReceivedAnswer || !pc || pc.signalingState === 'closed') return;
         hasReceivedAnswer = true;
         log('Получен ANSWER от хоста (' + channelName + ')! Размер SDP: ' + sdpStr.length, '#22c55e');
-        setStatus('connecting', 'Хост ответил • P2P рукопожатие...');
+        setStatus('connecting', 'P2P рукопожатие...');
         placeholderTitle.innerText = 'Хост ответил!';
-        placeholderSubtitle.innerText = 'Установка защищенного P2P соединения...';
+        placeholderSubtitle.innerText = 'Установка медиа-канала WebRTC...';
 
         try {
           await pc.setRemoteDescription(new RTCSessionDescription({
@@ -702,68 +1192,109 @@
           sdp: pc.localDescription.sdp,
         });
 
-        // 1. Primary: HTTPS/443 (ntfy.sh) - reliable across all mobile networks
-        log('Отправка WebRTC OFFER по каналу HTTPS/443 (ntfy.sh)...', '#22c55e');
-        setStatus('connecting', 'Ожидание ответа игры...');
-        placeholderTitle.innerText = 'Запрос отправлен';
-        placeholderSubtitle.innerText = 'Ожидание ответа от игрового клиента...';
-
+        // 1. Primary Signaling via HTTPS/Port 443 (ntfy.sh)
+        log('Отправка WebRTC OFFER по каналу HTTPS/443 (ntfy.sh)...');
         fetch(ntfyOfferUrl, {
           method: 'POST',
-                    body: offerPayload
-        }).then(res => {
+          body: offerPayload,
+        })
+        .then(async (res) => {
           if (res.ok) {
             log('OFFER успешно доставлен (HTTPS/443)! Ждём ответ игры...', '#22c55e');
           } else {
-            log('ntfy POST статус: ' + res.status, '#f59e0b');
+            log('ntfy.sh вернул HTTP статус: ' + res.status + ', пробуем fallback...', '#f59e0b');
           }
-        }).catch(err => {
-          log('ntfy POST ошибка: ' + err.message, '#f59e0b');
+        })
+        .catch((err) => {
+          log('Ошибка отправки OFFER по HTTPS/443: ' + err.message, '#f59e0b');
         });
 
-        // 2. Secondary: MQTT if connected
+        // 2. Secondary Signaling via MQTT Brokers
         if (connectedBrokerClient) {
+          log('Отправка WebRTC OFFER в MQTT топик...');
           connectedBrokerClient.publish(offerTopic, offerPayload, { qos: 1 }, (err) => {
-            if (!err) log('OFFER также отправлен через MQTT', '#22c55e');
+            if (err) {
+              log('Ошибка публикации OFFER в MQTT: ' + err.message, '#f59e0b');
+            } else {
+              log('OFFER успешно опубликован в MQTT топик!', '#22c55e');
+            }
           });
         }
       }
 
-      // 1. Primary Answer Channel: HTTPS/443 (ntfy.sh via SSE + WebSocket)
-      log('Подключение к каналу HTTPS/443 (ntfy.sh)...');
+      // Channel 1: HTTPS/443 Server-Sent Events (SSE) via ntfy.sh
       try {
+        log('Подключение к каналу HTTPS/443 (ntfy.sh)...');
         const sse = new EventSource(ntfyAnswerSseUrl);
         activeEventSources.push(sse);
+
         sse.onopen = () => {
-          log('Канал HTTPS/443 (SSE) готов к приёму ответа', '#22c55e');
+          log('Канал HTTPS/443 (SSE) готов к приёму ответа');
         };
-        sse.onmessage = async (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            const payload = await parseNtfyPayload(data);
-            if (payload && payload.sdp) handleRemoteAnswer(payload.sdp, 'HTTPS/443 SSE');
-          } catch(e) {}
+
+        sse.onmessage = async (e) => {
+          const parsed = await parseNtfyPayload(JSON.parse(e.data));
+          if (parsed && parsed.sdp) {
+            handleRemoteAnswer(parsed.sdp, 'HTTPS/443 SSE');
+          }
+        };
+
+        sse.onerror = () => {
+          log('Канал SSE временно недоступен, fallback на WSS/443', '#f59e0b');
         };
       } catch(e) {
-        log('SSE init: ' + e.message, '#f59e0b');
+        log('Ошибка инициализации SSE: ' + e.message, '#f59e0b');
       }
 
+      // Channel 2: WSS/443 WebSocket via ntfy.sh
       try {
-        const ws443 = new WebSocket(ntfyAnswerWsUrl);
-        activeSockets.push(ws443);
-        ws443.onopen = () => {
-          log('Канал WSS/443 подключен', '#22c55e');
+        const ws = new WebSocket(ntfyAnswerWsUrl);
+        activeSockets.push(ws);
+        ws.onopen = () => {
+          log('Канал WSS/443 подключен');
         };
-        ws443.onmessage = async (event) => {
+        ws.onmessage = async (e) => {
           try {
-            const data = JSON.parse(event.data);
-            const payload = await parseNtfyPayload(data);
-            if (payload && payload.sdp) handleRemoteAnswer(payload.sdp, 'WSS/443');
-          } catch(e) {}
+            const parsed = await parseNtfyPayload(JSON.parse(e.data));
+            if (parsed && parsed.sdp) {
+              handleRemoteAnswer(parsed.sdp, 'WSS/443');
+            }
+          } catch(err) {}
         };
       } catch(e) {}
 
-      // Configure WebRTC PeerConnection with STUN & optional TURN
+      // Channel 3: Secondary MQTT signaling
+      try {
+        const brokerUrl = MQTT_BROKERS[brokerIndex % MQTT_BROKERS.length];
+        brokerIndex++;
+        const client = mqtt.connect(brokerUrl, {
+          clientId: viewerId,
+          clean: true,
+          connectTimeout: 4000,
+          reconnectPeriod: 3000,
+        });
+        activeMqttClients.push(client);
+
+        client.on('connect', () => {
+          log('MQTT брокер подключен (' + brokerUrl + ')');
+          client.subscribe(answerTopic, { qos: 1 });
+          connectedBrokerClient = client;
+          tryPublishOffer();
+        });
+
+        client.on('message', (topic, message) => {
+          if (topic === answerTopic) {
+            try {
+              const data = JSON.parse(message.toString());
+              if (data.sdp) {
+                handleRemoteAnswer(data.sdp, 'MQTT');
+              }
+            } catch(e) {}
+          }
+        });
+      } catch(e) {}
+
+      // Configure WebRTC PeerConnection with STUN & default Metered Europe TURN Relay
       try {
         log('Инициализация RTCPeerConnection...');
         const params = new URLSearchParams(window.location.search);
@@ -805,11 +1336,10 @@
             username: '6fbdfa7d7d5d7cce7d536a5d',
             credential: 'UncX8C2HkcMJ5lCN'
           });
-          log('Используется резервный TURN relay (Metered Europe)', '#94a3b8');
+          log('Резервный TURN relay (Metered Europe) готов', '#94a3b8');
         }
 
         pc = new RTCPeerConnection({ iceServers });
-
         video.muted = true;
 
         pc.ontrack = (event) => {
@@ -818,57 +1348,35 @@
           video.srcObject = stream;
           video.muted = true;
 
-          if (event.track) {
-            event.track.onunmute = () => {
-              log('Видео-трек разблокирован (unmuted)! Кадры поступают.', '#22c55e');
-              video.play().then(onStreamPlaying).catch(e => log('video.play: ' + e.message, '#f59e0b'));
-            };
-          }
-
           video.play().then(() => {
-            if (video.videoWidth > 0) {
-              onStreamPlaying();
-            }
-          }).catch((err) => {
-            log('Autoplay заблокирован, требуется тап по экрану', '#f59e0b');
+            onStreamPlaying();
+          }).catch(err => {
+            console.warn('Autoplay blocked:', err);
             loadingSpinner.style.display = 'none';
             playBtn.style.display = 'inline-flex';
-            placeholderTitle.innerText = 'Трансляция готова';
-            placeholderSubtitle.innerText = 'Нажмите кнопку ниже для запуска воспроизведения';
+            retryBtn.style.display = 'inline-flex';
+            placeholderTitle.innerText = 'Видео готово к просмотру';
+            placeholderSubtitle.innerText = 'Нажмите кнопку ниже, чтобы начать воспроизведение.';
           });
-        };
-
-        pc.onconnectionstatechange = () => {
-          log('WebRTC Connection State: ' + pc.connectionState, pc.connectionState === 'connected' ? '#22c55e' : '#f59e0b');
-          if (pc.connectionState === 'connected') {
-            isConnectedToHost = true;
-            setStatus('connecting', 'P2P канал открыт • Приём видео...');
-            placeholderTitle.innerText = 'P2P связь установлена!';
-            placeholderSubtitle.innerText = 'Ожидание видеопотока 720p 30fps...';
-            setTimeout(() => {
-              if (!video.srcObject || (video.srcObject.getVideoTracks && video.srcObject.getVideoTracks().length === 0)) {
-                const receivers = pc.getReceivers ? pc.getReceivers() : [];
-                for (const r of receivers) {
-                  if (r.track && r.track.kind === 'video') {
-                    log('Connected fallback: привязка receiver track');
-                    video.srcObject = new MediaStream([r.track]);
-                    video.play().then(onStreamPlaying).catch(e => console.warn(e));
-                    break;
-                  }
-                }
-              }
-            }, 300);
-          } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-            if (!isConnectedToHost) {
-              showError('Сбой P2P соединения', 'Не удалось связаться с ПК напрямую через UDP. Попробуйте еще раз.');
-            }
-          }
         };
 
         pc.oniceconnectionstatechange = () => {
           log('ICE State: ' + pc.iceConnectionState);
           if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
             isConnectedToHost = true;
+            onStreamPlaying();
+          } else if (pc.iceConnectionState === 'failed') {
+            showError('Сбой P2P соединения', 'Не удалось связаться с ПК напрямую через UDP. Попробуйте еще раз.');
+          }
+        };
+
+        pc.onconnectionstatechange = () => {
+          log('WebRTC Connection State: ' + pc.connectionState);
+          if (pc.connectionState === 'connected') {
+            isConnectedToHost = true;
+            onStreamPlaying();
+          } else if (pc.connectionState === 'failed') {
+            showError('Ошибка WebRTC соединения', 'Связь потеряна. Попробуйте перезапустить стрим.');
           }
         };
 
@@ -921,7 +1429,7 @@
             if (pc.iceGatheringState === 'complete') done();
           };
           pc.addEventListener('icegatheringstatechange', check);
-          // Wait up to 1200ms on mobile connections to ensure public IP (srflx) is gathered
+          // Wait up to 1800ms on mobile connections to ensure relay / srflx candidates are gathered
           timer = setTimeout(done, 1800);
         });
 
@@ -931,7 +1439,7 @@
         log('Критическая ошибка WebRTC: ' + err.message, '#ef4444');
       }
 
-      // 15 seconds check
+      // 15 seconds watchdog check
       setTimeout(() => {
         if (!placeholder.classList.contains('hidden')) {
           if (isConnectedToHost) {
@@ -942,7 +1450,6 @@
             placeholderSubtitle.innerText = 'P2P соединение установлено. Убедитесь, что окно игры развернуто на ПК, или нажмите кнопку ниже.';
           } else {
             showError('Хост не отвечает', 'Убедитесь, что в Telegram-боте нажат «📺 Стрим», выбрано окно игры и открыта самая свежая ссылка из бота.');
-            retryBtn.style.display = 'inline-flex';
           }
         }
       }, 15000);
@@ -958,91 +1465,13 @@
       initConnection();
     }
 
-    function copyStreamId() {
+    function copyStreamId(e) {
+      if (e) e.stopPropagation();
       if (!targetStreamId) return;
+      triggerHaptic();
       navigator.clipboard.writeText(targetStreamId).then(() => {
         alert('ID стрима скопирован: ' + targetStreamId);
       });
-    }
-
-    function triggerHaptic() {
-      if (window.Telegram?.WebApp?.HapticFeedback) {
-        try {
-          window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
-        } catch(e) {}
-      }
-    }
-
-    function unmuteAudio(e) {
-      if (e) { e.preventDefault(); e.stopPropagation(); }
-      triggerHaptic();
-      video.muted = false;
-      unmuteBanner.style.display = 'none';
-      const mBtn = document.getElementById('muteBtn');
-      if (mBtn) mBtn.innerText = '🔊';
-    }
-
-    function toggleMute(e) {
-      if (e) { e.preventDefault(); e.stopPropagation(); }
-      triggerHaptic();
-      video.muted = !video.muted;
-      const mBtn = document.getElementById('muteBtn');
-      if (mBtn) mBtn.innerText = video.muted ? '🔇' : '🔊';
-    }
-
-    function togglePlay(e) {
-      if (e) { e.preventDefault(); e.stopPropagation(); }
-      triggerHaptic();
-      const pBtn = document.getElementById('playPauseBtn');
-      if (video.paused) {
-        video.play().catch(console.warn);
-        if (pBtn) pBtn.innerText = '⏸';
-      } else {
-        video.pause();
-        if (pBtn) pBtn.innerText = '▶';
-      }
-    }
-
-    function toggleFullscreen(e) {
-      if (e) { e.preventDefault(); e.stopPropagation(); }
-      triggerHaptic();
-      const container = document.getElementById('playerContainer');
-      if (document.fullscreenElement || document.webkitFullscreenElement) {
-        if (document.exitFullscreen) {
-          document.exitFullscreen().catch(() => {});
-        } else if (document.webkitExitFullscreen) {
-          document.webkitExitFullscreen();
-        }
-      } else {
-        // Desktop / Android fullscreen
-        if (container.requestFullscreen) {
-          container.requestFullscreen().catch(() => {
-            if (video && video.webkitEnterFullscreen) video.webkitEnterFullscreen();
-          });
-        } else if (container.webkitRequestFullscreen) {
-          container.webkitRequestFullscreen();
-        } else if (video && video.webkitEnterFullscreen) {
-          // iOS Safari iPhone fullscreen
-          video.webkitEnterFullscreen();
-        }
-      }
-    }
-
-    function togglePiP(e) {
-      if (e) { e.preventDefault(); e.stopPropagation(); }
-      triggerHaptic();
-      if (document.pictureInPictureElement) {
-        document.exitPictureInPicture?.().catch(() => {});
-      } else if (video.requestPictureInPicture) {
-        video.requestPictureInPicture().catch((err) => {
-          log('PiP ошибка: ' + err.message, '#f59e0b');
-        });
-      } else if (video.webkitSetPresentationMode && typeof video.webkitSetPresentationMode === 'function') {
-        const mode = video.webkitPresentationMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture';
-        video.webkitSetPresentationMode(mode);
-      } else {
-        alert('Режим «Картинка в картинке» не поддерживается на вашем устройстве');
-      }
     }
 
     // Auto-init on page load with Telegram WebApp support
@@ -1057,5 +1486,7 @@
       initConnection();
     });
   </script>
+  <!-- MQTT.js library for fallback signaling -->
+  <script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
 </body>
 </html>
