@@ -5,7 +5,7 @@ use tauri::{AppHandle, Emitter};
 use teloxide::payloads::{EditMessageMediaSetters, SendPhotoSetters};
 use teloxide::prelude::{Request, Requester};
 use teloxide::types::{
-    BotCommand, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, InputMedia,
+    BotCommand, ChatId, InlineKeyboardButton, WebAppInfo, InlineKeyboardMarkup, InputFile, InputMedia,
     InputMediaPhoto, KeyboardButton, KeyboardMarkup,
 };
 
@@ -492,8 +492,9 @@ pub async fn start_bot(
                                         active.title, active.pid, active.viewer_count, active.uptime_secs, active.player_url
                                     );
                                     let mut kb = InlineKeyboardMarkup::default();
-                                    if let Ok(url) = active.player_url.parse() {
-                                        kb = kb.append_row(vec![InlineKeyboardButton::url("🌐 Открыть плеер", url)]);
+                                    if let Ok(url) = active.player_url.parse::<reqwest::Url>() {
+                                        kb = kb.append_row(vec![InlineKeyboardButton::web_app("▶️ Смотреть в Telegram", WebAppInfo { url: url.clone() })]);
+                                        kb = kb.append_row(vec![InlineKeyboardButton::url("🌐 Открыть в браузере", url)]);
                                     }
                                     kb = kb.append_row(vec![InlineKeyboardButton::callback("🛑 Остановить стрим", "stream_stop")]);
                                     let _ = bot
@@ -791,8 +792,9 @@ pub async fn start_bot(
                                                     info.title, info.pid, info.player_url
                                                 );
                                                 let mut kb = InlineKeyboardMarkup::default();
-                                                if let Ok(url) = info.player_url.parse() {
-                                                    kb = kb.append_row(vec![InlineKeyboardButton::url("🌐 Открыть плеер", url)]);
+                                                if let Ok(url) = info.player_url.parse::<reqwest::Url>() {
+                                                    kb = kb.append_row(vec![InlineKeyboardButton::web_app("▶️ Смотреть в Telegram", WebAppInfo { url: url.clone() })]);
+                                                    kb = kb.append_row(vec![InlineKeyboardButton::url("🌐 Открыть в браузере", url)]);
                                                 }
                                                 kb = kb.append_row(vec![InlineKeyboardButton::callback("🛑 Остановить стрим", "stream_stop")]);
                                                 let _ = bot
