@@ -6,6 +6,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <title>EndlessWar Live Stream</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
 
@@ -155,49 +156,64 @@
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      padding: 16px;
+      padding: 14px;
       pointer-events: none;
-      background: linear-gradient(to top, rgba(0, 0, 0, 0.7) 0%, transparent 25%, transparent 75%, rgba(0, 0, 0, 0.5) 100%);
+      background: linear-gradient(to top, rgba(0, 0, 0, 0.75) 0%, transparent 25%, transparent 75%, rgba(0, 0, 0, 0.6) 100%);
       opacity: 0;
-      transition: opacity 0.3s ease;
+      transition: opacity 0.25s ease;
+      z-index: 5;
     }
 
     .player-container:hover .player-overlay,
-    .player-container:active .player-overlay {
+    .player-overlay.visible {
       opacity: 1;
     }
 
-    .overlay-top {
-      display: flex;
-      justify-content: flex-end;
-      gap: 10px;
-    }
-
+    .overlay-top,
     .overlay-bottom {
       display: flex;
-      justify-content: space-between;
-      align-items: center;
+      gap: 10px;
       pointer-events: auto;
     }
 
+    .overlay-top {
+      justify-content: flex-end;
+    }
+
+    .overlay-bottom {
+      justify-content: space-between;
+      align-items: center;
+    }
+
     .control-btn {
-      background: rgba(15, 23, 42, 0.75);
+      background: rgba(15, 23, 42, 0.85);
       border: 1px solid var(--card-border);
       color: var(--text-main);
-      padding: 8px 12px;
+      padding: 8px 14px;
       border-radius: 8px;
       cursor: pointer;
-      font-size: 0.9rem;
+      font-size: 0.95rem;
+      font-weight: 500;
       backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
       transition: all 0.2s ease;
-      display: flex;
+      display: inline-flex;
       align-items: center;
       gap: 6px;
+      pointer-events: auto;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
     }
 
     .control-btn:hover {
       background: rgba(99, 102, 241, 0.8);
       border-color: var(--accent);
+    }
+
+    .control-btn:active {
+      transform: scale(0.95);
+      background: rgba(99, 102, 241, 0.95);
     }
 
     .placeholder-view {
@@ -408,7 +424,7 @@
         </button>
       </div>
 
-      <div class="player-overlay">
+      <div class="player-overlay" id="playerOverlay">
         <div class="overlay-top">
           <button class="control-btn" onclick="togglePiP(event)" title="Картинка в картинке">⧉ PiP</button>
           <button class="control-btn" onclick="toggleFullscreen(event)" title="Полный экран">⛶ Экран</button>
@@ -492,6 +508,14 @@
       playBtn.style.display = 'none';
       retryBtn.style.display = 'none';
       setStatus('live', 'В ЭФИРЕ • 720p 30fps');
+
+      // Briefly show controls overlay for 3 seconds on start
+      const overlay = document.getElementById('playerOverlay');
+      if (overlay) {
+        overlay.classList.add('visible');
+        if (overlayTimeout) clearTimeout(overlayTimeout);
+        overlayTimeout = setTimeout(() => overlay.classList.remove('visible'), 3000);
+      }
     }
 
     // Bind all video events to show stream as soon as first frame arrives
@@ -515,9 +539,25 @@
       placeholderSubtitle.innerText = subtitle;
     }
 
-    function handlePlayerClick() {
+    let overlayTimeout = null;
+    function handlePlayerClick(e) {
       if (!placeholder.classList.contains('hidden') && isConnectedToHost) {
-        forcePlayVideo();
+        forcePlayVideo(e);
+        return;
+      }
+      const overlay = document.getElementById('playerOverlay');
+      if (overlay) {
+        const isVisible = overlay.classList.contains('visible');
+        if (isVisible) {
+          overlay.classList.remove('visible');
+          if (overlayTimeout) clearTimeout(overlayTimeout);
+        } else {
+          overlay.classList.add('visible');
+          if (overlayTimeout) clearTimeout(overlayTimeout);
+          overlayTimeout = setTimeout(() => {
+            overlay.classList.remove('visible');
+          }, 4000);
+        }
       }
     }
 
@@ -925,50 +965,94 @@
       });
     }
 
+    function triggerHaptic() {
+      if (window.Telegram?.WebApp?.HapticFeedback) {
+        try {
+          window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+        } catch(e) {}
+      }
+    }
+
     function unmuteAudio(e) {
-      if (e) e.stopPropagation();
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      triggerHaptic();
       video.muted = false;
       unmuteBanner.style.display = 'none';
+      const mBtn = document.getElementById('muteBtn');
+      if (mBtn) mBtn.innerText = '🔊';
     }
 
     function toggleMute(e) {
-      if (e) e.stopPropagation();
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      triggerHaptic();
       video.muted = !video.muted;
-      document.getElementById('muteBtn').innerText = video.muted ? '🔇' : '🔊';
+      const mBtn = document.getElementById('muteBtn');
+      if (mBtn) mBtn.innerText = video.muted ? '🔇' : '🔊';
     }
 
     function togglePlay(e) {
-      if (e) e.stopPropagation();
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      triggerHaptic();
+      const pBtn = document.getElementById('playPauseBtn');
       if (video.paused) {
-        video.play();
-        document.getElementById('playPauseBtn').innerText = '⏸';
+        video.play().catch(console.warn);
+        if (pBtn) pBtn.innerText = '⏸';
       } else {
         video.pause();
-        document.getElementById('playPauseBtn').innerText = '▶';
+        if (pBtn) pBtn.innerText = '▶';
       }
     }
 
     function toggleFullscreen(e) {
-      if (e) e.stopPropagation();
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      triggerHaptic();
       const container = document.getElementById('playerContainer');
-      if (!document.fullscreenElement) {
-        container.requestFullscreen?.() || container.webkitRequestFullscreen?.();
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        if (document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {});
+        } else if (document.webkitExitFullscreen) {
+          document.webkitExitFullscreen();
+        }
       } else {
-        document.exitFullscreen?.() || document.webkitExitFullscreen?.();
+        // Desktop / Android fullscreen
+        if (container.requestFullscreen) {
+          container.requestFullscreen().catch(() => {
+            if (video && video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+          });
+        } else if (container.webkitRequestFullscreen) {
+          container.webkitRequestFullscreen();
+        } else if (video && video.webkitEnterFullscreen) {
+          // iOS Safari iPhone fullscreen
+          video.webkitEnterFullscreen();
+        }
       }
     }
 
     function togglePiP(e) {
-      if (e) e.stopPropagation();
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      triggerHaptic();
       if (document.pictureInPictureElement) {
-        document.exitPictureInPicture();
+        document.exitPictureInPicture?.().catch(() => {});
       } else if (video.requestPictureInPicture) {
-        video.requestPictureInPicture();
+        video.requestPictureInPicture().catch((err) => {
+          log('PiP ошибка: ' + err.message, '#f59e0b');
+        });
+      } else if (video.webkitSetPresentationMode && typeof video.webkitSetPresentationMode === 'function') {
+        const mode = video.webkitPresentationMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture';
+        video.webkitSetPresentationMode(mode);
+      } else {
+        alert('Режим «Картинка в картинке» не поддерживается на вашем устройстве');
       }
     }
 
-    // Auto-init on page load
+    // Auto-init on page load with Telegram WebApp support
     window.addEventListener('DOMContentLoaded', () => {
+      if (window.Telegram && window.Telegram.WebApp) {
+        try {
+          window.Telegram.WebApp.ready();
+          window.Telegram.WebApp.expand();
+        } catch(e) {}
+      }
       targetStreamId = parseStreamIdFromUrl();
       initConnection();
     });
