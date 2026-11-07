@@ -1602,6 +1602,7 @@ pub fn run() {
         eprintln!("{e}");
         std::process::exit(1);
     }
+    platform::ensure_firewall_rule();
 
     let log_buffer = logging::LogBuffer::new();
     logging::init(log_buffer.clone());

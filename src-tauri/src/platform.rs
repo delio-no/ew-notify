@@ -89,3 +89,36 @@ pub fn release_single_instance() {
         *guard = None;
     }
 }
+
+/// Silently ensure Windows Defender Firewall has an allow rule for this exe.
+/// Since ew-notify runs as Administrator, this prevents the Windows Defender
+/// Firewall popup ("Разрешить доступ в сети") from ever showing to the user.
+#[cfg(windows)]
+pub fn ensure_firewall_rule() {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+
+    std::thread::spawn(|| {
+        if let Ok(exe_path) = std::env::current_exe() {
+            let exe_str = exe_path.to_string_lossy();
+            // CREATE_NO_WINDOW = 0x08000000
+            let _ = Command::new("netsh")
+                .args([
+                    "advfirewall",
+                    "firewall",
+                    "add",
+                    "rule",
+                    "name=ew-notify",
+                    "dir=in",
+                    "action=allow",
+                    &format!("program={}", exe_str),
+                    "enable=yes",
+                ])
+                .creation_flags(0x08000000)
+                .status();
+        }
+    });
+}
+
+#[cfg(not(windows))]
+pub fn ensure_firewall_rule() {}
