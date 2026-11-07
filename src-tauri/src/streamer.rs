@@ -938,11 +938,21 @@ async fn process_offer(
         active_viewers: active_viewers.clone(),
     });
 
+    let bind_addrs = get_preferred_bind_addrs();
+    let setting_engine = rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder::new()
+        .with_ice_timeouts(
+            Some(Duration::from_secs(15)),
+            Some(Duration::from_secs(45)),
+            Some(Duration::from_secs(2)),
+        )
+        .build();
+
     let pc = match PeerConnectionBuilder::new()
         .with_configuration(rtc_config)
         .with_media_engine(media_engine)
         .with_handler(handler)
-        .with_udp_addrs(vec!["0.0.0.0:0"])
+        .with_setting_engine(setting_engine)
+        .with_udp_addrs(bind_addrs)
         .build()
         .await
     {
@@ -1196,5 +1206,83 @@ async fn handle_offer_message(
                 viewer_id, answer_topic
             );
         }
+    }
+}
+
+/// Determine the best local IPv4 address(es) to bind WebRTC UDP sockets to.
+/// Avoids virtual adapters (VMware, Hyper-V) which cause WSAENETUNREACH (os error 10051),
+/// and VPN/proxy tunnels (e.g. Happ/Xray) that break direct P2P NAT traversal.
+pub fn get_preferred_bind_addrs() -> Vec<String> {
+    let mut candidates: Vec<(std::net::Ipv4Addr, i32)> = Vec::new();
+
+    if let Ok(ifs) = rtc::shared::ifaces::ifaces() {
+        for i in ifs {
+            if let Some(std::net::SocketAddr::V4(v4)) = i.addr {
+                let ip = *v4.ip();
+                if ip.is_loopback() || ip.is_link_local() {
+                    continue;
+                }
+
+                // Verify the interface can actually route UDP traffic to the internet
+                let is_routable = (|| -> Result<(), std::io::Error> {
+                    let sock = std::net::UdpSocket::bind(std::net::SocketAddrV4::new(ip, 0))?;
+                    sock.connect("8.8.8.8:53")?;
+                    sock.send(&[0u8; 1])?;
+                    Ok(())
+                })().is_ok();
+
+                if !is_routable {
+                    continue;
+                }
+
+                // Calculate preference score
+                let octets = ip.octets();
+                let is_dot_one = octets[3] == 1;
+                let mut score = 0;
+
+                if octets[0] == 192 && octets[1] == 168 {
+                    // Standard home/office LAN (e.g. 192.168.10.233)
+                    score += if !is_dot_one { 100 } else { 20 };
+                } else if octets[0] == 10 {
+                    // 10.0.0.0/8 private network
+                    score += if !is_dot_one { 80 } else { 15 };
+                } else if octets[0] == 172 && (16..=31).contains(&octets[1]) {
+                    // 172.16.0.0/12 (Docker, WSL, Happ-Xray, etc.)
+                    // Usually virtual bridges/TUNs if ending in .1
+                    score += if !is_dot_one { 50 } else { -50 };
+                } else {
+                    // Public or other IP
+                    score += 30;
+                }
+
+                candidates.push((ip, score));
+            }
+        }
+    }
+
+    // Sort by descending score
+    candidates.sort_by(|a, b| b.1.cmp(&a.1));
+
+    if let Some(&(best_ip, score)) = candidates.first() {
+        if score > 0 {
+            info!("Selected primary WebRTC local bind IP: {} (score: {})", best_ip, score);
+            return vec![format!("{}:0", best_ip)];
+        }
+    }
+
+    warn!("No ideal LAN interface found for WebRTC; falling back to 0.0.0.0:0");
+    vec!["0.0.0.0:0".to_string()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_preferred_bind_addrs() {
+        let addrs = get_preferred_bind_addrs();
+        println!("Selected bind addrs: {:?}", addrs);
+        assert!(!addrs.is_empty());
+        assert_eq!(addrs[0], "192.168.10.233:0");
     }
 }
