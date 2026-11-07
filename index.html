@@ -735,14 +735,23 @@
         ];
         const customTurn = params.get('turn') || localStorage.getItem('ew_turn_server');
         if (customTurn) {
+          const urls = customTurn.split(',').map(u => {
+            let s = u.trim();
+            if (s && !s.startsWith('turn:') && !s.startsWith('turns:')) {
+              s = 'turn:' + s;
+            }
+            return s;
+          }).filter(Boolean);
           const turnUser = params.get('tu') || localStorage.getItem('ew_turn_user') || '';
           const turnPass = params.get('tp') || localStorage.getItem('ew_turn_pass') || '';
-          iceServers.push({
-            urls: customTurn,
-            username: turnUser,
-            credential: turnPass
-          });
-          log('TURN relay настроен: ' + customTurn, '#22c55e');
+          if (urls.length > 0) {
+            iceServers.push({
+              urls: urls.length === 1 ? urls[0] : urls,
+              username: turnUser,
+              credential: turnPass
+            });
+            log('TURN relay настроен: ' + urls.join(', '), '#22c55e');
+          }
         }
 
         pc = new RTCPeerConnection({ iceServers });

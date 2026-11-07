@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>EndlessWar Live Stream</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
+
+  <style>
+    :root {
+      --bg-dark: #0c0f17;
+      --card-bg: rgba(22, 27, 39, 0.85);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --accent: #6366f1;
+      --accent-glow: rgba(99, 102, 241, 0.35);
+      --accent-hover: #4f46e5;
+      --live-red: #ef4444;
+      --text-main: #f8fafc;
+      --text-dim: #94a3b8;
+      --success: #22c55e;
+      --warning: #f59e0b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.15) 0%, transparent 60%),
+        radial-gradient(circle at 100% 100%, rgba(239, 68, 68, 0.05) 0%, transparent 40%);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 16px;
+      overflow-x: hidden;
+    }
+
+    header {
+      width: 100%;
+      max-width: 1200px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 4px 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 700;
+      font-size: 1.15rem;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-icon {
+      font-size: 1.5rem;
+      filter: drop-shadow(0 0 10px var(--accent-glow));
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      backdrop-filter: blur(8px);
+      transition: all 0.3s ease;
+    }
+
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--text-dim);
+    }
+
+    .status-badge.live {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+    }
+
+    .status-badge.live .status-dot {
+      background: var(--live-red);
+      box-shadow: 0 0 10px var(--live-red);
+      animation: pulse 1.8s infinite;
+    }
+
+    .status-badge.connecting {
+      background: rgba(245, 158, 11, 0.15);
+      border-color: rgba(245, 158, 11, 0.4);
+      color: #fde68a;
+    }
+
+    .status-badge.connecting .status-dot {
+      background: var(--warning);
+      animation: pulse 1s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.9); opacity: 0.7; }
+      50% { transform: scale(1.15); opacity: 1; }
+      100% { transform: scale(0.9); opacity: 0.7; }
+    }
+
+    main {
+      width: 100%;
+      max-width: 1200px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .player-container {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.7),
+                  0 0 0 1px var(--card-border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+    }
+
+    .player-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 16px;
+      pointer-events: none;
+      background: linear-gradient(to top, rgba(0, 0, 0, 0.7) 0%, transparent 25%, transparent 75%, rgba(0, 0, 0, 0.5) 100%);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .player-container:hover .player-overlay,
+    .player-container:active .player-overlay {
+      opacity: 1;
+    }
+
+    .overlay-top {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .overlay-bottom {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      pointer-events: auto;
+    }
+
+    .control-btn {
+      background: rgba(15, 23, 42, 0.75);
+      border: 1px solid var(--card-border);
+      color: var(--text-main);
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      backdrop-filter: blur(8px);
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .control-btn:hover {
+      background: rgba(99, 102, 241, 0.8);
+      border-color: var(--accent);
+    }
+
+    .placeholder-view {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding: 24px;
+      text-align: center;
+      background: rgba(12, 15, 23, 0.95);
+      z-index: 10;
+      transition: opacity 0.4s ease;
+    }
+
+    .placeholder-view.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border: 3px solid rgba(255, 255, 255, 0.1);
+      border-radius: 50%;
+      border-top-color: var(--accent);
+      animation: spin 1s ease-in-out infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .placeholder-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+
+    .placeholder-subtitle {
+      color: var(--text-dim);
+      font-size: 0.9rem;
+      max-width: 420px;
+      line-height: 1.5;
+    }
+
+    .btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 4px 14px var(--accent-glow);
+      transition: all 0.2s ease;
+    }
+
+    .btn:hover {
+      background: var(--accent-hover);
+      transform: translateY(-1px);
+    }
+
+    .stream-meta-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 20px;
+      backdrop-filter: blur(12px);
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .stream-id-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .stream-id-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-dim);
+      font-weight: 600;
+    }
+
+    .stream-id-value {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 1.15rem;
+      color: #a5b4fc;
+      background: rgba(99, 102, 241, 0.1);
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px dashed rgba(99, 102, 241, 0.3);
+    }
+
+    .copy-btn {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+      transition: color 0.2s;
+    }
+
+    .copy-btn:hover {
+      color: var(--text-main);
+    }
+
+    .manual-connect {
+      display: flex;
+      gap: 10px;
+      width: 100%;
+      max-width: 380px;
+    }
+
+    .manual-input {
+      flex: 1;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 10px 14px;
+      color: #fff;
+      font-family: monospace;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .manual-input:focus {
+      border-color: var(--accent);
+    }
+
+    .unmute-banner {
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.85);
+      border: 1px solid var(--accent);
+      padding: 8px 16px;
+      border-radius: 9999px;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      z-index: 20;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+
+    @media (max-width: 640px) {
+      body {
+        padding: 10px;
+      }
+      .stream-meta-card {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .manual-connect {
+        max-width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="brand-icon">🎮</span>
+      <span>EndlessWar Live</span>
+    </div>
+    <div id="statusBadge" class="status-badge connecting">
+      <span class="status-dot"></span>
+      <span id="statusText">Подключение...</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="player-container" id="playerContainer" onclick="handlePlayerClick()">
+      <video id="videoPlayer" playsinline webkit-playsinline autoplay muted></video>
+
+      <div id="unmuteBanner" class="unmute-banner" onclick="unmuteAudio(event)">
+        <span>🔊</span>
+        <span>Нажмите для включения звука</span>
+      </div>
+
+      <div id="placeholder" class="placeholder-view">
+        <div id="loadingSpinner" class="spinner"></div>
+        <h2 id="placeholderTitle" class="placeholder-title">Подключение к трансляции</h2>
+        <p id="placeholderSubtitle" class="placeholder-subtitle">Ожидание подключения к хосту игры...</p>
+        <button id="playBtn" class="btn" style="display: none;" onclick="forcePlayVideo(event)">
+          <span>▶</span> Запустить видео
+        </button>
+        <button id="retryBtn" class="btn" style="display: none;" onclick="initConnection(event)">
+          <span>🔄</span> Повторить подключение
+        </button>
+      </div>
+
+      <div class="player-overlay">
+        <div class="overlay-top">
+          <button class="control-btn" onclick="togglePiP(event)" title="Картинка в картинке">⧉ PiP</button>
+          <button class="control-btn" onclick="toggleFullscreen(event)" title="Полный экран">⛶ Экран</button>
+        </div>
+        <div class="overlay-bottom">
+          <div style="display: flex; gap: 8px;">
+            <button class="control-btn" id="playPauseBtn" onclick="togglePlay(event)">⏸</button>
+            <button class="control-btn" id="muteBtn" onclick="toggleMute(event)">🔇</button>
+          </div>
+          <span style="font-size: 0.8rem; color: var(--text-dim); background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px;">720p 30fps WebRTC</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="stream-meta-card">
+      <div class="stream-id-group">
+        <div class="stream-id-label">Идентификатор трансляции</div>
+        <div class="stream-id-value">
+          <span id="currentStreamId">—</span>
+          <button class="copy-btn" onclick="copyStreamId()" title="Скопировать ID">📋</button>
+        </div>
+      </div>
+
+      <div class="manual-connect">
+        <input type="text" id="streamInput" class="manual-input" placeholder="ew-abc123" />
+        <button class="btn" onclick="onManualConnect()">Смотреть</button>
+      </div>
+    </div>
+
+    <!-- On-screen real-time connection log for mobile diagnostic -->
+    <div style="width: 100%; max-width: 1200px; background: rgba(15, 23, 42, 0.85); border: 1px solid var(--card-border); border-radius: 12px; padding: 12px 16px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.8rem; color: #94a3b8; margin-top: 4px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-weight: 600; color: #cbd5e1;">
+        <span>Диагностика подключения:</span>
+        <button onclick="document.getElementById('debugLog').innerHTML = ''" style="background:none; border:none; color: var(--accent); cursor:pointer; font-size: 0.75rem;">Очистить</button>
+      </div>
+      <div id="debugLog" style="max-height: 120px; overflow-y: auto; line-height: 1.5; color: #38bdf8;">Ожидание запуска...</div>
+    </div>
+  </main>
+
+  <script>
+    let pc = null;
+    let mqttClient = null;
+    let targetStreamId = '';
+    let viewerId = '';
+    let isConnectedToHost = false;
+    let mediaStreamObj = null;
+
+    const MQTT_BROKERS = [
+      'wss://broker.emqx.io:8084/mqtt',
+      'wss://broker.hivemq.com:8884/mqtt'
+    ];
+    let brokerIndex = 0;
+
+    const video = document.getElementById('videoPlayer');
+    const placeholder = document.getElementById('placeholder');
+    const placeholderTitle = document.getElementById('placeholderTitle');
+    const placeholderSubtitle = document.getElementById('placeholderSubtitle');
+    const loadingSpinner = document.getElementById('loadingSpinner');
+    const playBtn = document.getElementById('playBtn');
+    const retryBtn = document.getElementById('retryBtn');
+    const statusBadge = document.getElementById('statusBadge');
+    const statusText = document.getElementById('statusText');
+    const currentStreamIdEl = document.getElementById('currentStreamId');
+    const streamInput = document.getElementById('streamInput');
+    const unmuteBanner = document.getElementById('unmuteBanner');
+
+    function parseStreamIdFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('s') || params.get('id') || '';
+    }
+
+    function setStatus(state, message) {
+      statusBadge.className = 'status-badge ' + state;
+      statusText.innerText = message;
+    }
+
+    function onStreamPlaying() {
+      if (placeholder.classList.contains('hidden')) return;
+      placeholder.classList.add('hidden');
+      loadingSpinner.style.display = 'none';
+      playBtn.style.display = 'none';
+      retryBtn.style.display = 'none';
+      setStatus('live', 'В ЭФИРЕ • 720p 30fps');
+    }
+
+    // Bind all video events to show stream as soon as first frame arrives
+    video.addEventListener('loadeddata', onStreamPlaying);
+    video.addEventListener('loadedmetadata', onStreamPlaying);
+    video.addEventListener('canplay', onStreamPlaying);
+    video.addEventListener('playing', onStreamPlaying);
+    video.addEventListener('resize', () => {
+      if (video.videoWidth > 0) onStreamPlaying();
+    });
+    video.addEventListener('timeupdate', () => {
+      if (video.currentTime > 0) onStreamPlaying();
+    });
+
+    function showError(title, subtitle) {
+      placeholder.classList.remove('hidden');
+      loadingSpinner.style.display = 'none';
+      playBtn.style.display = 'none';
+      retryBtn.style.display = 'inline-flex';
+      placeholderTitle.innerText = title;
+      placeholderSubtitle.innerText = subtitle;
+    }
+
+    function handlePlayerClick() {
+      if (!placeholder.classList.contains('hidden') && isConnectedToHost) {
+        forcePlayVideo();
+      }
+    }
+
+    function forcePlayVideo(e) {
+      if (e) e.stopPropagation();
+      video.muted = true;
+      if ((!video.srcObject || (video.srcObject.getVideoTracks && video.srcObject.getVideoTracks().length === 0)) && pc) {
+        const receivers = pc.getReceivers ? pc.getReceivers() : [];
+        for (const r of receivers) {
+          if (r.track && r.track.kind === 'video') {
+            console.log('Force play: binding track to video.srcObject');
+            video.srcObject = new MediaStream([r.track]);
+            break;
+          }
+        }
+      }
+      video.play().then(() => {
+        onStreamPlaying();
+      }).catch(err => {
+        console.warn('Manual play failed:', err);
+      });
+    }
+
+    function log(msg, color) {
+      console.log(msg);
+      const el = document.getElementById('debugLog');
+      if (el) {
+        const time = new Date().toLocaleTimeString();
+        const style = color ? ` style="color: ${color};"` : '';
+        el.innerHTML += `<div${style}>[${time}] ${msg}</div>`;
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+
+    window.addEventListener('error', (e) => { if (e.message && e.message !== 'Script error.') log('JS Error: ' + e.message, '#ef4444'); });
+    window.addEventListener('unhandledrejection', (e) => log('Promise Error: ' + (e.reason ? (e.reason.message || e.reason) : e), '#ef4444'));
+
+    let activeMqttClients = [];
+    let activeEventSources = [];
+    let activeSockets = [];
+
+    function cleanupCurrentConnection() {
+      if (pc) {
+        try { pc.close(); } catch(e) {}
+        pc = null;
+      }
+      activeEventSources.forEach((s) => {
+        try { s.close(); } catch(e) {}
+      });
+      activeEventSources = [];
+      activeSockets.forEach((s) => {
+        try { s.close(); } catch(e) {}
+      });
+      activeSockets = [];
+      activeMqttClients.forEach((c) => {
+        try { c.end(true); } catch(e) {}
+      });
+      activeMqttClients = [];
+      mqttClient = null;
+      isConnectedToHost = false;
+      mediaStreamObj = null;
+    }
+
+    async function initConnection(e) {
+      if (e) e.stopPropagation();
+      cleanupCurrentConnection();
+
+      if (!targetStreamId) {
+        setStatus('', 'Ожидание ID стрима');
+        showError('Укажите ID трансляции', 'Введите идентификатор окна в поле ниже или откройте ссылку из бота.');
+        return;
+      }
+
+      currentStreamIdEl.innerText = targetStreamId;
+      streamInput.value = targetStreamId;
+
+      setStatus('connecting', 'Подключение к брокеру...');
+      placeholder.classList.remove('hidden');
+      loadingSpinner.style.display = 'block';
+      playBtn.style.display = 'none';
+      retryBtn.style.display = 'none';
+      placeholderTitle.innerText = 'Установка P2P соединения...';
+      placeholderSubtitle.innerText = 'Подключение к хосту ' + targetStreamId;
+
+      viewerId = 'v-' + Math.random().toString(36).substring(2, 10);
+      const answerTopic = `ew-notify/${targetStreamId}/answer/${viewerId}`;
+      const offerTopic = `ew-notify/${targetStreamId}/offer`;
+      const cleanStreamId = targetStreamId.replace(/^ew-/, "");
+      const ntfyOfferUrl = `https://ntfy.sh/ew-${cleanStreamId}-off`;
+      const ntfyAnswerSseUrl = `https://ntfy.sh/ew-${cleanStreamId}-ans-${viewerId}/sse`;
+      const ntfyAnswerWsUrl = `wss://ntfy.sh/ew-${cleanStreamId}-ans-${viewerId}/ws`;
+
+      async function parseNtfyPayload(data) {
+        if (!data || data.event !== 'message') return null;
+        let text = data.message;
+        if (data.attachment && data.attachment.url) {
+          try {
+            const resp = await fetch(data.attachment.url);
+            text = await resp.text();
+          } catch(e) {}
+        }
+        if (!text) return null;
+        try {
+          return JSON.parse(text);
+        } catch(e) {
+          return null;
+        }
+      }
+
+      let isOfferReady = false;
+      let connectedBrokerClient = null;
+      let hasReceivedAnswer = false;
+
+      log('Старт сессии: ' + targetStreamId + ' (ID зрителя: ' + viewerId + ')');
+
+      async function handleRemoteAnswer(sdpStr, channelName) {
+        if (hasReceivedAnswer || !pc || pc.signalingState === 'closed') return;
+        hasReceivedAnswer = true;
+        log('Получен ANSWER от хоста (' + channelName + ')! Размер SDP: ' + sdpStr.length, '#22c55e');
+        setStatus('connecting', 'Хост ответил • P2P рукопожатие...');
+        placeholderTitle.innerText = 'Хост ответил!';
+        placeholderSubtitle.innerText = 'Установка защищенного P2P соединения...';
+
+        try {
+          await pc.setRemoteDescription(new RTCSessionDescription({
+            type: 'answer',
+            sdp: sdpStr,
+          }));
+          log('Remote SDP применен успешно!');
+        } catch (e) {
+          log('Ошибка применения SDP: ' + e.message, '#ef4444');
+        }
+      }
+
+      function tryPublishOffer() {
+        if (!isOfferReady || !pc || !pc.localDescription) {
+          return;
+        }
+
+        const offerPayload = JSON.stringify({
+          viewer_id: viewerId,
+          sdp: pc.localDescription.sdp,
+        });
+
+        // 1. Primary: HTTPS/443 (ntfy.sh) - reliable across all mobile networks
+        log('Отправка WebRTC OFFER по каналу HTTPS/443 (ntfy.sh)...', '#22c55e');
+        setStatus('connecting', 'Ожидание ответа игры...');
+        placeholderTitle.innerText = 'Запрос отправлен';
+        placeholderSubtitle.innerText = 'Ожидание ответа от игрового клиента...';
+
+        fetch(ntfyOfferUrl, {
+          method: 'POST',
+                    body: offerPayload
+        }).then(res => {
+          if (res.ok) {
+            log('OFFER успешно доставлен (HTTPS/443)! Ждём ответ игры...', '#22c55e');
+          } else {
+            log('ntfy POST статус: ' + res.status, '#f59e0b');
+          }
+        }).catch(err => {
+          log('ntfy POST ошибка: ' + err.message, '#f59e0b');
+        });
+
+        // 2. Secondary: MQTT if connected
+        if (connectedBrokerClient) {
+          connectedBrokerClient.publish(offerTopic, offerPayload, { qos: 1 }, (err) => {
+            if (!err) log('OFFER также отправлен через MQTT', '#22c55e');
+          });
+        }
+      }
+
+      // 1. Primary Answer Channel: HTTPS/443 (ntfy.sh via SSE + WebSocket)
+      log('Подключение к каналу HTTPS/443 (ntfy.sh)...');
+      try {
+        const sse = new EventSource(ntfyAnswerSseUrl);
+        activeEventSources.push(sse);
+        sse.onopen = () => {
+          log('Канал HTTPS/443 (SSE) готов к приёму ответа', '#22c55e');
+        };
+        sse.onmessage = async (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            const payload = await parseNtfyPayload(data);
+            if (payload && payload.sdp) handleRemoteAnswer(payload.sdp, 'HTTPS/443 SSE');
+          } catch(e) {}
+        };
+      } catch(e) {
+        log('SSE init: ' + e.message, '#f59e0b');
+      }
+
+      try {
+        const ws443 = new WebSocket(ntfyAnswerWsUrl);
+        activeSockets.push(ws443);
+        ws443.onopen = () => {
+          log('Канал WSS/443 подключен', '#22c55e');
+        };
+        ws443.onmessage = async (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            const payload = await parseNtfyPayload(data);
+            if (payload && payload.sdp) handleRemoteAnswer(payload.sdp, 'WSS/443');
+          } catch(e) {}
+        };
+      } catch(e) {}
+
+      // Configure WebRTC PeerConnection with STUN & optional TURN
+      try {
+        log('Инициализация RTCPeerConnection...');
+        const params = new URLSearchParams(window.location.search);
+        const iceServers = [
+          { urls: 'stun:stun.cloudflare.com:3478' },
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:global.stun.twilio.com:3478' }
+        ];
+        const customTurn = params.get('turn') || localStorage.getItem('ew_turn_server');
+        if (customTurn) {
+          const urls = customTurn.split(',').map(u => {
+            let s = u.trim();
+            if (s && !s.startsWith('turn:') && !s.startsWith('turns:')) {
+              s = 'turn:' + s;
+            }
+            return s;
+          }).filter(Boolean);
+          const turnUser = params.get('tu') || localStorage.getItem('ew_turn_user') || '';
+          const turnPass = params.get('tp') || localStorage.getItem('ew_turn_pass') || '';
+          if (urls.length > 0) {
+            iceServers.push({
+              urls: urls.length === 1 ? urls[0] : urls,
+              username: turnUser,
+              credential: turnPass
+            });
+            log('TURN relay настроен: ' + urls.join(', '), '#22c55e');
+          }
+        }
+
+        pc = new RTCPeerConnection({ iceServers });
+
+        video.muted = true;
+
+        pc.ontrack = (event) => {
+          log('Получен медиа-трек: ' + event.track.kind, '#22c55e');
+          const stream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
+          video.srcObject = stream;
+          video.muted = true;
+
+          if (event.track) {
+            event.track.onunmute = () => {
+              log('Видео-трек разблокирован (unmuted)! Кадры поступают.', '#22c55e');
+              video.play().then(onStreamPlaying).catch(e => log('video.play: ' + e.message, '#f59e0b'));
+            };
+          }
+
+          video.play().then(() => {
+            if (video.videoWidth > 0) {
+              onStreamPlaying();
+            }
+          }).catch((err) => {
+            log('Autoplay заблокирован, требуется тап по экрану', '#f59e0b');
+            loadingSpinner.style.display = 'none';
+            playBtn.style.display = 'inline-flex';
+            placeholderTitle.innerText = 'Трансляция готова';
+            placeholderSubtitle.innerText = 'Нажмите кнопку ниже для запуска воспроизведения';
+          });
+        };
+
+        pc.onconnectionstatechange = () => {
+          log('WebRTC Connection State: ' + pc.connectionState, pc.connectionState === 'connected' ? '#22c55e' : '#f59e0b');
+          if (pc.connectionState === 'connected') {
+            isConnectedToHost = true;
+            setStatus('connecting', 'P2P канал открыт • Приём видео...');
+            placeholderTitle.innerText = 'P2P связь установлена!';
+            placeholderSubtitle.innerText = 'Ожидание видеопотока 720p 30fps...';
+            setTimeout(() => {
+              if (!video.srcObject || (video.srcObject.getVideoTracks && video.srcObject.getVideoTracks().length === 0)) {
+                const receivers = pc.getReceivers ? pc.getReceivers() : [];
+                for (const r of receivers) {
+                  if (r.track && r.track.kind === 'video') {
+                    log('Connected fallback: привязка receiver track');
+                    video.srcObject = new MediaStream([r.track]);
+                    video.play().then(onStreamPlaying).catch(e => console.warn(e));
+                    break;
+                  }
+                }
+              }
+            }, 300);
+          } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+            if (!isConnectedToHost) {
+              showError('Сбой P2P соединения', 'Не удалось связаться с ПК напрямую через UDP. Попробуйте еще раз.');
+            }
+          }
+        };
+
+        pc.oniceconnectionstatechange = () => {
+          log('ICE State: ' + pc.iceConnectionState);
+          if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+            isConnectedToHost = true;
+          }
+        };
+
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            const cand = event.candidate;
+            const addr = cand.address || cand.ip || '';
+            const port = cand.port ? (':' + cand.port) : '';
+            log('ICE кандидат: ' + cand.type + ' ' + (cand.protocol || 'udp') + (addr ? (' (' + addr + port + ')') : ''));
+          } else {
+            log('ICE сбор кандидатов завершен');
+          }
+        };
+
+        try {
+          const tr = pc.addTransceiver('video', { direction: 'recvonly' });
+          if (typeof RTCRtpReceiver !== 'undefined' && RTCRtpReceiver.getCapabilities) {
+            const caps = RTCRtpReceiver.getCapabilities('video');
+            if (caps && caps.codecs) {
+              const h264 = caps.codecs.filter(c => c.mimeType && c.mimeType.toLowerCase() === 'video/h264');
+              if (h264.length > 0 && tr.setCodecPreferences) {
+                tr.setCodecPreferences(h264);
+                log('H.264 кодек выбран (SDP оптимизирован)', '#22c55e');
+              }
+            }
+          }
+        } catch(e) {
+          log('addTransceiver: ' + e.message);
+        }
+
+        const offer = await pc.createOffer({ offerToReceiveVideo: true });
+        await pc.setLocalDescription(offer);
+        log('Локальный OFFER создан, ожидание ICE...');
+
+        await new Promise((resolve) => {
+          if (pc.iceGatheringState === 'complete') {
+            resolve();
+            return;
+          }
+          let resolved = false;
+          let timer = null;
+          const done = () => {
+            if (!resolved) {
+              resolved = true;
+              if (timer) clearTimeout(timer);
+              resolve();
+            }
+          };
+          const check = () => {
+            if (pc.iceGatheringState === 'complete') done();
+          };
+          pc.addEventListener('icegatheringstatechange', check);
+          // Wait up to 1200ms on mobile connections to ensure public IP (srflx) is gathered
+          timer = setTimeout(done, 1200);
+        });
+
+        isOfferReady = true;
+        tryPublishOffer();
+      } catch (err) {
+        log('Критическая ошибка WebRTC: ' + err.message, '#ef4444');
+      }
+
+      // 15 seconds check
+      setTimeout(() => {
+        if (!placeholder.classList.contains('hidden')) {
+          if (isConnectedToHost) {
+            loadingSpinner.style.display = 'none';
+            playBtn.style.display = 'inline-flex';
+            retryBtn.style.display = 'inline-flex';
+            placeholderTitle.innerText = 'Видеопоток ожидается';
+            placeholderSubtitle.innerText = 'P2P соединение установлено. Убедитесь, что окно игры развернуто на ПК, или нажмите кнопку ниже.';
+          } else {
+            showError('Хост не отвечает', 'Убедитесь, что в Telegram-боте нажат «📺 Стрим», выбрано окно игры и открыта самая свежая ссылка из бота.');
+            retryBtn.style.display = 'inline-flex';
+          }
+        }
+      }, 15000);
+    }
+
+    function onManualConnect() {
+      const inputVal = streamInput.value.trim();
+      if (!inputVal) return;
+      targetStreamId = inputVal;
+      const url = new URL(window.location);
+      url.searchParams.set('s', targetStreamId);
+      window.history.replaceState({}, '', url);
+      initConnection();
+    }
+
+    function copyStreamId() {
+      if (!targetStreamId) return;
+      navigator.clipboard.writeText(targetStreamId).then(() => {
+        alert('ID стрима скопирован: ' + targetStreamId);
+      });
+    }
+
+    function unmuteAudio(e) {
+      if (e) e.stopPropagation();
+      video.muted = false;
+      unmuteBanner.style.display = 'none';
+    }
+
+    function toggleMute(e) {
+      if (e) e.stopPropagation();
+      video.muted = !video.muted;
+      document.getElementById('muteBtn').innerText = video.muted ? '🔇' : '🔊';
+    }
+
+    function togglePlay(e) {
+      if (e) e.stopPropagation();
+      if (video.paused) {
+        video.play();
+        document.getElementById('playPauseBtn').innerText = '⏸';
+      } else {
+        video.pause();
+        document.getElementById('playPauseBtn').innerText = '▶';
+      }
+    }
+
+    function toggleFullscreen(e) {
+      if (e) e.stopPropagation();
+      const container = document.getElementById('playerContainer');
+      if (!document.fullscreenElement) {
+        container.requestFullscreen?.() || container.webkitRequestFullscreen?.();
+      } else {
+        document.exitFullscreen?.() || document.webkitExitFullscreen?.();
+      }
+    }
+
+    function togglePiP(e) {
+      if (e) e.stopPropagation();
+      if (document.pictureInPictureElement) {
+        document.exitPictureInPicture();
+      } else if (video.requestPictureInPicture) {
+        video.requestPictureInPicture();
+      }
+    }
+
+    // Auto-init on page load
+    window.addEventListener('DOMContentLoaded', () => {
+      targetStreamId = parseStreamIdFromUrl();
+      initConnection();
+    });
+  </script>
+</body>
+</html>
