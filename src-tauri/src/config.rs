@@ -44,7 +44,11 @@ impl Default for AppConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+fn default_rtmp_url() -> String {
+    "rtmps://live.me.t.me/live".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StreamerConfig {
     #[serde(default)]
     pub udp_port: Option<u16>,
@@ -54,6 +58,23 @@ pub struct StreamerConfig {
     pub turn_username: Option<String>,
     #[serde(default)]
     pub turn_password: Option<String>,
+    #[serde(default = "default_rtmp_url")]
+    pub rtmp_url: String,
+    #[serde(default)]
+    pub rtmp_key: String,
+}
+
+impl Default for StreamerConfig {
+    fn default() -> Self {
+        Self {
+            udp_port: None,
+            turn_server: None,
+            turn_username: None,
+            turn_password: None,
+            rtmp_url: default_rtmp_url(),
+            rtmp_key: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

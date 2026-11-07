@@ -68,6 +68,15 @@ export interface UpdateInfo {
   asset_name: string;
 }
 
+export interface StreamerConfig {
+  udp_port?: number | null;
+  turn_server?: string | null;
+  turn_username?: string | null;
+  turn_password?: string | null;
+  rtmp_url?: string;
+  rtmp_key?: string;
+}
+
 export interface Config {
   schema_version?: number;
   telegram: {
@@ -99,6 +108,7 @@ export interface Config {
   };
   clicker?: ClickerConfig;
   updater?: UpdaterConfig;
+  streamer?: StreamerConfig;
 }
 
 export interface MonitoringStatus {

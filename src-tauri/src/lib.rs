@@ -16,6 +16,7 @@ pub mod window_filter;
 pub mod notifications;
 pub mod updater;
 pub mod streamer;
+pub mod rtmp_streamer;
 
 use config::{AppConfig, CaptureMode, Pattern};
 use packet::{
@@ -1889,6 +1890,7 @@ pub fn run() {
                     tracing::info!("Application exiting: stopping active stream session...");
                     tauri::async_runtime::block_on(async {
                         crate::streamer::stop_stream().await;
+                        let _ = crate::rtmp_streamer::stop_rtmp_stream().await;
                     });
                 }
                 _ => {}

@@ -1,3 +1,14 @@
+
+fn mask_stream_key(key: &str) -> String {
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        "Не задан ⚠️".to_string()
+    } else if trimmed.len() <= 8 {
+        "********".to_string()
+    } else {
+        format!("{}...****", &trimmed[..6])
+    }
+}
 use crate::config::{AppConfig, RegisteredUser};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -195,6 +206,7 @@ pub fn make_user_keyboard(is_admin: bool) -> KeyboardMarkup {
         vec![
             KeyboardButton::new("📸 Скриншот"),
             KeyboardButton::new("📺 Стрим"),
+            KeyboardButton::new("📡 RTMP"),
         ],
         vec![
             KeyboardButton::new("⚙️ Настройки"),
@@ -217,11 +229,15 @@ pub async fn test_connection(token: &str) -> anyhow::Result<()> {
         },
         BotCommand {
             command: "stream".to_string(),
-            description: "P2P-стриминг игровых окон (1080p)".to_string(),
+            description: "P2P WebRTC стрим (браузер / Mini App)".to_string(),
         },
         BotCommand {
-            command: "stream".to_string(),
-            description: "P2P-стриминг игровых окон (1080p)".to_string(),
+            command: "rtmp".to_string(),
+            description: "RTMP-трансляция в Telegram канал".to_string(),
+        },
+        BotCommand {
+            command: "set_rtmp".to_string(),
+            description: "Настройка RTMP: /set_rtmp <ключ>".to_string(),
         },
         BotCommand {
             command: "settings".to_string(),
@@ -537,7 +553,169 @@ pub async fn start_bot(
                                             .await;
                                     }
                                 }
-                            } else if text_cmd == "/screen" || text_cmd == "/shot" || text_cmd == "/screenshot" || text_cmd == "📸 Скриншот" {
+                                                        } else if text_cmd == "/rtmp" || text_cmd == "📡 RTMP" {
+                                let config_guard = config.lock().await;
+                                let chat_str = chat_id.to_string();
+                                let allowed = crate::config::can_user_stream(&config_guard, &chat_str);
+                                let process_name = config_guard.target.process_name.clone();
+                                let rtmp_url = config_guard.streamer.rtmp_url.clone();
+                                let rtmp_key = config_guard.streamer.rtmp_key.clone();
+                                drop(config_guard);
+
+                                if !allowed {
+                                    let _ = bot
+                                        .send_message(
+                                            ChatId(chat_id),
+                                            "⛔ У вас нет доступа к функции стриминга.\n\
+                                             Обратитесь к администратору для включения доступа.",
+                                        )
+                                        .reply_markup(make_user_keyboard(is_admin))
+                                        .send()
+                                        .await;
+                                } else if let Some(active) = crate::rtmp_streamer::get_rtmp_info().await {
+                                    let info_msg = format!(
+                                        "📡 Сейчас активна трансляция в Telegram:\n\n\
+                                         🎮 Окно: «{}» (PID {})\n\
+                                         ⏱ В эфире: {} сек\n\
+                                         🚀 Параметры: 720p HD, 30 FPS, битрейт 2500k\n\
+                                         📍 Сервер: {}\n\n\
+                                         Откройте ваш Telegram-канал, чтобы смотреть прямой эфир.",
+                                        active.title, active.pid, active.uptime_secs, active.rtmp_url
+                                    );
+                                    let kb = InlineKeyboardMarkup::default().append_row(vec![
+                                        InlineKeyboardButton::callback("🔄 Обновить статус", "rtmp_refresh"),
+                                        InlineKeyboardButton::callback("🛑 Остановить RTMP", "rtmp_stop"),
+                                    ]);
+                                    let _ = bot
+                                        .send_message(ChatId(chat_id), info_msg)
+                                        .reply_markup(kb)
+                                        .send()
+                                        .await;
+                                } else if rtmp_key.trim().is_empty() {
+                                    let prompt = "📡 Трансляция в канал Telegram (RTMP)\n\n\
+                                                  ⚠️ Ключ трансляции (Stream Key) еще не настроен!\n\n\
+                                                  📋 Как получить ключ:\n\
+                                                  1. Откройте ваш Telegram-канал или группу.\n\
+                                                  2. Меню ➔ «Видеотрансляция» (или «Прямой эфир») ➔ «Трансляция с помощью...»\n\
+                                                  3. Скопируйте «Ключ трансляции» (Stream Key).\n\
+                                                  4. Отправьте боту команду:\n\
+                                                  `/set_rtmp ВАШ_КЛЮЧ`\n\n\
+                                                  После этого трансляция будет запускаться прямо в ваш Telegram-канал в один клик!";
+                                    let kb = InlineKeyboardMarkup::default().append_row(vec![
+                                        InlineKeyboardButton::callback("❓ Подробнее о настройке", "rtmp_setup_help"),
+                                    ]);
+                                    let _ = bot
+                                        .send_message(ChatId(chat_id), prompt)
+                                        .reply_markup(kb)
+                                        .send()
+                                        .await;
+                                } else {
+                                    let windows = crate::screen_capture::find_target_windows(&process_name);
+                                    if windows.is_empty() {
+                                        let _ = bot
+                                            .send_message(
+                                                ChatId(chat_id),
+                                                format!(
+                                                    "⚠️ Окна процесса «{}» не найдены.\n\
+                                                     Убедитесь, что игра запущена на ПК.",
+                                                    process_name
+                                                ),
+                                            )
+                                            .send()
+                                            .await;
+                                    } else {
+                                        let mut kb = InlineKeyboardMarkup::default();
+                                        for (idx, win) in windows.iter().enumerate() {
+                                            let win_num = idx + 1;
+                                            let min_mark = if win.is_minimized { " [Свёрнуто ⚠️]" } else { "" };
+                                            let label = format!("🎮 Окно #{} (PID {}){}", win_num, win.pid, min_mark);
+                                            kb = kb.append_row(vec![
+                                                InlineKeyboardButton::callback(label, format!("rtmp_pick_{}", win.hwnd)),
+                                            ]);
+                                        }
+                                        kb = kb.append_row(vec![
+                                            InlineKeyboardButton::callback("🔑 Изменить ключ", "rtmp_setup_help"),
+                                            InlineKeyboardButton::callback("❌ Отмена", "rtmp_cancel"),
+                                        ]);
+                                        let prompt = format!(
+                                            "📡 Прямая RTMP-трансляция в Telegram (720p HD, 30 FPS)\n\n\
+                                             📍 Сервер: {}\n\
+                                             🔑 Ключ: {}\n\n\
+                                             Трансляция передается прямо в ваш Telegram-канал без посредников.\n\
+                                             Выберите окно для начала эфира:",
+                                            rtmp_url,
+                                            mask_stream_key(&rtmp_key)
+                                        );
+                                        let _ = bot
+                                            .send_message(ChatId(chat_id), prompt)
+                                            .reply_markup(kb)
+                                            .send()
+                                            .await;
+                                    }
+                                }
+                            } else if text_cmd == "/set_rtmp" || text_cmd.starts_with("/set_rtmp ") {
+                                let config_guard = config.lock().await;
+                                let chat_str = chat_id.to_string();
+                                let allowed = crate::config::can_user_stream(&config_guard, &chat_str);
+                                drop(config_guard);
+
+                                if !allowed {
+                                    let _ = bot
+                                        .send_message(ChatId(chat_id), "⛔ У вас нет доступа к настройке трансляций.")
+                                        .send()
+                                        .await;
+                                } else {
+                                    let arg = text_cmd.strip_prefix("/set_rtmp").unwrap_or("").trim();
+                                    if arg.is_empty() {
+                                        let msg = "ℹ️ Использование команды:\n\
+                                                   `/set_rtmp <ключ_трансляции>`\n\
+                                                   или\n\
+                                                   `/set_rtmp <сервер_url> <ключ>`\n\n\
+                                                   Пример:\n\
+                                                   `/set_rtmp 123456789:ABCdefGhIjkLmNoPqRs`\n\n\
+                                                   💡 Ключ можно получить в Telegram-канале:                                                    Меню ➔ Видеотрансляция ➔ Трансляция с помощью... ➔ Ключ трансляции.";
+                                        let _ = bot
+                                            .send_message(ChatId(chat_id), msg)
+                                            .send()
+                                            .await;
+                                    } else {
+                                        let parts: Vec<&str> = arg.split_whitespace().collect();
+                                        let mut cfg = config.lock().await;
+                                        if parts.len() >= 2 {
+                                            cfg.streamer.rtmp_url = parts[0].to_string();
+                                            cfg.streamer.rtmp_key = parts[1].to_string();
+                                        } else if parts[0].starts_with("rtmp://") || parts[0].starts_with("rtmps://") {
+                                            cfg.streamer.rtmp_key = parts[0].to_string();
+                                        } else {
+                                            cfg.streamer.rtmp_key = parts[0].to_string();
+                                        }
+                                        let saved_url = cfg.streamer.rtmp_url.clone();
+                                        let masked = mask_stream_key(&cfg.streamer.rtmp_key);
+                                        let _ = crate::config::save_config(&cfg);
+                                        drop(cfg);
+
+                                        let resp = format!(
+                                            "✅ Настройки RTMP успешно сохранены!\n\n\
+                                             📍 Сервер: {}\n\
+                                             🔑 Ключ: {}\n\n\
+                                             Теперь отправьте /rtmp или нажмите 📡 RTMP для запуска трансляции.",
+                                            saved_url, masked
+                                        );
+                                        let _ = bot
+                                            .send_message(ChatId(chat_id), resp)
+                                            .reply_markup(make_user_keyboard(is_admin))
+                                            .send()
+                                            .await;
+                                    }
+                                }
+                            } else if text_cmd == "/rtmp_stop" {
+                                let _ = crate::rtmp_streamer::stop_rtmp_stream().await;
+                                let _ = bot
+                                    .send_message(ChatId(chat_id), "🛑 RTMP-трансляция остановлена.")
+                                    .reply_markup(make_user_keyboard(is_admin))
+                                    .send()
+                                    .await;
+} else if text_cmd == "/screen" || text_cmd == "/shot" || text_cmd == "/screenshot" || text_cmd == "📸 Скриншот" {
                                 let config_guard = config.lock().await;
                                 let chat_str = chat_id.to_string();
                                 let allowed = crate::config::can_user_screenshot(&config_guard, &chat_str);
@@ -942,6 +1120,314 @@ pub async fn start_bot(
                                     .edit_message_text(message.chat().id, message.id(), "❌ Запуск трансляции отменён.")
                                     .send()
                                     .await;
+                            } else if data.starts_with("rtmp_pick_") {
+                                let hwnd_str = &data["rtmp_pick_".len()..];
+                                let chat_id = message.chat().id.0;
+                                let chat_str = chat_id.to_string();
+                                let config_guard = config.lock().await;
+                                let allowed = crate::config::can_user_stream(&config_guard, &chat_str);
+                                let process_name = config_guard.target.process_name.clone();
+                                let rtmp_url = config_guard.streamer.rtmp_url.clone();
+                                let rtmp_key = config_guard.streamer.rtmp_key.clone();
+                                drop(config_guard);
+
+                                if !allowed {
+                                    let _ = bot
+                                        .answer_callback_query(callback.id.clone())
+                                        .text("⛔ Нет доступа к трансляциям")
+                                        .send()
+                                        .await;
+                                } else if let Ok(hwnd_val) = hwnd_str.parse::<isize>() {
+                                    let windows = crate::screen_capture::find_target_windows(&process_name);
+                                    if let Some(target_win) = windows.into_iter().find(|w| w.hwnd == hwnd_val) {
+                                        #[cfg(windows)]
+                                        let is_min = unsafe {
+                                            windows::Win32::UI::WindowsAndMessaging::IsIconic(
+                                                windows::Win32::Foundation::HWND(target_win.hwnd),
+                                            )
+                                            .as_bool()
+                                        };
+                                        #[cfg(not(windows))]
+                                        let is_min = false;
+
+                                        if is_min {
+                                            let prompt = format!(
+                                                "⚠️ Окно «{}» (PID {}) свёрнуто в панель задач.\n\n                                                 Для трансляции окно должно быть восстановлено на рабочий стол.\n                                                 Восстановить окно и начать RTMP-вещание?",
+                                                target_win.title, target_win.pid
+                                            );
+                                            let kb = InlineKeyboardMarkup::default()
+                                                .append_row(vec![InlineKeyboardButton::callback(
+                                                    "✅ Развернуть и начать RTMP",
+                                                    format!("rtmp_start_force_{}", target_win.hwnd),
+                                                )])
+                                                .append_row(vec![InlineKeyboardButton::callback("❌ Отмена", "rtmp_cancel")]);
+                                            let _ = bot
+                                                .edit_message_text(message.chat().id, message.id(), prompt)
+                                                .reply_markup(kb)
+                                                .send()
+                                                .await;
+                                        } else {
+                                            let _ = bot
+                                                .answer_callback_query(callback.id.clone())
+                                                .text("Запуск RTMP-вещания...")
+                                                .send()
+                                                .await;
+
+                                            match crate::rtmp_streamer::start_rtmp_stream(
+                                                target_win.hwnd,
+                                                target_win.pid,
+                                                target_win.title.clone(),
+                                                rtmp_url.clone(),
+                                                rtmp_key.clone(),
+                                            )
+                                            .await
+                                            {
+                                                Ok(info) => {
+                                                    let success_msg = format!(
+                                                        "📡 Трансляция в канал Telegram запущена!\n\n                                                         🎮 Окно: «{}» (PID {})\n                                                         ⏱ Только что запущена\n                                                         🚀 Качество: 720p HD, 30 FPS (H.264 / AAC Mute)\n                                                         📍 Сервер: {}\n\n                                                         👉 Перейдите в ваш канал Telegram и включите видеотрансляцию (эфир появится автоматически)!",
+                                                        info.title, info.pid, info.rtmp_url
+                                                    );
+                                                    let kb = InlineKeyboardMarkup::default().append_row(vec![
+                                                        InlineKeyboardButton::callback("🔄 Обновить статус", "rtmp_refresh"),
+                                                        InlineKeyboardButton::callback("🛑 Остановить RTMP", "rtmp_stop"),
+                                                    ]);
+                                                    let _ = bot
+                                                        .edit_message_text(message.chat().id, message.id(), success_msg)
+                                                        .reply_markup(kb)
+                                                        .send()
+                                                        .await;
+                                                }
+                                                Err(e) => {
+                                                    let _ = bot
+                                                        .edit_message_text(
+                                                            message.chat().id,
+                                                            message.id(),
+                                                            format!("❌ Ошибка запуска RTMP: {e}"),
+                                                        )
+                                                        .send()
+                                                        .await;
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        let _ = bot
+                                            .edit_message_text(message.chat().id, message.id(), "⚠️ Окно не найдено.")
+                                            .send()
+                                            .await;
+                                    }
+                                }
+                            } else if data.starts_with("rtmp_start_force_") {
+                                let hwnd_str = &data["rtmp_start_force_".len()..];
+                                let chat_id = message.chat().id.0;
+                                let chat_str = chat_id.to_string();
+                                let config_guard = config.lock().await;
+                                let allowed = crate::config::can_user_stream(&config_guard, &chat_str);
+                                let process_name = config_guard.target.process_name.clone();
+                                let rtmp_url = config_guard.streamer.rtmp_url.clone();
+                                let rtmp_key = config_guard.streamer.rtmp_key.clone();
+                                drop(config_guard);
+
+                                if !allowed {
+                                    let _ = bot
+                                        .answer_callback_query(callback.id.clone())
+                                        .text("⛔ Нет доступа к трансляциям")
+                                        .send()
+                                        .await;
+                                } else if let Ok(hwnd_val) = hwnd_str.parse::<isize>() {
+                                    let windows = crate::screen_capture::find_target_windows(&process_name);
+                                    if let Some(target_win) = windows.into_iter().find(|w| w.hwnd == hwnd_val) {
+                                        #[cfg(windows)]
+                                        unsafe {
+                                            use windows::Win32::Foundation::HWND;
+                                            use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
+                                            let _ = ShowWindow(HWND(target_win.hwnd), SW_SHOWNOACTIVATE);
+                                            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                                        }
+
+                                        let _ = bot
+                                            .answer_callback_query(callback.id.clone())
+                                            .text("Запуск RTMP...")
+                                            .send()
+                                            .await;
+
+                                        match crate::rtmp_streamer::start_rtmp_stream(
+                                            target_win.hwnd,
+                                            target_win.pid,
+                                            target_win.title.clone(),
+                                            rtmp_url.clone(),
+                                            rtmp_key.clone(),
+                                        )
+                                        .await
+                                        {
+                                            Ok(info) => {
+                                                let success_msg = format!(
+                                                    "📡 Трансляция в канал Telegram запущена!\n\n                                                     🎮 Окно: «{}» (PID {})\n                                                     ⏱ Только что запущена\n                                                     🚀 Качество: 720p HD, 30 FPS (H.264 / AAC Mute)\n                                                     📍 Сервер: {}\n\n                                                     👉 Перейдите в ваш канал Telegram и включите видеотрансляцию (эфир появится автоматически)!",
+                                                    info.title, info.pid, info.rtmp_url
+                                                );
+                                                let kb = InlineKeyboardMarkup::default().append_row(vec![
+                                                    InlineKeyboardButton::callback("🔄 Обновить статус", "rtmp_refresh"),
+                                                    InlineKeyboardButton::callback("🛑 Остановить RTMP", "rtmp_stop"),
+                                                ]);
+                                                let _ = bot
+                                                    .edit_message_text(message.chat().id, message.id(), success_msg)
+                                                    .reply_markup(kb)
+                                                    .send()
+                                                    .await;
+                                            }
+                                            Err(e) => {
+                                                let _ = bot
+                                                    .edit_message_text(
+                                                        message.chat().id,
+                                                        message.id(),
+                                                        format!("❌ Ошибка запуска RTMP: {e}"),
+                                                    )
+                                                    .send()
+                                                    .await;
+                                            }
+                                        }
+                                    } else {
+                                        let _ = bot
+                                            .edit_message_text(message.chat().id, message.id(), "⚠️ Окно больше не найдено.")
+                                            .send()
+                                            .await;
+                                    }
+                                }
+                            } else if data == "rtmp_stop" {
+                                let _ = crate::rtmp_streamer::stop_rtmp_stream().await;
+                                let _ = bot
+                                    .answer_callback_query(callback.id.clone())
+                                    .text("🛑 RTMP трансляция остановлена")
+                                    .send()
+                                    .await;
+
+                                let kb = InlineKeyboardMarkup::default().append_row(vec![
+                                    InlineKeyboardButton::callback("📡 Запустить RTMP заново", "rtmp_restart"),
+                                ]);
+                                let _ = bot
+                                    .edit_message_text(message.chat().id, message.id(), "🛑 RTMP-трансляция в Telegram остановлена.")
+                                    .reply_markup(kb)
+                                    .send()
+                                    .await;
+                            } else if data == "rtmp_refresh" {
+                                if let Some(active) = crate::rtmp_streamer::get_rtmp_info().await {
+                                    let _ = bot
+                                        .answer_callback_query(callback.id.clone())
+                                        .text("Статус RTMP обновлен")
+                                        .send()
+                                        .await;
+
+                                    let info_msg = format!(
+                                        "📡 Сейчас активна трансляция в Telegram:\n\n                                         🎮 Окно: «{}» (PID {})\n                                         ⏱ В эфире: {} сек\n                                         🚀 Параметры: 720p HD, 30 FPS (H.264 / AAC Mute)\n                                         📍 Сервер: {}\n\n                                         Откройте ваш Telegram-канал для просмотра прямого эфира.",
+                                        active.title, active.pid, active.uptime_secs, active.rtmp_url
+                                    );
+                                    let kb = InlineKeyboardMarkup::default().append_row(vec![
+                                        InlineKeyboardButton::callback("🔄 Обновить статус", "rtmp_refresh"),
+                                        InlineKeyboardButton::callback("🛑 Остановить RTMP", "rtmp_stop"),
+                                    ]);
+                                    let _ = bot
+                                        .edit_message_text(message.chat().id, message.id(), info_msg)
+                                        .reply_markup(kb)
+                                        .send()
+                                        .await;
+                                } else {
+                                    let _ = bot
+                                        .answer_callback_query(callback.id.clone())
+                                        .text("RTMP трансляция не активна")
+                                        .send()
+                                        .await;
+
+                                    let kb = InlineKeyboardMarkup::default().append_row(vec![
+                                        InlineKeyboardButton::callback("📡 Запустить RTMP заново", "rtmp_restart"),
+                                    ]);
+                                    let _ = bot
+                                        .edit_message_text(
+                                            message.chat().id,
+                                            message.id(),
+                                            "🛑 RTMP-трансляция не активна или была остановлена.",
+                                        )
+                                        .reply_markup(kb)
+                                        .send()
+                                        .await;
+                                }
+                            } else if data == "rtmp_restart" {
+                                let _ = bot
+                                    .answer_callback_query(callback.id.clone())
+                                    .send()
+                                    .await;
+
+                                let config_guard = config.lock().await;
+                                let process_name = config_guard.target.process_name.clone();
+                                let rtmp_url = config_guard.streamer.rtmp_url.clone();
+                                let rtmp_key = config_guard.streamer.rtmp_key.clone();
+                                drop(config_guard);
+
+                                let windows = crate::screen_capture::find_target_windows(&process_name);
+                                if windows.is_empty() {
+                                    let kb = InlineKeyboardMarkup::default().append_row(vec![
+                                        InlineKeyboardButton::callback("🔄 Повторить поиск", "rtmp_restart"),
+                                    ]);
+                                    let _ = bot
+                                        .edit_message_text(
+                                            message.chat().id,
+                                            message.id(),
+                                            format!(
+                                                "⚠️ Окна процесса «{}» не найдены.\nУбедитесь, что игра запущена на ПК.",
+                                                process_name
+                                            ),
+                                        )
+                                        .reply_markup(kb)
+                                        .send()
+                                        .await;
+                                } else {
+                                    let mut kb = InlineKeyboardMarkup::default();
+                                    for (idx, win) in windows.iter().enumerate() {
+                                        let win_num = idx + 1;
+                                        let min_mark = if win.is_minimized { " [Свёрнуто ⚠️]" } else { "" };
+                                        let label = format!("🎮 Окно #{} (PID {}){}", win_num, win.pid, min_mark);
+                                        kb = kb.append_row(vec![
+                                            InlineKeyboardButton::callback(label, format!("rtmp_pick_{}", win.hwnd)),
+                                        ]);
+                                    }
+                                    kb = kb.append_row(vec![
+                                        InlineKeyboardButton::callback("🔑 Изменить ключ", "rtmp_setup_help"),
+                                        InlineKeyboardButton::callback("❌ Отмена", "rtmp_cancel"),
+                                    ]);
+                                    let prompt = format!(
+                                        "📡 Выберите окно игры для начала RTMP-вещания в Telegram:\n\n                                         📍 Сервер: {}\n                                         🔑 Ключ: {}",
+                                        rtmp_url,
+                                        mask_stream_key(&rtmp_key)
+                                    );
+                                    let _ = bot
+                                        .edit_message_text(message.chat().id, message.id(), prompt)
+                                        .reply_markup(kb)
+                                        .send()
+                                        .await;
+                                }
+                            } else if data == "rtmp_cancel" {
+                                let _ = bot
+                                    .answer_callback_query(callback.id.clone())
+                                    .text("Отменено")
+                                    .send()
+                                    .await;
+                                let _ = bot
+                                    .edit_message_text(message.chat().id, message.id(), "❌ Запуск RTMP-трансляции отменён.")
+                                    .send()
+                                    .await;
+                            } else if data == "rtmp_setup_help" {
+                                let _ = bot
+                                    .answer_callback_query(callback.id.clone())
+                                    .send()
+                                    .await;
+                                let help_text = "🔑 Настройка RTMP-трансляции в Telegram:\n\n                                                 1. Откройте ваш Telegram-канал или группу.\n                                                 2. Нажмите «Видеотрансляция» / «Прямой эфир» ➔ «Трансляция с помощью...»\n                                                 3. Скопируйте «Ключ трансляции» (Stream Key).\n                                                 4. Отправьте в этот чат команду:\n                                                 `/set_rtmp ВАШ_КЛЮЧ`\n\n                                                 💡 Ключ канала постоянный и вводится всего один раз!";
+                                let kb = InlineKeyboardMarkup::default().append_row(vec![
+                                    InlineKeyboardButton::callback("📡 Начать стрим", "rtmp_restart"),
+                                ]);
+                                let _ = bot
+                                    .edit_message_text(message.chat().id, message.id(), help_text)
+                                    .reply_markup(kb)
+                                    .send()
+                                    .await;
+
                             } else if data == "toggle_death_screen" {
                                 let (new_val, delay) = {
                                     let mut config_guard = config.lock().await;

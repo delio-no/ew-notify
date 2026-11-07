@@ -666,7 +666,7 @@ fn run_capture_encode_loop(
 
 /// Capture game window and scale directly to 1280x720 BGRA
 #[cfg(windows)]
-fn capture_window_720p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
+pub(crate) fn capture_window_720p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
     use std::mem::{size_of, zeroed};
     use windows::Win32::Foundation::{HWND, RECT};
     use windows::Win32::Graphics::Gdi::{
@@ -813,7 +813,7 @@ fn capture_window_720p_into(hwnd_val: isize, out_bgra: &mut [u8]) -> bool {
 }
 
 #[cfg(not(windows))]
-fn capture_window_720p_into(_hwnd: isize, _out: &mut [u8]) -> bool {
+pub(crate) fn capture_window_720p_into(_hwnd: isize, _out: &mut [u8]) -> bool {
     false
 }
 

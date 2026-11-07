@@ -358,6 +358,43 @@
     </div>
   </div>
 
+  <div class="card settings-card-streamer">
+    <div class="card-header"><h2>Видеотрансляции (RTMP / Telegram)</h2></div>
+    <div class="card-body">
+      <div class="form-group">
+        <label for="rtmp-url">Сервер трансляции Telegram (RTMP URL)</label>
+        <input
+          id="rtmp-url"
+          type="text"
+          value={config.streamer?.rtmp_url ?? 'rtmps://live.me.t.me/live'}
+          oninput={(e) => {
+            if (!config.streamer) config.streamer = { rtmp_url: 'rtmps://live.me.t.me/live', rtmp_key: '' };
+            config.streamer.rtmp_url = (e.target as HTMLInputElement).value;
+          }}
+          placeholder="rtmps://live.me.t.me/live"
+        />
+        <span class="hint">Адрес сервера трансляций Telegram (по умолчанию: rtmps://live.me.t.me/live)</span>
+      </div>
+      <div class="form-group">
+        <label for="rtmp-key">Ключ трансляции Telegram (Stream Key)</label>
+        <input
+          id="rtmp-key"
+          type="password"
+          value={config.streamer?.rtmp_key ?? ''}
+          oninput={(e) => {
+            if (!config.streamer) config.streamer = { rtmp_url: 'rtmps://live.me.t.me/live', rtmp_key: '' };
+            config.streamer.rtmp_key = (e.target as HTMLInputElement).value;
+          }}
+          placeholder="123456789:ABCdef..."
+        />
+        <span class="hint">Ключ из настроек видеотрансляции вашего закрытого канала или группы в Telegram</span>
+      </div>
+      <div class="streamer-note">
+        💡 <strong>Прямой эфир через RTMP:</strong> позволяет бесплатно и безлимитно транслировать окно игры в закрытый Telegram-канал без посредников. Запуск трансляции можно выполнять прямо из бота кнопкой <strong>📡 RTMP</strong> или командой <code>/rtmp</code>.
+      </div>
+    </div>
+  </div>
+
   <div class="card settings-card-updater">
     <div class="card-header update-card-header">
       <h2>Обновление программы</h2>
@@ -691,5 +728,24 @@
     to {
       transform: rotate(360deg);
     }
+  }
+  .streamer-note {
+    margin-top: 12px;
+    padding: 10px 14px;
+    background: rgba(56, 189, 248, 0.08);
+    border: 1px solid rgba(56, 189, 248, 0.2);
+    border-radius: 6px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #bae6fd;
+  }
+  .streamer-note strong {
+    color: #38bdf8;
+  }
+  .streamer-note code {
+    background: rgba(0, 0, 0, 0.3);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #7dd3fc;
   }
 </style>
