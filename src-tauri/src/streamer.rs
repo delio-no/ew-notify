@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use rumqttc::{AsyncClient, MqttOptions, QoS};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex};
@@ -190,6 +190,69 @@ pub async fn get_stream_info() -> Option<ActiveStreamInfo> {
     })
 }
 
+static ACTIVE_UPNP_PORT: AtomicU16 = AtomicU16::new(0);
+
+/// Attempt automatic UPnP / NAT-PMP port forwarding on the user's local router
+pub async fn try_acquire_upnp_port(port: u16) {
+    let local_ip = match get_preferred_bind_addrs(None).first() {
+        Some(addr_str) => {
+            let ip_str = addr_str.split(':').next().unwrap_or("");
+            ip_str.parse::<std::net::Ipv4Addr>().ok()
+        }
+        None => None,
+    };
+
+    let local_ip = match local_ip {
+        Some(ip) => ip,
+        None => return,
+    };
+
+    let local_addr = std::net::SocketAddr::V4(std::net::SocketAddrV4::new(local_ip, port));
+    let mut opts = igd_next::SearchOptions::default();
+    opts.timeout = Some(Duration::from_secs(2));
+
+    info!("Searching for UPnP router to forward external UDP port {} to {}...", port, local_addr);
+    match igd_next::aio::tokio::search_gateway(opts).await {
+        Ok(gateway) => {
+            info!("Found UPnP Gateway: {:?}", gateway);
+            match gateway
+                .add_port(
+                    igd_next::PortMappingProtocol::UDP,
+                    port,
+                    local_addr,
+                    7200,
+                    "EndlessWar Stream",
+                )
+                .await
+            {
+                Ok(()) => {
+                    info!("UPnP successfully forwarded external UDP port {} -> {}", port, local_addr);
+                    ACTIVE_UPNP_PORT.store(port, Ordering::SeqCst);
+                }
+                Err(e) => {
+                    warn!("UPnP Gateway rejected port mapping for port {}: {}", port, e);
+                }
+            }
+        }
+        Err(e) => {
+            info!("No UPnP gateway responded (UPnP may be disabled on router): {}", e);
+        }
+    }
+}
+
+/// Remove active UPnP port forwarding when stream stops
+pub async fn release_upnp_port() {
+    let port = ACTIVE_UPNP_PORT.swap(0, Ordering::SeqCst);
+    if port != 0 {
+        let mut opts = igd_next::SearchOptions::default();
+        opts.timeout = Some(Duration::from_secs(1));
+        if let Ok(gateway) = igd_next::aio::tokio::search_gateway(opts).await {
+            let _ = gateway.remove_port(igd_next::PortMappingProtocol::UDP, port).await;
+            info!("UPnP port mapping for UDP port {} removed from router", port);
+        }
+    }
+}
+
 pub async fn stop_stream() {
     ACTIVE_STREAM_RUNNING.store(false, Ordering::SeqCst);
     ACTIVE_STREAM_HWND.store(0, Ordering::SeqCst);
@@ -207,6 +270,9 @@ pub async fn stop_stream() {
                 let _ = pc.close().await;
             });
         }
+        tokio::spawn(async move {
+            release_upnp_port().await;
+        });
     }
 }
 
@@ -307,6 +373,13 @@ pub async fn start_stream(hwnd: isize, pid: u32, title: String) -> Result<Active
             sig_force_keyframe,
         )
         .await;
+    });
+
+    // Attempt automatic UPnP router port forwarding for direct 4G/cellular traversal
+    let streamer_cfg = crate::config::load_config().map(|c| c.streamer).unwrap_or_default();
+    let upnp_target_port = streamer_cfg.udp_port.unwrap_or(50000);
+    tokio::spawn(async move {
+        try_acquire_upnp_port(upnp_target_port).await;
     });
 
     // Spawn HTTPS/Port 443 Signaling Task (ntfy.sh - primary for mobile/cellular networks)
@@ -996,7 +1069,15 @@ async fn process_offer(
         active_viewers: active_viewers.clone(),
     });
 
-    let bind_addrs = get_preferred_bind_addrs(streamer_cfg.udp_port);
+    let target_bind_port = streamer_cfg.udp_port.or_else(|| {
+        let active = ACTIVE_UPNP_PORT.load(Ordering::SeqCst);
+        if active != 0 {
+            Some(active)
+        } else {
+            None
+        }
+    });
+    let bind_addrs = get_preferred_bind_addrs(target_bind_port);
     let setting_engine = rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder::new()
         .with_ice_timeouts(
             Some(Duration::from_secs(15)),
@@ -1341,6 +1422,8 @@ pub fn get_preferred_bind_addrs(udp_port: Option<u16>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
 
     #[test]
     fn test_preferred_bind_addrs() {

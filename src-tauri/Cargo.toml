@@ -54,6 +54,7 @@ futures-util = "0.3"
 rand = "0.8"
 bytes = "1"
 async-trait = "0.1"
+igd-next = { version = "0.18.0", default-features = false, features = ["aio_tokio"] }
 
 [target.'cfg(windows)'.dependencies]
 windivert = { version = "0.6", features = ["vendored"] }
