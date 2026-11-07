@@ -242,10 +242,6 @@ pub async fn test_connection(token: &str) -> anyhow::Result<()> {
             description: "RTMP-трансляция в Telegram канал".to_string(),
         },
         BotCommand {
-            command: "set_rtmp".to_string(),
-            description: "Настройка RTMP: /set_rtmp <ключ>".to_string(),
-        },
-        BotCommand {
             command: "settings".to_string(),
             description: "Настройки (скриншот при смерти)".to_string(),
         },
@@ -641,10 +637,8 @@ pub async fn start_bot(
                                                   Для запуска стрима необходимо указать:\n\
                                                   • Сервер трансляции (RTMP URL)\n\
                                                   • Ключ трансляции (Stream Key)\n\n\
-                                                  📋 Укажите их в приложении ew-notify на ПК (вкладка «Настройки») или отправьте боту:\n\
-                                                  `/set_rtmp <URL_СЕРВЕРА> <КЛЮЧ>`\n\n\
-                                                  Также можно указать ссылку на канал:\n\
-                                                  `/set_channel https://t.me/ваш_канал`";
+                                                  📋 Укажите их в приложении ew-notify на ПК во вкладке «📺 Стрим».\n\n\
+                                                  💡 Не завершайте видеотрансляцию в самом канале Telegram, чтобы один и тот же стрим работал постоянно!";
                                     let kb = InlineKeyboardMarkup::default().append_row(vec![
                                         InlineKeyboardButton::callback("❓ Инструкция по настройке", "rtmp_setup_help"),
                                     ]);
@@ -699,53 +693,13 @@ pub async fn start_bot(
                                     }
                                 }
                             } else if text_cmd == "/set_rtmp" || text_cmd.starts_with("/set_rtmp ") {
-                                let config_guard = config.lock().await;
-                                let chat_str = chat_id.to_string();
-                                let allowed = crate::config::can_user_stream(&config_guard, &chat_str);
-                                drop(config_guard);
-
-                                if !allowed {
-                                    let _ = bot
-                                        .send_message(ChatId(chat_id), "⛔ У вас нет доступа к настройке трансляций.")
-                                        .send()
-                                        .await;
-                                } else {
-                                    let arg = text_cmd.strip_prefix("/set_rtmp").unwrap_or("").trim();
-                                    if arg.is_empty() {
-                                        let msg = "ℹ️ Использование команды:\n\
-                                                   `/set_rtmp <ключ_трансляции>`\n\
-                                                   или\n\
-                                                   `/set_rtmp <сервер_url> <ключ>`\n\n\
-                                                   Пример:\n\
-                                                   `/set_rtmp 123456789:ABCdefGhIjkLmNoPqRs`\n\n\
-                                                   💡 Ключ можно получить в Telegram-канале:                                                    Меню ➔ Видеотрансляция ➔ Трансляция с помощью... ➔ Ключ трансляции.";
-                                        let _ = bot
-                                            .send_message(ChatId(chat_id), msg)
-                                            .send()
-                                            .await;
-                                    } else {
-                                        let parts: Vec<&str> = arg.split_whitespace().collect();
-                                        let mut cfg = config.lock().await;
-                                        if parts.len() >= 2 {
-                                            cfg.streamer.rtmp_url = parts[0].to_string();
-                                            cfg.streamer.rtmp_key = parts[1].to_string();
-                                        } else if parts[0].starts_with("rtmp://") || parts[0].starts_with("rtmps://") {
-                                            cfg.streamer.rtmp_key = parts[0].to_string();
-                                        } else {
-                                            cfg.streamer.rtmp_key = parts[0].to_string();
-                                        }
-                                        let _ = crate::config::save_config(&cfg);
-                                        drop(cfg);
-
-                                        let resp = "✅ Настройки RTMP успешно сохранены!\n\n\
-Теперь отправьте /rtmp или нажмите 📡 RTMP для запуска трансляции.";
-                                        let _ = bot
-                                            .send_message(ChatId(chat_id), resp)
-                                            .reply_markup(make_user_keyboard(is_admin))
-                                            .send()
-                                            .await;
-                                    }
-                                }
+                                let _ = bot
+                                    .send_message(
+                                        ChatId(chat_id),
+                                        "ℹ️ Настройка ключа и параметров RTMP-трансляции производится в приложении ew-notify на ПК во вкладке «📺 Стрим»."
+                                    )
+                                    .send()
+                                    .await;
                             } else if text_cmd == "/set_channel" || text_cmd.starts_with("/set_channel ") {
                                 if !is_admin {
                                     let _ = bot
@@ -1407,7 +1361,11 @@ pub async fn start_bot(
                                     InlineKeyboardButton::callback("📡 Запустить RTMP заново", "rtmp_restart"),
                                 ]);
                                 let _ = bot
-                                    .edit_message_text(message.chat().id, message.id(), "🛑 RTMP-трансляция в Telegram остановлена.")
+                                    .edit_message_text(
+                                        message.chat().id,
+                                        message.id(),
+                                        "🛑 RTMP-трансляция в Telegram остановлена.\n\n💡 Совет: не завершайте трансляцию в самом Telegram-канале! Оставьте её активной, тогда в любой момент можно продолжить показ без ввода нового ключа."
+                                    )
                                     .reply_markup(kb)
                                     .send()
                                     .await;
@@ -1523,7 +1481,7 @@ pub async fn start_bot(
                                     .answer_callback_query(callback.id.clone())
                                     .send()
                                     .await;
-                                let help_text = "🔑 Настройка RTMP-трансляции в Telegram:\n\n                                                 1. Откройте ваш Telegram-канал или группу.\n                                                 2. Нажмите «Видеотрансляция» / «Прямой эфир» ➔ «Трансляция с помощью...»\n                                                 3. Скопируйте «Ключ трансляции» (Stream Key).\n                                                 4. Отправьте в этот чат команду:\n                                                 `/set_rtmp ВАШ_КЛЮЧ`\n\n                                                 💡 Ключ канала постоянный и вводится всего один раз!";
+                                let help_text = "🔑 Настройка RTMP-трансляции в Telegram:\n\n                                                 1. Откройте ваш Telegram-канал или группу.\n                                                 2. Нажмите «Видеотрансляция» ➔ «Трансляция с помощью...»\n                                                 3. Скопируйте «URL сервера» и «Ключ трансляции».\n                                                 4. Вставьте их в приложении ew-notify во вкладке «📺 Стрим» и нажмите Сохранить.\n\n                                                 💡 Совет: не завершайте трансляцию в канале Telegram, и стрим можно будет запускать в любое время без повторного ввода ключа!";
                                 let kb = InlineKeyboardMarkup::default().append_row(vec![
                                     InlineKeyboardButton::callback("📡 Начать стрим", "rtmp_restart"),
                                 ]);

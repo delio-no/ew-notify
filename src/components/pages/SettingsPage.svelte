@@ -211,20 +211,6 @@
       </div>
       <div class="form-group">
         <label class="checkbox-label">
-          <input
-            type="checkbox"
-            checked={config.telegram?.notify_stop_farm ?? true}
-            onchange={(e) => {
-              if (!config.telegram) return;
-              config.telegram.notify_stop_farm = (e.target as HTMLInputElement).checked;
-            }}
-          />
-          <span>🛑 Отправлять ботом оповещения STOP_FARM</span>
-        </label>
-        <span class="hint">Управляет только отправкой сообщений ботом. В ew-notify кликер и мониторинг пакетов продолжат работать.</span>
-      </div>
-      <div class="form-group">
-        <label class="checkbox-label">
           <input type="checkbox" bind:checked={config.telegram.auto_start} />
           <span>Автозапуск бота при старте приложения</span>
         </label>
