@@ -39,6 +39,7 @@
     { id: 'settings', label: 'Настройки' },
     { id: 'patterns', label: 'Паттерны' },
     { id: 'clicker', label: 'Кликер' },
+    { id: 'stream', label: 'Стрим' },
     { id: 'notifications', label: 'Уведомления' },
     { id: 'users', label: 'Пользователи' },
     { id: 'console', label: 'Консоль' },

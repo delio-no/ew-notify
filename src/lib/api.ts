@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
   ActiveRtmpInfo,
+  UpnpStatusResult,
   ClickerConfig,
   ClickerStatus,
   ClickerTarget,
@@ -119,7 +120,8 @@ export const api = {
     title: string,
     customUrl?: string,
     customKey?: string,
-    customChannelUrl?: string
+    customChannelUrl?: string,
+    customResolution?: string
   ) =>
     invoke<ActiveRtmpInfo>('start_rtmp_stream_ui', {
       hwnd,
@@ -128,9 +130,11 @@ export const api = {
       customUrl: customUrl || null,
       customKey: customKey || null,
       customChannelUrl: customChannelUrl || null,
+      customResolution: customResolution || null,
     }),
   stopRtmpStream: () => invoke<void>('stop_rtmp_stream_ui'),
   getRtmpStatus: () => invoke<ActiveRtmpInfo | null>('get_rtmp_stream_ui_status'),
   testRtmpConnection: (rtmpUrl: string, rtmpKey: string) =>
     invoke<string>('test_rtmp_connection', { rtmpUrl, rtmpKey }),
+  checkUpnpStatus: () => invoke<UpnpStatusResult>('check_upnp_status'),
 };

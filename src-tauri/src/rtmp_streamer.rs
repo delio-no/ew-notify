@@ -12,8 +12,6 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-const TARGET_WIDTH: usize = 1920;
-const TARGET_HEIGHT: usize = 1080;
 const TARGET_FPS: u64 = 30;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +21,7 @@ pub struct ActiveRtmpInfo {
     pub title: String,
     pub rtmp_url: String,
     pub uptime_secs: u64,
+    pub resolution: String,
 }
 
 struct RtmpSession {
@@ -30,6 +29,7 @@ struct RtmpSession {
     pid: u32,
     title: String,
     rtmp_url: String,
+    resolution: String,
     start_time: Instant,
     running: Arc<AtomicBool>,
     child: Arc<Mutex<Option<Child>>>,
@@ -150,6 +150,7 @@ pub async fn get_rtmp_info() -> Option<ActiveRtmpInfo> {
         title: s.title.clone(),
         rtmp_url: s.rtmp_url.clone(),
         uptime_secs: s.start_time.elapsed().as_secs(),
+        resolution: s.resolution.clone(),
     })
 }
 
@@ -160,6 +161,7 @@ pub async fn start_rtmp_stream(
     title: String,
     rtmp_url: String,
     rtmp_key: String,
+    resolution: Option<String>,
 ) -> Result<ActiveRtmpInfo> {
     let mgr = get_manager();
     let mut guard = mgr.current_session.lock().await;
@@ -217,12 +219,20 @@ pub async fn start_rtmp_stream(
         info!("Target window verified: HWND {}, size {}x{}", hwnd, w, h);
     }
 
+    let res_str = resolution.as_deref().unwrap_or("1080p");
+    let is_720p = res_str.eq_ignore_ascii_case("720p") || res_str == "720";
+    let (target_w, target_h, b_v, max_v, buf_v, res_label) = if is_720p {
+        (1280usize, 720usize, "2500k", "3000k", "6000k", "720p HD")
+    } else {
+        (1920usize, 1080usize, "4500k", "5000k", "9000k", "1080p Full HD")
+    };
+
     let masked_target = if full_target.len() > 15 {
         format!("{}...****", &full_target[..full_target.len().saturating_sub(6)])
     } else {
         "***".to_string()
     };
-    info!("Spawning FFmpeg for RTMP stream to target: {}", masked_target);
+    info!("Spawning FFmpeg for RTMP stream ({}) to target: {}", res_label, masked_target);
 
     let mut cmd = Command::new(ffmpeg_path);
     #[cfg(windows)]
@@ -238,7 +248,7 @@ pub async fn start_rtmp_stream(
         "-pix_fmt",
         "bgra",
         "-s",
-        &format!("{}x{}", TARGET_WIDTH, TARGET_HEIGHT),
+        &format!("{}x{}", target_w, target_h),
         "-r",
         &TARGET_FPS.to_string(),
         "-i",
@@ -254,11 +264,11 @@ pub async fn start_rtmp_stream(
         "-tune",
         "zerolatency",
         "-b:v",
-        "4500k",
+        b_v,
         "-maxrate",
-        "5000k",
+        max_v,
         "-bufsize",
-        "9000k",
+        buf_v,
         "-pix_fmt",
         "yuv420p",
         "-g",
@@ -326,13 +336,13 @@ pub async fn start_rtmp_stream(
             .ok();
     }
 
-    // Spawn 720p 30fps screen capture & pipe thread
+    // Spawn screen capture & pipe thread
     let running_thread = cap_running.clone();
     std::thread::Builder::new()
         .name("ew-rtmp-capture-pipe".into())
         .spawn(move || {
-            info!("Starting RTMP capture loop for HWND: {}, PID: {}", hwnd, pid);
-            let mut bgra_buffer = vec![0u8; TARGET_WIDTH * TARGET_HEIGHT * 4];
+            info!("Starting RTMP capture loop ({}) for HWND: {}, PID: {}", res_label, hwnd, pid);
+            let mut bgra_buffer = vec![0u8; target_w * target_h * 4];
             let mut current_hwnd = hwnd;
             let mut last_hwnd_check = Instant::now();
             let mut total_frames = 0u64;
@@ -360,8 +370,8 @@ pub async fn start_rtmp_stream(
                     }
                 }
 
-                // Capture window frame scaled directly to 1080p BGRA
-                let captured = crate::streamer::capture_window_scaled_into(current_hwnd, TARGET_WIDTH, TARGET_HEIGHT, &mut bgra_buffer);
+                // Capture window frame scaled directly to target BGRA
+                let captured = crate::streamer::capture_window_scaled_into(current_hwnd, target_w, target_h, &mut bgra_buffer);
                 if !captured {
                     // Window might be minimized or occluded temporarily, maintain stream with blank/black frame
                     bgra_buffer.fill(0);
@@ -421,6 +431,7 @@ pub async fn start_rtmp_stream(
         pid,
         title: title.clone(),
         rtmp_url: rtmp_url.clone(),
+        resolution: res_label.to_string(),
         start_time: Instant::now(),
         running,
         child: Arc::new(Mutex::new(Some(child))),
@@ -433,6 +444,7 @@ pub async fn start_rtmp_stream(
         title,
         rtmp_url,
         uptime_secs: 0,
+        resolution: res_label.to_string(),
     };
 
     *guard = Some(session);

@@ -256,6 +256,40 @@ pub async fn release_upnp_port() {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpnpStatusResult {
+    pub available: bool,
+    pub external_ip: Option<String>,
+    pub active_port: u16,
+    pub details: String,
+}
+
+pub async fn check_upnp_status() -> UpnpStatusResult {
+    let active_port = ACTIVE_UPNP_PORT.load(Ordering::SeqCst);
+    let mut opts = igd_next::SearchOptions::default();
+    opts.timeout = Some(Duration::from_millis(2500));
+
+    match igd_next::aio::tokio::search_gateway(opts).await {
+        Ok(gateway) => {
+            let ext_ip = gateway.get_external_ip().await.ok().map(|ip| ip.to_string());
+            UpnpStatusResult {
+                available: true,
+                external_ip: ext_ip,
+                active_port,
+                details: "UPnP шлюз найден и доступен на роутере.".to_string(),
+            }
+        }
+        Err(e) => {
+            UpnpStatusResult {
+                available: false,
+                external_ip: None,
+                active_port,
+                details: format!("Шлюз UPnP не обнаружен: {}. Возможно, UPnP отключён в настройках роутера.", e),
+            }
+        }
+    }
+}
+
 pub async fn stop_stream() {
     ACTIVE_STREAM_RUNNING.store(false, Ordering::SeqCst);
     ACTIVE_STREAM_HWND.store(0, Ordering::SeqCst);

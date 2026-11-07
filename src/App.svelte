@@ -26,6 +26,7 @@
   import UsersPage from './components/pages/UsersPage.svelte';
   import ConsolePage from './components/pages/ConsolePage.svelte';
   import ClickerPage from './components/pages/ClickerPage.svelte';
+  import StreamPage from './components/pages/StreamPage.svelte';
 
   let currentPage = $state<PageId>('dashboard');
   let config = $state<Config>(defaultConfig());
@@ -1034,6 +1035,11 @@
         onStop={stopClicker}
         onSave={saveClickerConfig}
         onTestKey={testSendKey}
+      />
+    {:else if currentPage === 'stream'}
+      <StreamPage
+        bind:config
+        onSaveConfig={saveConfig}
       />
     {:else if currentPage === 'notifications'}
       <NotificationsPage {notifications} />

@@ -18,6 +18,14 @@ export interface ActiveRtmpInfo {
   title: string;
   rtmp_url: string;
   uptime_secs: number;
+  resolution: string;
+}
+
+export interface UpnpStatusResult {
+  available: boolean;
+  external_ip?: string | null;
+  active_port: number;
+  details: string;
 }
 
 export interface Pattern {
@@ -98,6 +106,7 @@ export interface StreamerConfig {
   rtmp_url?: string;
   rtmp_key?: string;
   rtmp_channel_url?: string | null;
+  rtmp_resolution?: '1080p' | '720p' | string;
 }
 
 export interface Config {
@@ -207,7 +216,8 @@ export type PageId =
   | 'notifications'
   | 'users'
   | 'console'
-  | 'clicker';
+  | 'clicker'
+  | 'stream';
 
 export const defaultConfig = (): Config => ({
   telegram: {
@@ -275,5 +285,11 @@ export const defaultConfig = (): Config => ({
   updater: {
     check_on_startup: true,
     ignored_version: null,
+  },
+  streamer: {
+    rtmp_url: 'rtmps://live.me.t.me/live',
+    rtmp_key: '',
+    rtmp_channel_url: '',
+    rtmp_resolution: '1080p',
   },
 });

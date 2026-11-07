@@ -1642,6 +1642,7 @@ async fn start_rtmp_stream_ui(
     custom_url: Option<String>,
     custom_key: Option<String>,
     custom_channel_url: Option<String>,
+    custom_resolution: Option<String>,
 ) -> Result<crate::rtmp_streamer::ActiveRtmpInfo, String> {
     let mut cfg = state.config.lock().await;
     if let Some(u) = custom_url.filter(|s| !s.trim().is_empty()) {
@@ -1654,8 +1655,12 @@ async fn start_rtmp_stream_ui(
         let norm = crate::rtmp_streamer::normalize_channel_url(&chan);
         cfg.streamer.rtmp_channel_url = if norm.is_empty() { None } else { Some(norm) };
     }
+    if let Some(res) = custom_resolution.filter(|s| !s.trim().is_empty()) {
+        cfg.streamer.rtmp_resolution = res;
+    }
     let url = cfg.streamer.rtmp_url.clone();
     let key = cfg.streamer.rtmp_key.clone();
+    let res = cfg.streamer.rtmp_resolution.clone();
     let _ = crate::config::save_config(&cfg);
     drop(cfg);
 
@@ -1666,9 +1671,14 @@ async fn start_rtmp_stream_ui(
         return Err("Ключ трансляции (Stream Key) не заполнен. Введите ключ из настроек Telegram.".into());
     }
 
-    crate::rtmp_streamer::start_rtmp_stream(hwnd, pid, title, url, key)
+    crate::rtmp_streamer::start_rtmp_stream(hwnd, pid, title, url, key, Some(res))
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn check_upnp_status() -> Result<crate::streamer::UpnpStatusResult, String> {
+    Ok(crate::streamer::check_upnp_status().await)
 }
 
 #[tauri::command]
@@ -1989,6 +1999,7 @@ pub fn run() {
             stop_rtmp_stream_ui,
             get_rtmp_stream_ui_status,
             test_rtmp_connection,
+            check_upnp_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

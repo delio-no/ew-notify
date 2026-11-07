@@ -416,16 +416,21 @@ pub async fn start_bot(
                                     .unwrap_or(true);
                                 let notify_stop = config_guard.telegram.notify_stop_farm;
                                 let delay = config_guard.notifications.screenshot_delay_ms;
+                                let rtmp_res = config_guard.streamer.rtmp_resolution.clone();
                                 drop(config_guard);
 
+                                let is_720 = rtmp_res.contains("720");
+                                let res_label = if is_720 { "720p HD" } else { "1080p Full HD" };
                                 let text_msg = format!(
-                                    "⚙️ Настройки уведомлений бота:\n\n\
+                                    "⚙️ Настройки бота:\n\n\
 • 🛑 Оповещения STOP_FARM: {}\n\
 • 💀 Скриншот при смерти (DEATH): {}\n\
+• 📺 Качество RTMP-вещания: {}\n\
 • ⏱ Задержка скриншота: {} мс\n\n\
 Нажмите кнопку ниже для переключения:",
                                     if notify_stop { "Включены ✅" } else { "Выключены ❌" },
                                     if on_death { "Включён ✅" } else { "Выключен ❌" },
+                                    res_label,
                                     delay
                                 );
                                 let btn_stop = if notify_stop {
@@ -438,12 +443,20 @@ pub async fn start_bot(
                                 } else {
                                     "💀 Скрин при смерти: Выкл ❌"
                                 };
+                                let btn_res = if is_720 {
+                                    "📺 Качество RTMP: 720p"
+                                } else {
+                                    "📺 Качество RTMP: 1080p"
+                                };
                                 let kb = InlineKeyboardMarkup::default()
                                     .append_row(vec![
                                         InlineKeyboardButton::callback(btn_stop, "toggle_stop_farm"),
                                     ])
                                     .append_row(vec![
                                         InlineKeyboardButton::callback(btn_death, "toggle_death_screen"),
+                                    ])
+                                    .append_row(vec![
+                                        InlineKeyboardButton::callback(btn_res, "toggle_rtmp_res"),
                                     ]);
                                 let _ = bot
                                     .send_message(ChatId(chat_id), text_msg)
@@ -1237,20 +1250,22 @@ pub async fn start_bot(
                                                 .send()
                                                 .await;
 
+                                            let cfg_guard = config.lock().await;
+                                            let res_str = cfg_guard.streamer.rtmp_resolution.clone();
+                                            let chan_opt = cfg_guard.streamer.rtmp_channel_url.clone();
+                                            drop(cfg_guard);
+
                                             match crate::rtmp_streamer::start_rtmp_stream(
                                                 target_win.hwnd,
                                                 target_win.pid,
                                                 target_win.title.clone(),
                                                 rtmp_url.clone(),
                                                 rtmp_key.clone(),
+                                                Some(res_str),
                                             )
                                             .await
                                             {
                                                 Ok(info) => {
-                                                    let cfg_guard = config.lock().await;
-                                                    let chan_opt = cfg_guard.streamer.rtmp_channel_url.clone();
-                                                    drop(cfg_guard);
-
                                                     let chan_note = if let Some(ref c) = chan_opt {
                                                         format!("\n📢 Канал: {}\n\n👉 Нажмите кнопку ниже для перехода в канал:", c)
                                                     } else {
@@ -1258,8 +1273,8 @@ pub async fn start_bot(
                                                     };
 
                                                     let success_msg = format!(
-                                                        "📡 Трансляция в канал Telegram запущена!\n\n🎮 Окно: «{}» (PID {})\n⏱ Только что запущена\n🚀 Качество: 1080p Full HD, 30 FPS (H.264 / AAC Mute){}",
-                                                        info.title, info.pid, chan_note
+                                                        "📡 Трансляция в канал Telegram запущена!\n\n🎮 Окно: «{}» (PID {})\n⏱ Только что запущена\n🚀 Качество: {} (30 FPS, H.264 / AAC Mute){}",
+                                                        info.title, info.pid, info.resolution, chan_note
                                                     );
                                                     let mut kb = InlineKeyboardMarkup::default();
                                                     if let Some(ref c) = chan_opt {
@@ -1332,19 +1347,25 @@ pub async fn start_bot(
                                             .send()
                                             .await;
 
+                                        let res_str = {
+                                            let cfg_guard = config.lock().await;
+                                            cfg_guard.streamer.rtmp_resolution.clone()
+                                        };
+
                                         match crate::rtmp_streamer::start_rtmp_stream(
                                             target_win.hwnd,
                                             target_win.pid,
                                             target_win.title.clone(),
                                             rtmp_url.clone(),
                                             rtmp_key.clone(),
+                                            Some(res_str),
                                         )
                                         .await
                                         {
                                             Ok(info) => {
                                                 let success_msg = format!(
-                                                    "📡 Трансляция в канал Telegram запущена!\n\n🎮 Окно: «{}» (PID {})\n⏱ Только что запущена\n🚀 Качество: 1080p Full HD, 30 FPS (H.264 / AAC Mute)\n\n👉 Перейдите в ваш канал Telegram и включите видеотрансляцию (эфир появится автоматически)!",
-                                                    info.title, info.pid
+                                                    "📡 Трансляция в канал Telegram запущена!\n\n🎮 Окно: «{}» (PID {})\n⏱ Только что запущена\n🚀 Качество: {} (30 FPS, H.264 / AAC Mute)\n\n👉 Перейдите в ваш канал Telegram и включите видеотрансляцию (эфир появится автоматически)!",
+                                                    info.title, info.pid, info.resolution
                                                 );
                                                 let kb = InlineKeyboardMarkup::default().append_row(vec![
                                                     InlineKeyboardButton::callback("🔄 Обновить статус", "rtmp_refresh"),
@@ -1407,8 +1428,8 @@ pub async fn start_bot(
                                     drop(cfg_guard);
 
                                     let info_msg = format!(
-                                        "📡 Сейчас активна трансляция в Telegram:\n\n🎮 Окно: «{}» (PID {})\n⏱ В эфире: {} сек\n🚀 Параметры: 1080p Full HD, 30 FPS (H.264 / AAC Mute){}\n\nОткройте ваш Telegram-канал для просмотра прямого эфира.",
-                                        active.title, active.pid, active.uptime_secs, chan_line
+                                        "📡 Сейчас активна трансляция в Telegram:\n\n🎮 Окно: «{}» (PID {})\n⏱ В эфире: {} сек\n🚀 Параметры: {}, 30 FPS (H.264 / AAC Mute){}\n\nОткройте ваш Telegram-канал для просмотра прямого эфира.",
+                                        active.title, active.pid, active.uptime_secs, active.resolution, chan_line
                                     );
                                     let kb = InlineKeyboardMarkup::default().append_row(vec![
                                         InlineKeyboardButton::callback("🔄 Обновить статус", "rtmp_refresh"),
@@ -1513,7 +1534,7 @@ pub async fn start_bot(
                                     .await;
 
                             } else if data == "toggle_stop_farm" {
-                                let (notify_stop, on_death, delay) = {
+                                let (notify_stop, on_death, delay, rtmp_res) = {
                                     let mut config_guard = config.lock().await;
                                     config_guard.telegram.notify_stop_farm = !config_guard.telegram.notify_stop_farm;
                                     let stop_v = config_guard.telegram.notify_stop_farm;
@@ -1525,8 +1546,9 @@ pub async fn start_bot(
                                         .map(|p| p.screenshot_enabled)
                                         .unwrap_or(true);
                                     let d = config_guard.notifications.screenshot_delay_ms;
+                                    let res = config_guard.streamer.rtmp_resolution.clone();
                                     let _ = crate::config::save_config(&config_guard);
-                                    (stop_v, death_v, d)
+                                    (stop_v, death_v, d, res)
                                 };
                                 let _ = app.emit("config-updated", ());
 
@@ -1541,6 +1563,7 @@ pub async fn start_bot(
                                     .send()
                                     .await;
 
+                                let is_720 = rtmp_res.contains("720");
                                 let btn_stop = if notify_stop {
                                     "🛑 STOP_FARM: Вкл ✅"
                                 } else {
@@ -1551,14 +1574,23 @@ pub async fn start_bot(
                                 } else {
                                     "💀 Скрин при смерти: Выкл ❌"
                                 };
+                                let btn_res = if is_720 {
+                                    "📺 Качество RTMP: 720p"
+                                } else {
+                                    "📺 Качество RTMP: 1080p"
+                                };
+                                let res_label = if is_720 { "720p HD" } else { "1080p Full HD" };
+
                                 let new_text = format!(
-                                    "⚙️ Настройки уведомлений бота:\n\n\
+                                    "⚙️ Настройки бота:\n\n\
 • 🛑 Оповещения STOP_FARM: {}\n\
 • 💀 Скриншот при смерти (DEATH): {}\n\
+• 📺 Качество RTMP-вещания: {}\n\
 • ⏱ Задержка скриншота: {} мс\n\n\
 Нажмите кнопку ниже для переключения:",
                                     if notify_stop { "Включены ✅" } else { "Выключены ❌" },
                                     if on_death { "Включён ✅" } else { "Выключен ❌" },
+                                    res_label,
                                     delay
                                 );
                                 let kb = InlineKeyboardMarkup::default()
@@ -1567,6 +1599,9 @@ pub async fn start_bot(
                                     ])
                                     .append_row(vec![
                                         InlineKeyboardButton::callback(btn_death, "toggle_death_screen"),
+                                    ])
+                                    .append_row(vec![
+                                        InlineKeyboardButton::callback(btn_res, "toggle_rtmp_res"),
                                     ]);
                                 let _ = bot
                                     .edit_message_text(message.chat().id, message.id(), new_text)
@@ -1575,7 +1610,7 @@ pub async fn start_bot(
                                     .await;
 
                             } else if data == "toggle_death_screen" {
-                                let (notify_stop, new_val, delay) = {
+                                let (notify_stop, new_val, delay, rtmp_res) = {
                                     let mut config_guard = config.lock().await;
                                     let mut v = true;
                                     if let Some(p) = config_guard
@@ -1589,8 +1624,9 @@ pub async fn start_bot(
                                     }
                                     let stop_v = config_guard.telegram.notify_stop_farm;
                                     let d = config_guard.notifications.screenshot_delay_ms;
+                                    let res = config_guard.streamer.rtmp_resolution.clone();
                                     let _ = crate::config::save_config(&config_guard);
-                                    (stop_v, v, d)
+                                    (stop_v, v, d, res)
                                 };
                                 let _ = app.emit("config-updated", ());
 
@@ -1605,6 +1641,7 @@ pub async fn start_bot(
                                     .send()
                                     .await;
 
+                                let is_720 = rtmp_res.contains("720");
                                 let btn_stop = if notify_stop {
                                     "🛑 STOP_FARM: Вкл ✅"
                                 } else {
@@ -1615,14 +1652,23 @@ pub async fn start_bot(
                                 } else {
                                     "💀 Скрин при смерти: Выкл ❌"
                                 };
+                                let btn_res = if is_720 {
+                                    "📺 Качество RTMP: 720p"
+                                } else {
+                                    "📺 Качество RTMP: 1080p"
+                                };
+                                let res_label = if is_720 { "720p HD" } else { "1080p Full HD" };
+
                                 let new_text = format!(
-                                    "⚙️ Настройки уведомлений бота:\n\n\
+                                    "⚙️ Настройки бота:\n\n\
 • 🛑 Оповещения STOP_FARM: {}\n\
 • 💀 Скриншот при смерти (DEATH): {}\n\
+• 📺 Качество RTMP-вещания: {}\n\
 • ⏱ Задержка скриншота: {} мс\n\n\
 Нажмите кнопку ниже для переключения:",
                                     if notify_stop { "Включены ✅" } else { "Выключены ❌" },
                                     if new_val { "Включён ✅" } else { "Выключен ❌" },
+                                    res_label,
                                     delay
                                 );
                                 let kb = InlineKeyboardMarkup::default()
@@ -1631,6 +1677,90 @@ pub async fn start_bot(
                                     ])
                                     .append_row(vec![
                                         InlineKeyboardButton::callback(btn_text, "toggle_death_screen"),
+                                    ])
+                                    .append_row(vec![
+                                        InlineKeyboardButton::callback(btn_res, "toggle_rtmp_res"),
+                                    ]);
+                                let _ = bot
+                                    .edit_message_text(message.chat().id, message.id(), new_text)
+                                    .reply_markup(kb)
+                                    .send()
+                                    .await;
+
+                            } else if data == "toggle_rtmp_res" {
+                                let (notify_stop, on_death, delay, new_res) = {
+                                    let mut config_guard = config.lock().await;
+                                    let cur_is_720 = config_guard.streamer.rtmp_resolution.contains("720");
+                                    config_guard.streamer.rtmp_resolution = if cur_is_720 {
+                                        "1080p".to_string()
+                                    } else {
+                                        "720p".to_string()
+                                    };
+                                    let res = config_guard.streamer.rtmp_resolution.clone();
+                                    let stop_v = config_guard.telegram.notify_stop_farm;
+                                    let death_v = config_guard
+                                        .target
+                                        .patterns
+                                        .iter()
+                                        .find(|p| p.name == "DEATH")
+                                        .map(|p| p.screenshot_enabled)
+                                        .unwrap_or(true);
+                                    let d = config_guard.notifications.screenshot_delay_ms;
+                                    let _ = crate::config::save_config(&config_guard);
+                                    (stop_v, death_v, d, res)
+                                };
+                                let _ = app.emit("config-updated", ());
+
+                                let is_720 = new_res.contains("720");
+                                let toast = if is_720 {
+                                    "Качество RTMP: 720p HD (2500k)"
+                                } else {
+                                    "Качество RTMP: 1080p Full HD (4500k)"
+                                };
+                                let _ = bot
+                                    .answer_callback_query(callback.id.clone())
+                                    .text(toast)
+                                    .send()
+                                    .await;
+
+                                let btn_stop = if notify_stop {
+                                    "🛑 STOP_FARM: Вкл ✅"
+                                } else {
+                                    "🛑 STOP_FARM: Выкл ❌"
+                                };
+                                let btn_death = if on_death {
+                                    "💀 Скрин при смерти: Вкл ✅"
+                                } else {
+                                    "💀 Скрин при смерти: Выкл ❌"
+                                };
+                                let btn_res = if is_720 {
+                                    "📺 Качество RTMP: 720p"
+                                } else {
+                                    "📺 Качество RTMP: 1080p"
+                                };
+                                let res_label = if is_720 { "720p HD" } else { "1080p Full HD" };
+
+                                let new_text = format!(
+                                    "⚙️ Настройки бота:\n\n\
+• 🛑 Оповещения STOP_FARM: {}\n\
+• 💀 Скриншот при смерти (DEATH): {}\n\
+• 📺 Качество RTMP-вещания: {}\n\
+• ⏱ Задержка скриншота: {} мс\n\n\
+Нажмите кнопку ниже для переключения:",
+                                    if notify_stop { "Включены ✅" } else { "Выключены ❌" },
+                                    if on_death { "Включён ✅" } else { "Выключен ❌" },
+                                    res_label,
+                                    delay
+                                );
+                                let kb = InlineKeyboardMarkup::default()
+                                    .append_row(vec![
+                                        InlineKeyboardButton::callback(btn_stop, "toggle_stop_farm"),
+                                    ])
+                                    .append_row(vec![
+                                        InlineKeyboardButton::callback(btn_death, "toggle_death_screen"),
+                                    ])
+                                    .append_row(vec![
+                                        InlineKeyboardButton::callback(btn_res, "toggle_rtmp_res"),
                                     ]);
                                 let _ = bot
                                     .edit_message_text(message.chat().id, message.id(), new_text)

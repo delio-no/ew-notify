@@ -64,6 +64,12 @@ pub struct StreamerConfig {
     pub rtmp_key: String,
     #[serde(default)]
     pub rtmp_channel_url: Option<String>,
+    #[serde(default = "default_rtmp_resolution")]
+    pub rtmp_resolution: String,
+}
+
+fn default_rtmp_resolution() -> String {
+    "1080p".to_string()
 }
 
 impl Default for StreamerConfig {
@@ -76,6 +82,7 @@ impl Default for StreamerConfig {
             rtmp_url: default_rtmp_url(),
             rtmp_key: String::new(),
             rtmp_channel_url: None,
+            rtmp_resolution: default_rtmp_resolution(),
         }
     }
 }
