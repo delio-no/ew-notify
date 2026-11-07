@@ -1030,6 +1030,7 @@ async fn process_offer(
     let mut ice_servers = vec![
         RTCIceServer {
             urls: vec![
+                "stun:stun.relay.metered.ca:80".to_string(),
                 "stun:stun.cloudflare.com:3478".to_string(),
                 "stun:stun.l.google.com:19302".to_string(),
                 "stun:stun1.l.google.com:19302".to_string(),
@@ -1038,6 +1039,15 @@ async fn process_offer(
             ..Default::default()
         },
     ];
+
+    const DEFAULT_TURN_URLS: &[&str] = &[
+        "turn:europe.relay.metered.ca:80",
+        "turn:europe.relay.metered.ca:80?transport=tcp",
+        "turn:europe.relay.metered.ca:443",
+        "turns:europe.relay.metered.ca:443?transport=tcp",
+    ];
+    const DEFAULT_TURN_USER: &str = "6fbdfa7d7d5d7cce7d536a5d";
+    const DEFAULT_TURN_PASS: &str = "UncX8C2HkcMJ5lCN";
 
     if let Some(turn_raw) = streamer_cfg.turn_server.as_ref().filter(|s| !s.trim().is_empty()) {
         for url_part in turn_raw.split(',') {
@@ -1051,9 +1061,19 @@ async fn process_offer(
                     username: streamer_cfg.turn_username.clone().unwrap_or_default(),
                     credential: streamer_cfg.turn_password.clone().unwrap_or_default(),
                 });
-                info!("Added TURN server to host WebRTC config: {}", u);
+                info!("Added custom TURN server to host WebRTC config: {}", u);
             }
         }
+    } else {
+        // Fallback default Metered Europe TURN relay for 100% traversal across mobile 4G/LTE symmetric NATs
+        for &u in DEFAULT_TURN_URLS {
+            ice_servers.push(RTCIceServer {
+                urls: vec![u.to_string()],
+                username: DEFAULT_TURN_USER.to_string(),
+                credential: DEFAULT_TURN_PASS.to_string(),
+            });
+        }
+        info!("Added default Metered Europe TURN relay to host WebRTC config");
     }
 
     let rtc_config = RTCConfigurationBuilder::new()
@@ -1156,11 +1176,7 @@ async fn process_offer(
     }
 
     // Wait briefly for ICE candidates to gather into local_description
-    let gather_timeout = if streamer_cfg.turn_server.is_some() {
-        Duration::from_millis(1500)
-    } else {
-        Duration::from_millis(800)
-    };
+    let gather_timeout = Duration::from_millis(1500);
     let _ = tokio::time::timeout(gather_timeout, gather_complete_rx.recv()).await;
 
     if let Some(local_desc) = pc.local_description().await {

@@ -728,6 +728,7 @@
         log('Инициализация RTCPeerConnection...');
         const params = new URLSearchParams(window.location.search);
         const iceServers = [
+          { urls: 'stun:stun.relay.metered.ca:80' },
           { urls: 'stun:stun.cloudflare.com:3478' },
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
@@ -750,8 +751,21 @@
               username: turnUser,
               credential: turnPass
             });
-            log('TURN relay настроен: ' + urls.join(', '), '#22c55e');
+            log('TURN relay настроен (пользовательский): ' + urls.join(', '), '#22c55e');
           }
+        } else {
+          // Default Metered Europe TURN Relay for zero-config cellular / 4G streaming
+          iceServers.push({
+            urls: [
+              'turn:europe.relay.metered.ca:80',
+              'turn:europe.relay.metered.ca:80?transport=tcp',
+              'turn:europe.relay.metered.ca:443',
+              'turns:europe.relay.metered.ca:443?transport=tcp'
+            ],
+            username: '6fbdfa7d7d5d7cce7d536a5d',
+            credential: 'UncX8C2HkcMJ5lCN'
+          });
+          log('Используется резервный TURN relay (Metered Europe)', '#94a3b8');
         }
 
         pc = new RTCPeerConnection({ iceServers });
@@ -868,7 +882,7 @@
           };
           pc.addEventListener('icegatheringstatechange', check);
           // Wait up to 1200ms on mobile connections to ensure public IP (srflx) is gathered
-          timer = setTimeout(done, 1200);
+          timer = setTimeout(done, 1800);
         });
 
         isOfferReady = true;
