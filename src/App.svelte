@@ -1121,7 +1121,7 @@
         <h3 class="update-title">Установка обновления</h3>
 
         <div class="update-version-row">
-          <span class="update-ver-curr">{availableUpdate?.current_version || 'v0.3.15'}</span>
+          <span class="update-ver-curr">{availableUpdate?.current_version || 'v0.4.0'}</span>
           <svg class="update-arrow-icon" viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
             <path fill-rule="evenodd" d="M1 8a.5.5 0 0 1 .5-.5h11.793l-3.147-3.146a.5.5 0 0 1 .708-.708l4 4a.5.5 0 0 1 0 .708l-4 4a.5.5 0 0 1-.708-.708L13.293 8.5H1.5A.5.5 0 0 1 1 8z"/>
           </svg>
