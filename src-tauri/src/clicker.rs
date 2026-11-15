@@ -389,7 +389,7 @@ impl ClickerState {
         });
     }
 
-    pub fn trigger_pattern_event(
+    pub async fn trigger_pattern_event(
         &self,
         pattern_name: &str,
         target_slot: Option<u32>,
@@ -397,9 +397,8 @@ impl ClickerState {
         app: &AppHandle,
         config_arc: &Arc<Mutex<AppConfig>>,
         filter: &WindowFilterState,
-        rt: &tokio::runtime::Handle,
     ) {
-        let cfg = rt.block_on(async { config_arc.lock().await.clone() });
+        let cfg = config_arc.lock().await.clone();
         let rules = cfg.clicker.get_rules();
 
         let any_stop = self.is_running() && rules.iter().any(|r| r.enabled && r.stop_on_pattern);
@@ -534,15 +533,14 @@ impl ClickerState {
         }
     }
 
-    pub fn trigger_pattern_stop(
+    pub async fn trigger_pattern_stop(
         &self,
         pattern_name: &str,
         app: &AppHandle,
         config_arc: &Arc<Mutex<AppConfig>>,
         filter: &WindowFilterState,
-        rt: &tokio::runtime::Handle,
     ) {
-        self.trigger_pattern_event(pattern_name, None, None, app, config_arc, filter, rt);
+        self.trigger_pattern_event(pattern_name, None, None, app, config_arc, filter).await;
     }
 }
 

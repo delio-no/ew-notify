@@ -505,17 +505,17 @@ async fn start_monitoring_inner(state: &AppState, app: &AppHandle) -> Result<Str
                 let app_c = app_notify.clone();
                 let config_c = config.clone();
                 let filter_c = window_filter.clone();
-                let rt_c = rt.clone();
                 rt.spawn(async move {
-                    clicker_c.trigger_pattern_event(
-                        &pat_name,
-                        target_slot,
-                        target_pid,
-                        &app_c,
-                        &config_c,
-                        &filter_c,
-                        &rt_c,
-                    );
+                    clicker_c
+                        .trigger_pattern_event(
+                            &pat_name,
+                            target_slot,
+                            target_pid,
+                            &app_c,
+                            &config_c,
+                            &filter_c,
+                        )
+                        .await;
                 });
 
                 let cooldown_key = match &conn {
